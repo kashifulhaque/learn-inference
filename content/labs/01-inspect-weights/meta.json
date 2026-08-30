@@ -1,0 +1,15 @@
+{
+  "id": "01-inspect-weights",
+  "title": "Read the checkpoint index",
+  "brief": "Answer questions about a model's architecture from its tensor names and shapes alone.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "needs_weights": false,
+  "timeout": 300,
+  "metrics": ["total_tensors", "largest_tensor_params"],
+  "hints": [
+    "The weight map is a flat dict from tensor name to shard filename.",
+    "Layer indices sit between 'layers.' and the next dot.",
+    "A full-attention layer has a q_proj; a linear-attention layer has in_proj_qkvz."
+  ]
+}

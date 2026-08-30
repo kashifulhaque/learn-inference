@@ -1,0 +1,15 @@
+{
+  "id": "13-fused-rmsnorm",
+  "title": "Fused kernels in Triton",
+  "brief": "Write RMSNorm, fused RMSNorm with a residual add, and fused SwiGLU, then measure the bytes you saved.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "needs_weights": false,
+  "timeout": 900,
+  "metrics": ["fusion_speedup", "achieved_gbs", "swiglu_speedup"],
+  "hints": [
+    "One block per row keeps the row in registers between the reduction and the scaling.",
+    "BLOCK must be a power of two: use triton.next_power_of_2 and mask the tail.",
+    "Cast to tl.float32 on load and back to the output dtype on store."
+  ]
+}

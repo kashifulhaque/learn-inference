@@ -1,0 +1,17 @@
+{
+  "id": "06-delta-rule",
+  "title": "The gated delta rule",
+  "brief": "Implement the recurrence two ways and prove the chunked form matches the sequential one.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 900,
+  "metrics": ["chunk_error", "resume_error", "speedup"],
+  "hints": [
+    "Work in float32 throughout. The state is an accumulator.",
+    "Compute cumulative decays in log space: g_t / g_j is exp(log g_t - log g_j).",
+    "A[t, j] is strictly lower triangular, so (I + A) is unit lower triangular and torch.linalg.solve_triangular applies.",
+    "The output at t uses the state after t's own update, not before it."
+  ]
+}

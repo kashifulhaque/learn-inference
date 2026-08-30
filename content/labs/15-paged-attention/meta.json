@@ -1,0 +1,16 @@
+{
+  "id": "15-paged-attention",
+  "title": "Paged attention",
+  "brief": "Build a block allocator, map positions to slots, and attend through a block table.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 900,
+  "metrics": ["waste_contiguous", "waste_paged", "paged_error"],
+  "hints": [
+    "Logical position p lives at block p // block_size, offset p % block_size.",
+    "Blocks are interchangeable, so allocation is a pop from a free list and release is an extend.",
+    "Round up when computing how many blocks a length needs: -(-x // y) is ceiling division."
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "id": "03-tokenizer",
+  "title": "Chat templates and incremental detokenization",
+  "brief": "Build a prompt from messages, then stream tokens back as text without breaking multi-byte characters.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "needs_weights": false,
+  "timeout": 300,
+  "metrics": ["emitted_chunks"],
+  "hints": [
+    "The assistant turn is opened but never closed: the model continues from there.",
+    "A UTF-8 character can straddle two tokens, so decode the accumulated ids and emit only the new, complete suffix.",
+    "bytes.decode('utf-8', errors='strict') raises on an incomplete sequence; catch it and wait for more."
+  ]
+}

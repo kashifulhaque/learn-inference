@@ -1,0 +1,16 @@
+{
+  "id": "18-int8-quant",
+  "title": "Weight-only int8 quantization",
+  "brief": "Quantize at three granularities, measure the error, and show what it saves.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 900,
+  "metrics": ["error_per_tensor", "error_per_group", "compression"],
+  "hints": [
+    "Symmetric quantization has no zero point: scale = max|w| / 127.",
+    "Group-wise means reshaping the last dimension into (groups, group_size) before taking the max.",
+    "Round before clamping, and clamp to [-128, 127]."
+  ]
+}

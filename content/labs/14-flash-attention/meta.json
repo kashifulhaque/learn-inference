@@ -1,0 +1,16 @@
+{
+  "id": "14-flash-attention",
+  "title": "FlashAttention",
+  "brief": "Write the tiled forward pass with an online softmax, and never materialize a score matrix.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "needs_weights": false,
+  "timeout": 1200,
+  "metrics": ["max_error", "speedup_8k", "peak_memory_ratio"],
+  "hints": [
+    "Keep m, l, and acc in float32. The running denominator sums thousands of exponentials.",
+    "On a new tile maximum, rescale both l and acc by exp(m_old - m_new) before adding.",
+    "Skip whole key tiles past the causal diagonal instead of masking them after the fact.",
+    "kv_head = head // kv_group lets the kernel share KV heads without the caller duplicating them."
+  ]
+}

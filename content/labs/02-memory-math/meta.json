@@ -1,0 +1,15 @@
+{
+  "id": "02-memory-math",
+  "title": "Memory arithmetic",
+  "brief": "Compute parameter counts, cache growth, and the hybrid break-even point.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "needs_weights": false,
+  "timeout": 300,
+  "metrics": ["params_billions", "kv_kib_per_token", "breakeven_tokens", "max_batch_32k"],
+  "hints": [
+    "The KV cache stores two tensors, K and V, per full-attention layer.",
+    "Linear-attention layers contribute nothing per token.",
+    "Break-even is the fixed state divided by the per-token saving."
+  ]
+}

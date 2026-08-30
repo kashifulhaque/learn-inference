@@ -1,0 +1,15 @@
+{
+  "id": "12-cuda-vector-add",
+  "title": "Your first CUDA kernel",
+  "brief": "Write CUDA C++ from Python, then measure what uncoalesced access costs.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "needs_weights": false,
+  "timeout": 1200,
+  "metrics": ["coalesced_gbs", "strided_gbs", "coalescing_ratio"],
+  "hints": [
+    "Compilation takes 30 to 60 seconds the first time. Later runs use the cache.",
+    "The global index is blockIdx.x * blockDim.x + threadIdx.x.",
+    "Use ceiling division for the block count, or the tail goes unprocessed."
+  ]
+}

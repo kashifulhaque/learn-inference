@@ -1,0 +1,16 @@
+{
+  "id": "09-kv-cache",
+  "title": "The hybrid cache",
+  "brief": "Store KV entries for full-attention layers and recurrent state for the rest, then measure the speedup.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 900,
+  "metrics": ["equivalence_error", "cache_bytes", "work_ratio"],
+  "hints": [
+    "Preallocate at max_seq_len and write into a slice. Concatenating copies the cache every step.",
+    "Advance the write cursor once per forward pass, after every layer has run — not inside each layer.",
+    "Only full-attention layers grow. Linear-attention layers overwrite a fixed state."
+  ]
+}

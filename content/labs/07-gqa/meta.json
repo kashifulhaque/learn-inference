@@ -1,0 +1,16 @@
+{
+  "id": "07-gqa",
+  "title": "Grouped-query attention",
+  "brief": "Implement GQA with an output gate and a mask that stays correct behind a cached prefix.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 600,
+  "metrics": ["sdpa_error", "cache_bytes_per_token"],
+  "hints": [
+    "Query row i of the current block sits at absolute position i + (kv_len - q_len).",
+    "Six query heads share each KV head, so repeat the KV heads along the head axis.",
+    "The q_proj emits queries and a gate side by side; split it, then apply sigmoid to the gate."
+  ]
+}

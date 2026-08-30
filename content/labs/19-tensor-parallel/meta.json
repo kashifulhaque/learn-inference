@@ -1,0 +1,16 @@
+{
+  "id": "19-tensor-parallel",
+  "title": "Tensor parallelism",
+  "brief": "Split linear layers two ways, build a parallel MLP and attention block, and match the unsharded result.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 900,
+  "metrics": ["mlp_error", "attention_error", "comm_bytes_per_layer"],
+  "hints": [
+    "Column parallel splits the output dimension; row parallel splits the input dimension.",
+    "A row-parallel layer produces partial sums, so its shards must be added, not concatenated.",
+    "Attention splits by whole heads. Each rank owns its heads' keys and values outright."
+  ]
+}

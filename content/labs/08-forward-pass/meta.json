@@ -1,0 +1,16 @@
+{
+  "id": "08-forward-pass",
+  "title": "Validate a forward pass",
+  "brief": "Compare your logits against a reference, and bisect the first layer that diverges.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 900,
+  "metrics": ["top1_agreement", "correlation", "prefill_decode_error"],
+  "hints": [
+    "Compare logits, not generated text: greedy decoding hides large distribution differences.",
+    "Correlation over flattened logits is the most sensitive single number.",
+    "The first layer whose hidden state exceeds the tolerance is where the bug is; everything after it is downstream."
+  ]
+}

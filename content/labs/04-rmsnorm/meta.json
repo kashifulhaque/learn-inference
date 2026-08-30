@@ -1,0 +1,15 @@
+{
+  "id": "04-rmsnorm",
+  "title": "RMSNorm",
+  "brief": "Implement RMSNorm, then measure what bfloat16 accumulation costs you.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "needs_weights": false,
+  "timeout": 600,
+  "metrics": ["fp32_error", "bf16_error", "achieved_gbs", "bandwidth_efficiency"],
+  "hints": [
+    "Cast to float32 before squaring, and cast back only at the very end.",
+    "torch.rsqrt is the reciprocal square root.",
+    "RMSNorm is bandwidth bound: 4 bytes in, 2 bytes out per element."
+  ]
+}

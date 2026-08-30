@@ -1,0 +1,16 @@
+# Add this to the VM's Caddyfile, then reload Caddy.
+# Caddy obtains and renews the certificate on its own.
+
+inference.ifkash.dev {
+	encode zstd gzip
+
+	# Lab output arrives as server-sent events, so buffering must stay off and
+	# the timeout must outlast a long GPU run.
+	reverse_proxy 127.0.0.1:8087 {
+		flush_interval -1
+		transport http {
+			response_header_timeout 30m
+			read_timeout 30m
+		}
+	}
+}

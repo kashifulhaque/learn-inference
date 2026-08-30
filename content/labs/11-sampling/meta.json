@@ -1,0 +1,15 @@
+{
+  "id": "11-sampling",
+  "title": "Sampling",
+  "brief": "Build the full pipeline: penalties, temperature, top-k, min-p, top-p, and a seeded draw.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "needs_weights": false,
+  "timeout": 300,
+  "metrics": ["nucleus_size", "seed_reproducible"],
+  "hints": [
+    "Top-p must keep the token that crosses the threshold, so compare the cumulative mass before that token.",
+    "Repetition penalty divides positive logits and multiplies negative ones.",
+    "Pass an explicit torch.Generator to torch.multinomial so a seed reproduces exactly."
+  ]
+}

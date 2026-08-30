@@ -1,0 +1,16 @@
+{
+  "id": "20-spec-decode",
+  "title": "Speculative decoding",
+  "brief": "Verify k draft tokens in one pass, with rejection sampling that preserves the target distribution.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 900,
+  "metrics": ["acceptance_rate", "distribution_error", "expected_tokens"],
+  "hints": [
+    "Accept with probability min(1, p[x] / q[x]).",
+    "On rejection, sample from the normalized positive part of p - q. Clamp before normalizing.",
+    "Stop at the first rejection: everything after it was drafted from a state that no longer holds."
+  ]
+}

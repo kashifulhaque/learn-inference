@@ -1,0 +1,176 @@
+@import "tailwindcss";
+@import "katex/dist/katex.min.css";
+@import "highlight.js/styles/github-dark.css";
+
+@theme {
+  --color-ink-950: #08090c;
+  --color-ink-900: #0d0f14;
+  --color-ink-850: #12151c;
+  --color-ink-800: #171b24;
+  --color-ink-700: #222836;
+  --color-ink-600: #333c4f;
+  --color-ink-400: #6b7688;
+  --color-ink-300: #98a2b4;
+  --color-ink-200: #c4cbd8;
+  --color-ink-100: #e7eaf0;
+  --color-flame-500: #ff7a3d;
+  --color-flame-400: #ff9663;
+  --color-flame-300: #ffb992;
+  --color-mint-400: #3ddc97;
+  --color-rose-450: #ff5d73;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-ink-950);
+  color: var(--color-ink-100);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink-700);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-600);
+}
+
+/* Chapter body ------------------------------------------------------------ */
+
+.prose-chapter {
+  color: var(--color-ink-200);
+  line-height: 1.75;
+  font-size: 1.02rem;
+}
+.prose-chapter h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--color-ink-100);
+  margin: 0 0 1.25rem;
+  letter-spacing: -0.02em;
+}
+.prose-chapter h2 {
+  font-size: 1.35rem;
+  font-weight: 650;
+  color: var(--color-ink-100);
+  margin: 2.5rem 0 0.9rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--color-ink-800);
+  letter-spacing: -0.01em;
+}
+.prose-chapter h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--color-ink-100);
+  margin: 1.75rem 0 0.6rem;
+}
+.prose-chapter p {
+  margin: 0 0 1.1rem;
+}
+.prose-chapter strong {
+  color: var(--color-ink-100);
+  font-weight: 620;
+}
+.prose-chapter em {
+  color: var(--color-flame-300);
+  font-style: italic;
+}
+.prose-chapter a {
+  color: var(--color-flame-400);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--color-flame-400) 40%, transparent);
+}
+.prose-chapter a:hover {
+  text-decoration-color: var(--color-flame-400);
+}
+.prose-chapter ul,
+.prose-chapter ol {
+  margin: 0 0 1.1rem;
+  padding-left: 1.4rem;
+}
+.prose-chapter ul {
+  list-style: disc;
+}
+.prose-chapter ol {
+  list-style: decimal;
+}
+.prose-chapter li {
+  margin: 0.35rem 0;
+}
+.prose-chapter li::marker {
+  color: var(--color-ink-400);
+}
+.prose-chapter code {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  font-size: 0.875em;
+  background: var(--color-ink-800);
+  border: 1px solid var(--color-ink-700);
+  border-radius: 5px;
+  padding: 0.1em 0.36em;
+  color: var(--color-flame-300);
+}
+.prose-chapter pre {
+  background: var(--color-ink-900);
+  border: 1px solid var(--color-ink-800);
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  overflow-x: auto;
+  margin: 0 0 1.3rem;
+  font-size: 0.86rem;
+  line-height: 1.6;
+}
+.prose-chapter pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-ink-200);
+  font-size: inherit;
+}
+.prose-chapter blockquote {
+  border-left: 3px solid var(--color-flame-500);
+  padding-left: 1rem;
+  margin: 0 0 1.2rem;
+  color: var(--color-ink-300);
+}
+.prose-chapter table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 1.4rem;
+  font-size: 0.92rem;
+  display: block;
+  overflow-x: auto;
+}
+.prose-chapter th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-ink-100);
+  border-bottom: 1px solid var(--color-ink-600);
+  padding: 0.55rem 0.75rem;
+  white-space: nowrap;
+}
+.prose-chapter td {
+  border-bottom: 1px solid var(--color-ink-800);
+  padding: 0.55rem 0.75rem;
+}
+.prose-chapter hr {
+  border: none;
+  border-top: 1px solid var(--color-ink-800);
+  margin: 2rem 0;
+}
+.prose-chapter .katex {
+  font-size: 1em;
+}

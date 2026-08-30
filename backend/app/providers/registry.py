@@ -1,0 +1,36 @@
+"""Chooses which GPU provider to use and reports what is configured."""
+
+from typing import Any
+
+from ..config import get_settings
+from .base import Provider
+from .modal_provider import ModalProvider
+from .runpod_provider import RunPodProvider
+
+_BUILDERS = {"modal": ModalProvider, "runpod": RunPodProvider}
+
+
+def get_provider(name: str | None = None) -> Provider:
+    settings = get_settings()
+    key = (name or settings.gpu_provider or "modal").lower()
+    builder = _BUILDERS.get(key)
+    if builder is None:
+        raise ValueError(f"Unknown GPU provider: {key}")
+    return builder()
+
+
+def provider_status() -> dict[str, Any]:
+    """What each provider looks like right now, for the UI's provider picker."""
+    settings = get_settings()
+    providers = []
+    for key, builder in _BUILDERS.items():
+        ok, why = builder().available()
+        providers.append(
+            {
+                "name": key,
+                "available": ok,
+                "reason": why,
+                "preferred": key == "modal",
+            }
+        )
+    return {"default": settings.gpu_provider, "providers": providers}

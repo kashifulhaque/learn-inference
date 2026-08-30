@@ -1,0 +1,19 @@
+{
+  "id": "05-rope",
+  "title": "Rotary position embeddings",
+  "brief": "Build the angle tables, apply a partial rotation, and prove the relative-position property.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "needs_weights": false,
+  "timeout": 600,
+  "metrics": [
+    "rotary_dim",
+    "relative_error"
+  ],
+  "hints": [
+    "inv_freq[j] = theta ** (-2j/d), for j over half the rotary dimension.",
+    "The half-split rotation pairs channel j with channel j + rotary_dim/2.",
+    "Only the first rotary_dim channels rotate. The rest pass through unchanged."
+  ],
+  "device_agnostic": true
+}

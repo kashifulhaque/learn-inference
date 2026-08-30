@@ -1,0 +1,15 @@
+{
+  "id": "16-scheduler",
+  "title": "Continuous batching",
+  "brief": "Schedule per iteration, with decode priority, chunked prefill, and preemption.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "needs_weights": false,
+  "timeout": 600,
+  "metrics": ["steps", "budget_utilisation", "preemptions"],
+  "hints": [
+    "Schedule decodes before prefills: a running sequence already holds blocks, and finishing it frees them.",
+    "Stop admitting when the head of the queue does not fit. Skipping ahead starves long requests.",
+    "Preempt the newest running sequence, not the oldest: the oldest are closest to finishing."
+  ]
+}

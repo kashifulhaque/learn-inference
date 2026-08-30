@@ -1,0 +1,14 @@
+{
+  "id": "00-hello-gpu",
+  "title": "Confirm the GPU",
+  "brief": "Report what hardware you are running on, and compute its ridge point.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "needs_weights": false,
+  "timeout": 600,
+  "metrics": ["ridge_point", "memory_gb"],
+  "hints": [
+    "torch.cuda.get_device_properties(0) has name, total_memory, and multi_processor_count.",
+    "The ridge point is peak FLOP/s divided by peak bytes/s."
+  ]
+}

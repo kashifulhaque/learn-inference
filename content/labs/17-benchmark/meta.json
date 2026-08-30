@@ -1,0 +1,16 @@
+{
+  "id": "17-benchmark",
+  "title": "Benchmarks that mean something",
+  "brief": "Compute TTFT, ITL, throughput, and goodput, and generate Poisson load.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 900,
+  "metrics": ["p99_ttft", "throughput", "goodput_ratio"],
+  "hints": [
+    "Inter-token latency spans the gaps between tokens, so a run of n tokens has n - 1 gaps.",
+    "Poisson arrivals means exponential gaps: -ln(U) / rate for U uniform on (0, 1].",
+    "Goodput counts only the requests that met the target, not all of them."
+  ]
+}
