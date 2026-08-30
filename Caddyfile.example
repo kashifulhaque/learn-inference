@@ -1,16 +1,20 @@
 # Add this block to the VM's Caddyfile, then reload Caddy:
 #
 #   cd ~/docs/caddy && docker compose exec caddy caddy reload \
-#       --config /etc/caddy/Caddyfile
+#       --config /etc/caddy/Caddyfile --adapter caddyfile
 #
-# Point an A record for inference.ifkash.dev at this host first, or the ACME
-# HTTP-01 challenge cannot complete.
+# Point an A record for the host at this machine first, or the ACME HTTP-01
+# challenge cannot complete. Validate before reloading:
+#
+#   docker compose exec caddy caddy validate \
+#       --config /etc/caddy/Caddyfile --adapter caddyfile
 
-inference.ifkash.dev {
+qwen.ifkash.dev {
 	encode zstd gzip
 
-	# Lab output arrives as server-sent events, so response buffering must stay
-	# off and the timeout must outlast a long GPU run.
+	# Lab output is a server-sent event stream that stays open for the length of
+	# a GPU run, so response buffering must be off and the timeouts must outlast
+	# the longest lab.
 	reverse_proxy learn-inference:8000 {
 		flush_interval -1
 		transport http {

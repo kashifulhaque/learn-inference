@@ -28,10 +28,22 @@ def run(submission):
 
     ridge = submission.ridge_point()
     c.check(
-        "ridge point is about 161 FLOPs/byte for an A100 80GB PCIe",
+        "ridge point follows from the two peak rates",
         lambda: abs(ridge - 161.2) < 2.0,
-        f"got {ridge:.1f}",
+        f"got {ridge:.1f} FLOPs/byte from 312 TFLOP/s and 1935 GB/s",
     )
+
+    # Which 80GB A100 you get is up to the provider, and the two variants differ
+    # in memory bandwidth. Say so, because it moves every roofline number.
+    name = str(report.get("name", ""))
+    if "SXM" in name:
+        print(
+            "\n  This is the SXM4 module, rated at 2039 GB/s rather than the "
+            "1935 the\n  starter assumes, so its ridge point is 153, not 161. "
+            "Runs land on\n  either variant; chapter 10 covers what that does "
+            "to your measurements.",
+            flush=True,
+        )
 
     c.metric("gpu_name", report.get("name"))
     c.metric("memory_gb", report.get("memory_gb"))

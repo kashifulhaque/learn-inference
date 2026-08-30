@@ -20,7 +20,7 @@ that with one number per operation, and it's usually right.
 ## The model
 
 A GPU has two peak rates: arithmetic and memory bandwidth. For the A100 80GB
-PCIe, which is what the labs run on:
+PCIe card:
 
 | Quantity | Value |
 |---|---|
@@ -32,8 +32,10 @@ PCIe, which is what the labs run on:
 | L2 cache | 40 MB |
 
 Check which card you have before trusting any of these. The 80GB A100 ships in
-two forms: the SXM4 module is rated at 2039 GB/s and the PCIe card at 1935.
-Chapter 0's lab prints the name.
+two forms — the SXM4 module rated at 2039 GB/s and the PCIe card at 1935 — and a
+cloud provider hands you whichever is free. Two runs of the same lab can land on
+different silicon, which is one reason to be suspicious of a 5% difference
+between them. Chapter 0's lab prints the name.
 
 The *ridge point* is the ratio. An operation that does more than 161 FLOPs per
 byte it moves can, in principle, saturate the tensor cores. An operation below

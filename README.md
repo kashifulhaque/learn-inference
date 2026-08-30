@@ -153,14 +153,15 @@ is where a reverse proxy should send traffic. See
 [Caddyfile.example](Caddyfile.example) for a Caddy block that keeps server-sent
 events unbuffered, which the lab output stream needs.
 
-The compose file also publishes `127.0.0.1:8087` so the app is reachable through
-an SSH tunnel before its DNS record exists:
+The deployment this repository targets runs at
+[qwen.ifkash.dev](https://qwen.ifkash.dev).
+
+The compose file also publishes `127.0.0.1:8087`, so the app stays reachable
+through an SSH tunnel if the proxy or its certificate is ever the problem:
 
 ```bash
 ssh -L 8087:127.0.0.1:8087 ifkash@vm.ifkash.dev
 ```
-
-Remove that `ports` entry once the proxy is in front.
 
 For the deployment this repository targets:
 
@@ -187,9 +188,15 @@ Every lab's worked solution has been run on the A100 the course targets. Some of
 the numbers contradict what the textbook byte counts predict, and the chapters
 say so rather than rounding toward the tidy answer.
 
+Modal allocates whichever 80GB A100 is free, and the two variants do not have
+the same memory bandwidth: the SXM4 module is rated at 2039 GB/s and the PCIe
+card at 1935. Runs land on either, so timings move a little between them. The
+numbers below were taken on the PCIe card; chapter 0's lab prints which one you
+got.
+
 | Measurement | Result |
 |---|---|
-| GPU Modal serves | A100 80GB PCIe, compute capability 8.0, 108 SMs |
+| GPU | A100 80GB, compute capability 8.0, 108 SMs |
 | Device-to-device copy | 1275 GB/s, against a rating of 1935 |
 | Hand-written CUDA vector add | 1304 GB/s — the same, because there is nothing to beat |
 | Coalesced against strided access | 6.9x |

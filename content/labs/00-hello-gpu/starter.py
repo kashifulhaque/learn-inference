@@ -6,7 +6,9 @@ anything harder depends on it.
 
 import torch
 
-# Published A100 80GB peaks.
+# Published A100 80GB PCIe peaks. The SXM4 module is rated at 2039 GB/s instead,
+# and a provider gives you whichever is free, so check the name your report
+# returns against the numbers you assume here.
 PEAK_BF16_TFLOPS = 312.0
 PEAK_BANDWIDTH_GBS = 1935.0
 
