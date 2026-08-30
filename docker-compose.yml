@@ -1,20 +1,39 @@
+# learn-inference — the course app and its lab runner.
+#
+# Caddy on this host terminates TLS and proxies to learn-inference:8000 over the
+# shared `edge` network, the same way the other services here are reached.
+#
+#   docker compose up -d --build
+#
+# This host is not wired to CI. After editing anything here, re-run that line,
+# or run scripts/deploy.sh from a workstation.
+
+name: learn-inference
+
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile
-    image: learn-inference:latest
+    image: learn-inference:local
     container_name: learn-inference
     restart: unless-stopped
+    expose:
+      - "8000"
+    ports:
+      # Localhost only. Caddy reaches the container over `edge`, so this is not
+      # a route in from outside; it exists so the app can be reached through an
+      # SSH tunnel before its DNS record lands:
+      #   ssh -L 8087:127.0.0.1:8087 ifkash@vm.ifkash.dev
+      - "127.0.0.1:8087:8000"
     env_file:
       - .env
     environment:
       DATA_DIR: /data
-    ports:
-      # Bound to localhost: Caddy terminates TLS and proxies to this port.
-      - "127.0.0.1:8087:8000"
     volumes:
       - learn-inference-data:/data
+    networks:
+      - edge
     healthcheck:
       test:
         - CMD
@@ -28,3 +47,7 @@ services:
 
 volumes:
   learn-inference-data:
+
+networks:
+  edge:
+    external: true

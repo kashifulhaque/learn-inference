@@ -24,3 +24,6 @@ data/
 
 # OS
 .DS_Store
+
+# Build metadata
+frontend/tsconfig.tsbuildinfo

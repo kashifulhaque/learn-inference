@@ -108,7 +108,9 @@ run out.
    modal deploy gpu/modal_app.py
    ```
 
-4. Warm the weight cache once. This is a 54 GB download and takes a while:
+4. Optional: warm the weight cache. Every lab in the course is self-contained
+   and none of them need the 27B weights, so skip this unless you want to work
+   with the real model. It is a 54 GB download:
 
    ```bash
    modal run gpu/modal_app.py::download_model
@@ -121,6 +123,17 @@ run out.
    ```
 
 Put `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` in `.env`.
+
+The lab code and the engine reach the GPU as a Modal mount, so after editing
+either one you must redeploy. Redeploying alone is not always enough: a warm
+container keeps serving the previous mount until it scales down, which takes up
+to five minutes. To pick up a change immediately, stop the app first:
+
+```bash
+modal app stop learn-inference --yes && modal deploy gpu/modal_app.py
+```
+
+A lab that fails on code you know you fixed is almost always this.
 
 ### RunPod
 
@@ -135,9 +148,19 @@ of credit, the app says so and offers the switch.
 docker compose up -d --build
 ```
 
-The app listens on `127.0.0.1:8087`. Put a reverse proxy in front of it; see
-[Caddyfile.example](Caddyfile.example) for a configuration that keeps
-server-sent events unbuffered, which the lab output stream needs.
+The container joins the external `edge` network and answers on port 8000, which
+is where a reverse proxy should send traffic. See
+[Caddyfile.example](Caddyfile.example) for a Caddy block that keeps server-sent
+events unbuffered, which the lab output stream needs.
+
+The compose file also publishes `127.0.0.1:8087` so the app is reachable through
+an SSH tunnel before its DNS record exists:
+
+```bash
+ssh -L 8087:127.0.0.1:8087 ifkash@vm.ifkash.dev
+```
+
+Remove that `ports` entry once the proxy is in front.
 
 For the deployment this repository targets:
 
@@ -157,6 +180,30 @@ run history. The session is a signed, HTTP-only cookie.
 Labs execute code you type. That code runs in the provider's sandbox, never on
 the web host, but it does run with your Hugging Face token in its environment.
 Do not widen access beyond people you would give that token to.
+
+## Measured on the target hardware
+
+Every lab's worked solution has been run on the A100 the course targets. Some of
+the numbers contradict what the textbook byte counts predict, and the chapters
+say so rather than rounding toward the tidy answer.
+
+| Measurement | Result |
+|---|---|
+| GPU Modal serves | A100 80GB PCIe, compute capability 8.0, 108 SMs |
+| Device-to-device copy | 1275 GB/s, against a rating of 1935 |
+| Hand-written CUDA vector add | 1304 GB/s — the same, because there is nothing to beat |
+| Coalesced against strided access | 6.9x |
+| Triton RMSNorm | 945 GB/s, 74% of the copy ceiling |
+| Fused RMSNorm and residual, past L2 | 1.10x |
+| Fused RMSNorm and residual, within L2 | 0.92x — the saved traffic never left cache |
+| Fused SwiGLU | 1.52x |
+| Triton FlashAttention against the vendor kernel | 0.63x at 8k tokens |
+| FlashAttention peak memory against naive | 27.5x less |
+| Chunked delta rule against the sequential loop | agrees to 2e-6 |
+
+The fusion result is the interesting one. The byte count predicts a 20% saving
+either way, and measuring across sizes shows the saving only appears once the
+intermediate stops fitting in the A100's 40 MB L2. Chapter 13 works through it.
 
 ## Check the labs
 

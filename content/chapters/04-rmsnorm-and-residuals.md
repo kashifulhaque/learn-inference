@@ -85,7 +85,7 @@ depth. The final `norm` before the output projection exists to undo that.
 ## Where the time goes
 
 RMSNorm reads 2 bytes per element and writes 2, and does about 4 FLOPs. That's an
-arithmetic intensity near 1, against an A100 ridge point of about 153. It is
+arithmetic intensity near 1, against an A100 ridge point of about 161. It is
 entirely bandwidth bound, and the only way to speed it up is to move fewer bytes.
 
 Fusing it with the residual add does exactly that. Unfused, the pair reads `x`,

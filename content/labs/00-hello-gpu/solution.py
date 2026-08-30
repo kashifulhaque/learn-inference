@@ -1,7 +1,7 @@
 import torch
 
 PEAK_BF16_TFLOPS = 312.0
-PEAK_BANDWIDTH_GBS = 2039.0
+PEAK_BANDWIDTH_GBS = 1935.0
 
 
 def gpu_report() -> dict:

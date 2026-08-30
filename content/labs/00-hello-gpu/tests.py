@@ -28,8 +28,8 @@ def run(submission):
 
     ridge = submission.ridge_point()
     c.check(
-        "ridge point is about 153 FLOPs/byte",
-        lambda: abs(ridge - 153.0) < 2.0,
+        "ridge point is about 161 FLOPs/byte for an A100 80GB PCIe",
+        lambda: abs(ridge - 161.2) < 2.0,
         f"got {ridge:.1f}",
     )
 

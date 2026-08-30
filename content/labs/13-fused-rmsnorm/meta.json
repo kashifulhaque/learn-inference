@@ -6,10 +6,16 @@
   "needs_gpu": true,
   "needs_weights": false,
   "timeout": 900,
-  "metrics": ["fusion_speedup", "achieved_gbs", "swiglu_speedup"],
+  "metrics": [
+    "fusion_speedup_past_l2",
+    "fusion_speedup_within_l2",
+    "achieved_gbs",
+    "swiglu_speedup"
+  ],
   "hints": [
     "One block per row keeps the row in registers between the reduction and the scaling.",
     "BLOCK must be a power of two: use triton.next_power_of_2 and mask the tail.",
-    "Cast to tl.float32 on load and back to the output dtype on store."
+    "Cast to tl.float32 on load and back to the output dtype on store.",
+    "Fusion saves HBM traffic. When the intermediate fits in the A100's 40 MB L2, that traffic was never going to HBM, so measure across sizes."
   ]
 }

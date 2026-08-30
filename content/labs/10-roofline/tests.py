@@ -16,8 +16,8 @@ def run(submission):
             f"got {submission.matmul_flops(4, 8, 16)}")
 
     ridge = submission.ridge_point()
-    c.check("the A100 ridge point is about 153 FLOPs/byte",
-            lambda: abs(ridge - 153.0) < 2.0, f"got {ridge:.1f}")
+    c.check("the A100 80GB PCIe ridge point is about 161 FLOPs/byte",
+            lambda: abs(ridge - 161.2) < 2.0, f"got {ridge:.1f}")
 
     flops1, bytes1 = submission.mlp_cost(1, HIDDEN, INTERMEDIATE)
     expected_flops = 3 * 2 * HIDDEN * INTERMEDIATE
@@ -32,7 +32,7 @@ def run(submission):
     intensity_2048 = submission.arithmetic_intensity(
         *submission.mlp_cost(2048, HIDDEN, INTERMEDIATE))
 
-    c.check("decode at batch 1 sits near intensity 2",
+    c.check("decode at batch 1 sits near intensity 1",
             lambda: 0.5 < intensity_1 < 4, f"got {intensity_1:.2f}")
     c.check("prefill at 2048 tokens is far above the ridge point",
             lambda: intensity_2048 > 5 * ridge, f"got {intensity_2048:.0f}")

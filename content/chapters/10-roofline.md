@@ -19,20 +19,31 @@ that with one number per operation, and it's usually right.
 
 ## The model
 
-A GPU has two peak rates: arithmetic and memory bandwidth. For the A100 80GB:
+A GPU has two peak rates: arithmetic and memory bandwidth. For the A100 80GB
+PCIe, which is what the labs run on:
 
 | Quantity | Value |
 |---|---|
 | bfloat16 tensor core throughput | 312 TFLOP/s |
-| HBM2e bandwidth | 2039 GB/s |
-| Ridge point | 153 FLOPs/byte |
+| HBM2e bandwidth, rated | 1935 GB/s |
+| HBM2e bandwidth, measured by a plain copy | 1275 GB/s |
+| Ridge point | 161 FLOPs/byte |
 | Streaming multiprocessors | 108 |
 | L2 cache | 40 MB |
 
-The *ridge point* is the ratio. An operation that does more than 153 FLOPs per
+Check which card you have before trusting any of these. The 80GB A100 ships in
+two forms: the SXM4 module is rated at 2039 GB/s and the PCIe card at 1935.
+Chapter 0's lab prints the name.
+
+The *ridge point* is the ratio. An operation that does more than 161 FLOPs per
 byte it moves can, in principle, saturate the tensor cores. An operation below
 that can't — it finishes its arithmetic before the next bytes arrive, and adding
 compute does nothing.
+
+The rated bandwidth is not reachable. A device-to-device copy, which is the
+simplest bandwidth-bound kernel there is, measures 1275 GB/s on this card — 66%
+of rated. Compare your kernels against that number, not against 1935, or you
+will chase a ceiling that does not exist.
 
 For any operation, count FLOPs and bytes moved, divide, and compare:
 
@@ -61,17 +72,17 @@ For *T* tokens, arithmetic intensity is about:
 ```
 
 So intensity is roughly *T*, the number of tokens in the batch. Compare against
-153:
+161:
 
 | Tokens in batch | Intensity | Bound by |
 |---|---|---|
-| 1 (decode, batch 1) | ~1 | Memory, by 150x |
+| 1 (decode, batch 1) | ~1 | Memory, by 160x |
 | 16 | ~16 | Memory, by 10x |
-| 153 | ~153 | The ridge point |
+| 161 | ~161 | The ridge point |
 | 2048 (prefill) | ~2000 | Compute |
 
 This one table explains most of the engine's design. Decode at batch 1 wastes
-99.3% of the A100's arithmetic. Getting 153 tokens into a forward pass is what
+99.4% of the A100's arithmetic. Getting 161 tokens into a forward pass is what
 makes the GPU work, and that's what continuous batching and chunked prefill exist
 to do.
 
@@ -98,14 +109,18 @@ Convert a measured time into achieved bandwidth and compare against peak:
 
 ```python
 achieved_gbs = bytes_moved / (elapsed_s * 1e9)
-efficiency = achieved_gbs / 2039
+efficiency = achieved_gbs / 1275   # against the measured copy, not the rating
 ```
 
-A memory-bound kernel at 85% of peak bandwidth is finished. Rewriting it is
+A memory-bound kernel at 85% of the copy ceiling is finished. Rewriting it is
 wasted effort; the only remaining move is to make it touch less data, usually by
 fusing it with a neighbor. A memory-bound kernel at 30% has a real problem —
 uncoalesced access, too few blocks to fill the SMs, or a launch overhead that
 dominates a tiny kernel.
+
+For reference, the fused RMSNorm in chapter 13 reaches 945 GB/s on 4096 rows of
+5120 columns, which is 74% of the copy ceiling and 49% of the rating. Quoting
+the second number would make a good kernel look broken.
 
 ## Two things the roofline doesn't cover
 

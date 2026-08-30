@@ -1,12 +1,17 @@
-# Add this to the VM's Caddyfile, then reload Caddy.
-# Caddy obtains and renews the certificate on its own.
+# Add this block to the VM's Caddyfile, then reload Caddy:
+#
+#   cd ~/docs/caddy && docker compose exec caddy caddy reload \
+#       --config /etc/caddy/Caddyfile
+#
+# Point an A record for inference.ifkash.dev at this host first, or the ACME
+# HTTP-01 challenge cannot complete.
 
 inference.ifkash.dev {
 	encode zstd gzip
 
-	# Lab output arrives as server-sent events, so buffering must stay off and
-	# the timeout must outlast a long GPU run.
-	reverse_proxy 127.0.0.1:8087 {
+	# Lab output arrives as server-sent events, so response buffering must stay
+	# off and the timeout must outlast a long GPU run.
+	reverse_proxy learn-inference:8000 {
 		flush_interval -1
 		transport http {
 			response_header_timeout 30m

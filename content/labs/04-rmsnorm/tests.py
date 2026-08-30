@@ -1,7 +1,10 @@
 import torch
 from lab_common import Checks, close, require_cuda
 
-PEAK_BANDWIDTH_GBS = 2039.0
+# An A100 80GB PCIe is rated at 1935 GB/s. A plain copy reaches about
+# 1275, which is the ceiling a real kernel is measured against.
+PEAK_BANDWIDTH_GBS = 1935.0
+COPY_CEILING_GBS = 1275.0
 
 
 def reference(x, weight, eps=1e-6):
@@ -73,5 +76,11 @@ def run(submission):
     c.metric("bf16_error", round(err_bf16, 6))
     c.metric("median_ms", timing.median_ms)
     c.metric("achieved_gbs", round(achieved, 1))
-    c.metric("bandwidth_efficiency", round(achieved / PEAK_BANDWIDTH_GBS, 3))
+    c.metric("vs_copy_ceiling", round(achieved / COPY_CEILING_GBS, 3))
+    print(
+        "\nThis counts only the bytes an ideal kernel would move. A PyTorch\n"
+        "RMSNorm moves several times that, because every intermediate is a\n"
+        "separate tensor. Chapter 13 fuses them and closes most of the gap.",
+        flush=True,
+    )
     return c.finish()

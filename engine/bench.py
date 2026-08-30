@@ -90,16 +90,31 @@ def gpu_info() -> dict[str, Any]:
     }
 
 
-# Published A100 numbers, used for roofline work in chapters 8 and 9.
-A100_80GB = {
-    "hbm_bandwidth_gbs": 2039.0,
+# Published A100 numbers, used for the roofline work in chapter 10.
+#
+# The 80GB part ships in two forms and they do not have the same memory
+# bandwidth. Modal serves the PCIe card, so that is the default here. Compare
+# any measurement against the card you actually got, which `gpu_info` reports.
+#
+# A plain device-to-device copy reaches about 1275 GB/s on the PCIe part, or 66%
+# of its rated 1935. That is the honest ceiling for a bandwidth-bound kernel;
+# the rated figure is not reachable by any kernel.
+A100_80GB_PCIE = {
+    "hbm_bandwidth_gbs": 1935.0,
+    "measured_copy_gbs": 1275.0,
     "bf16_tflops": 312.0,
     "fp32_tflops": 19.5,
     "tf32_tflops": 156.0,
     "l2_cache_mb": 40,
     "sms": 108,
 }
-A100_40GB = {**A100_80GB, "hbm_bandwidth_gbs": 1555.0, "l2_cache_mb": 40}
+A100_80GB_SXM = {**A100_80GB_PCIE, "hbm_bandwidth_gbs": 2039.0,
+                 "measured_copy_gbs": 1400.0}
+A100_40GB = {**A100_80GB_PCIE, "hbm_bandwidth_gbs": 1555.0,
+             "measured_copy_gbs": 1100.0}
+
+# The default the labs and the roofline helpers use.
+A100_80GB = A100_80GB_PCIE
 
 
 def arithmetic_intensity(flops: float, bytes_moved: float) -> float:

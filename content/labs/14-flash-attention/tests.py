@@ -62,7 +62,10 @@ def run(submission):
         reference = naive(q, k, v, causal=causal)
         err = (mine.float() - reference).abs().max().item()
         worst = max(worst, err)
-        c.check(f"{label}", lambda e=err: (e < 1e-3, f"max abs error {e:.2e}"))
+        # tl.dot runs float32 inputs through the TF32 tensor cores, which have
+        # 10 mantissa bits, so about 1e-3 of relative error is expected and is
+        # not a bug. Anything much larger is.
+        c.check(f"{label}", lambda e=err: (e < 5e-3, f"max abs error {e:.2e}"))
 
     q, k, v = tensors(256, 256, torch.bfloat16)
     mine = submission.flash_attention(q, k, v, causal=True)
@@ -77,7 +80,7 @@ def run(submission):
     step = submission.flash_attention(q[:, :, -1:], k, v, causal=True)
     step_err = (step[:, :, 0].float() - full[:, :, -1].float()).abs().max().item()
     c.check("a decode step matches the prefill's last row",
-            lambda: (step_err < 1e-3, f"max abs error {step_err:.2e}"))
+            lambda: (step_err < 5e-3, f"max abs error {step_err:.2e}"))
 
     from engine.bench import benchmark
 
@@ -124,6 +127,15 @@ def run(submission):
     )
 
     speedup_8k = results[8192][1] / results[8192][0]
+    # PyTorch dispatches scaled_dot_product_attention to a vendor kernel that
+    # has had far more tuning than this one. Landing within about 2x of it is a
+    # good result for a kernel you can read in one sitting; the memory
+    # behaviour, not the clock, is what this lab is for.
+    c.check(
+        "flash lands within 3x of the vendor kernel at 8k",
+        lambda: speedup_8k > 0.33,
+        f"{speedup_8k:.2f}x of scaled_dot_product_attention",
+    )
     c.metric("max_error", float(f"{worst:.3e}"))
     c.metric("speedup_8k", round(speedup_8k, 2))
     c.metric("peak_memory_ratio", round(ratio, 1))

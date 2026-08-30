@@ -3,7 +3,7 @@
 Decide what limits each operation before trying to make it faster.
 """
 
-A100_80GB = {"bf16_tflops": 312.0, "hbm_bandwidth_gbs": 2039.0}
+A100_80GB = {"bf16_tflops": 312.0, "hbm_bandwidth_gbs": 1935.0}
 
 
 def matmul_flops(m: int, k: int, n: int) -> int:

@@ -120,8 +120,9 @@ A decode step at batch size 1 reads:
 - The KV cache for the full-attention layers: 64 KB per token of context.
 - The recurrent state: 147.8 MiB.
 
-At 2039 GB/s, reading the weights alone takes 26 ms, which caps you at about 38
-tokens per second no matter how good your kernels are. At 32k context the cache
+At 1935 GB/s, reading the weights alone takes 28 ms, which caps you at about 36
+tokens per second no matter how good your kernels are. Measured bandwidth is
+closer to 1275 GB/s, so 42 ms and 24 tokens per second is the realistic figure. At 32k context the cache
 adds 2.1 GiB, another 1 ms — small next to the weights, but it grows with both
 context and batch size while the weight read doesn't.
 

@@ -4,7 +4,10 @@ import time
 import torch
 from lab_common import Checks, close, require_cuda
 
-PEAK_BANDWIDTH_GBS = 2039.0
+# An A100 80GB PCIe is rated at 1935 GB/s. A plain copy reaches about
+# 1275, which is the ceiling a real kernel is measured against.
+PEAK_BANDWIDTH_GBS = 1935.0
+COPY_CEILING_GBS = 1275.0
 
 
 def run(submission):
@@ -82,13 +85,14 @@ def run(submission):
         f"{ratio:.1f}x ({coalesced_gbs:.0f} vs {strided_gbs:.0f} GB/s)",
     )
     c.check(
-        "the coalesced kernel reaches a reasonable share of peak bandwidth",
-        lambda: coalesced_gbs / PEAK_BANDWIDTH_GBS > 0.4,
-        f"{coalesced_gbs / PEAK_BANDWIDTH_GBS:.0%} of peak",
+        "the coalesced kernel reaches most of what a plain copy achieves",
+        lambda: coalesced_gbs / COPY_CEILING_GBS > 0.6,
+        f"{coalesced_gbs:.0f} GB/s, {coalesced_gbs / COPY_CEILING_GBS:.0%} of the "
+        f"copy ceiling",
     )
 
     c.metric("coalesced_gbs", round(coalesced_gbs, 1))
     c.metric("strided_gbs", round(strided_gbs, 1))
     c.metric("coalescing_ratio", round(ratio, 1))
-    c.metric("bandwidth_efficiency", round(coalesced_gbs / PEAK_BANDWIDTH_GBS, 3))
+    c.metric("vs_copy_ceiling", round(coalesced_gbs / COPY_CEILING_GBS, 3))
     return c.finish()

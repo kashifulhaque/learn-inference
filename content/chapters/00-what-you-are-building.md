@@ -37,8 +37,8 @@ compute a single token's worth of arithmetic. The tensor cores idle while the
 memory system works. Decode is **memory bound**.
 
 The numbers make the gap concrete. An A100 80GB delivers about 312 TFLOP/s in
-bfloat16 and about 2039 GB/s of memory bandwidth. Dividing one by the other gives
-the *ridge point*: roughly 153 FLOPs per byte. An operation that does less
+bfloat16 and 1935 GB/s of memory bandwidth. Dividing one by the other gives
+the *ridge point*: roughly 161 FLOPs per byte. An operation that does less
 arithmetic than that per byte it touches can't reach peak compute, no matter how
 good the kernel is. Prefill on a 2000-token prompt sits well above the ridge
 point. Decode at batch size 1 sits at about 2. That is a 75x gap, and closing it

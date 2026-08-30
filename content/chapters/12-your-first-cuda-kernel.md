@@ -87,9 +87,16 @@ out[i] = a[i];
 out[i] = a[i * 32];
 ```
 
-The lab measures both. The gap is roughly 20 times on an A100, and it's the single
-most important performance property of any memory-bound kernel — which, as chapter
-10 showed, is most of them.
+The lab measures both. On an A100 the coalesced kernel reaches 1304 GB/s and the
+strided one 189 GB/s — a factor of 6.9. A warp's 32 lanes fall into at most 32
+separate transactions when strided, but consecutive warps still reuse cache
+lines, so the loss is nearer 7x than the 32x the worst case suggests. It is
+still the single most important performance property of any memory-bound kernel,
+and as chapter 10 showed, most of them are.
+
+That 1304 GB/s is worth noting on its own: a hand-written vector add matches a
+`torch.Tensor.clone`, because there is nothing to beat. Both saturate the memory
+bus, and the bus tops out around 1300 GB/s on a card rated at 1935.
 
 ## Grid sizing
 

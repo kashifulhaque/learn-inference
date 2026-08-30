@@ -29,8 +29,13 @@ app = modal.App(APP_NAME)
 models_volume = modal.Volume.from_name("learn-inference-models", create_if_missing=True)
 MODELS_PATH = "/models"
 
+# A CUDA *devel* base, not a runtime one. Chapter 12 compiles CUDA C++ at run
+# time with torch.utils.cpp_extension.load_inline, which needs nvcc and the CUDA
+# headers. The PyTorch wheels bundle the runtime libraries but not the compiler.
 image = (
-    modal.Image.debian_slim(python_version="3.12")
+    modal.Image.from_registry(
+        "nvidia/cuda:12.8.1-devel-ubuntu24.04", add_python="3.12"
+    )
     .apt_install("git", "build-essential", "ninja-build")
     .pip_install(
         "torch==2.8.0",
@@ -52,6 +57,11 @@ image = (
             "LI_ENGINE_DIR": "/repo",
             "MODEL_ID": MODEL_ID,
             "SMALL_MODEL_ID": SMALL_MODEL_ID,
+            "CUDA_HOME": "/usr/local/cuda",
+            "PATH": "/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin",
+            # Ampere is compute capability 8.0. Naming it keeps nvcc from
+            # building for every architecture it knows, which is slow.
+            "TORCH_CUDA_ARCH_LIST": "8.0",
         }
     )
     .add_local_dir(REPO_ROOT / "engine", "/repo/engine")
