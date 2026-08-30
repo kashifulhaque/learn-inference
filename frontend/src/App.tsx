@@ -55,7 +55,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full overflow-hidden">
       <Sidebar
         chapters={chapters}
         progress={progress}
@@ -67,23 +67,33 @@ export default function App() {
         <button
           aria-label="Close the menu"
           onClick={() => setMenuOpen(false)}
-          className="fixed inset-0 z-20 bg-ink-950/70 lg:hidden"
+          className="fixed inset-0 z-20 bg-ink-950/75 backdrop-blur-sm lg:hidden"
         />
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-ink-800 bg-ink-900/80 px-5 py-3 backdrop-blur lg:justify-end">
-          <button
-            onClick={() => setMenuOpen((open) => !open)}
-            className="rounded-lg border border-ink-700 px-3 py-1.5 text-xs text-ink-300 lg:hidden"
-          >
-            Chapters
-          </button>
-          <div className="flex items-center gap-3 text-xs">
-            <span className="text-ink-400">{name}</span>
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-ink-800/80 bg-ink-900/65 px-5 backdrop-blur-xl lg:px-8">
+          <div className="flex items-center gap-3 lg:hidden">
+            <button
+              onClick={() => setMenuOpen((open) => !open)}
+              className="flex h-9 items-center gap-2 rounded-lg border border-ink-700 bg-ink-850 px-3 text-xs font-semibold text-ink-200 transition hover:border-ink-600"
+            >
+              <span className="text-base leading-none">☰</span>
+              Course
+            </button>
+          </div>
+          <div className="hidden items-center gap-2 text-xs text-ink-500 lg:flex">
+            <span className="h-1.5 w-1.5 rounded-full bg-flame-500" />
+            Learning workspace
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="hidden text-xs text-ink-500 sm:inline">Signed in as</span>
+            <span className="rounded-lg border border-ink-700/70 bg-ink-850 px-2.5 py-1.5 text-xs font-medium text-ink-200">
+              {name}
+            </span>
             <button
               onClick={signOut}
-              className="text-ink-500 underline underline-offset-4 transition hover:text-ink-200"
+              className="text-xs font-medium text-ink-500 transition hover:text-flame-400"
             >
               Sign out
             </button>
