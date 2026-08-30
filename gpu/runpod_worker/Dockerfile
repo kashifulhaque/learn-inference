@@ -8,7 +8,8 @@ ENV PYTHONUNBUFFERED=1 \
     LI_LABS_DIR=/repo/content/labs \
     LI_ENGINE_DIR=/repo
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's|http://|https://|g' /etc/apt/sources.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
         git build-essential ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
