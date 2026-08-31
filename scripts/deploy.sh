@@ -1,59 +1,111 @@
 #!/usr/bin/env bash
 #
-# Deploys learn-inference to the VM over SSH.
+# Deploys learn-inference to the VM.
 #
-# Syncs the repository, keeps whatever .env is already on the server, rebuilds
-# the image, and waits for the health check to pass.
+# The VM holds a clone of this repository, so a deploy is: push a commit, then
+# have the VM fetch that commit and rebuild. What is running is therefore a
+# commit you can name, which is the part rsync could never tell you.
+#
+# The server keeps its own .env, which is not in the repository, and its data
+# lives in a Docker volume. Neither is touched here.
 #
 # Usage:
-#   scripts/deploy.sh [--host HOST] [--path PATH] [--key KEY]
+#   scripts/deploy.sh [--host HOST] [--path PATH] [--key KEY] [--branch BRANCH]
+#
+# First time on a new server, or to convert an rsync deploy to a clone:
+#   scripts/deploy.sh --init
 
 set -euo pipefail
 
 HOST="${LI_HOST:-ifkash@vm.ifkash.dev}"
 REMOTE_PATH="${LI_REMOTE_PATH:-~/docs/learn-inference}"
 SSH_KEY="${LI_SSH_KEY:-$HOME/.ssh/id_ed25519_kh}"
+BRANCH="${LI_BRANCH:-main}"
+# The VM pulls over HTTPS: the repository is public, so it needs no deploy key.
+REPO_URL="${LI_REPO_URL:-https://github.com/kashifulhaque/learn-inference.git}"
+INIT=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --host) HOST="$2"; shift 2 ;;
-    --path) REMOTE_PATH="$2"; shift 2 ;;
-    --key)  SSH_KEY="$2"; shift 2 ;;
+    --host)   HOST="$2"; shift 2 ;;
+    --path)   REMOTE_PATH="$2"; shift 2 ;;
+    --key)    SSH_KEY="$2"; shift 2 ;;
+    --branch) BRANCH="$2"; shift 2 ;;
+    --init)   INIT=1; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SSH_OPTS=(-i "$SSH_KEY" -o StrictHostKeyChecking=accept-new)
+cd "$REPO_ROOT"
 
-echo "==> Syncing $REPO_ROOT to $HOST:$REMOTE_PATH"
-ssh "${SSH_OPTS[@]}" "$HOST" "mkdir -p $REMOTE_PATH"
-rsync -az --delete \
-  --exclude '.git' \
-  --exclude '.venv' \
-  --exclude 'node_modules' \
-  --exclude 'frontend/dist' \
-  --exclude '__pycache__' \
-  --exclude '.env' \
-  --exclude 'data' \
-  -e "ssh ${SSH_OPTS[*]}" \
-  "$REPO_ROOT/" "$HOST:$REMOTE_PATH/"
+# --- checks before anything is touched on the server ------------------------
 
-echo "==> Checking for .env on the server"
-if ! ssh "${SSH_OPTS[@]}" "$HOST" "test -f $REMOTE_PATH/.env"; then
-  echo "No .env on the server. Copy .env.example to $REMOTE_PATH/.env and fill" >&2
-  echo "it in, then run this script again." >&2
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "The working tree has uncommitted changes, which a git deploy cannot" >&2
+  echo "carry. Commit them, or stash them, then run this again:" >&2
+  echo >&2
+  git status --short >&2
   exit 1
 fi
 
+COMMIT="$(git rev-parse HEAD)"
+SHORT="$(git rev-parse --short HEAD)"
+
+echo "==> Checking that $SHORT is on the remote"
+git fetch --quiet origin "$BRANCH"
+if ! git merge-base --is-ancestor "$COMMIT" "origin/$BRANCH"; then
+  echo "$SHORT is not on origin/$BRANCH yet, so the server cannot fetch it." >&2
+  echo "Push it first:" >&2
+  echo >&2
+  echo "  git push origin HEAD:$BRANCH" >&2
+  exit 1
+fi
+
+# --- the server -------------------------------------------------------------
+
+if [[ "$INIT" == "1" ]]; then
+  echo "==> Turning $HOST:$REMOTE_PATH into a clone of $REPO_URL"
+  ssh "${SSH_OPTS[@]}" "$HOST" "
+    set -euo pipefail
+    mkdir -p $REMOTE_PATH && cd $REMOTE_PATH
+    if [ ! -d .git ]; then
+      git init -q -b $BRANCH
+      git remote add origin $REPO_URL
+    fi
+    git remote set-url origin $REPO_URL
+  "
+fi
+
+echo "==> Fetching $SHORT on $HOST"
+ssh "${SSH_OPTS[@]}" "$HOST" "
+  set -euo pipefail
+  cd $REMOTE_PATH
+  if [ ! -d .git ]; then
+    echo 'No git checkout at $REMOTE_PATH. Run scripts/deploy.sh --init once.' >&2
+    exit 1
+  fi
+  if [ ! -f .env ]; then
+    echo 'No .env at $REMOTE_PATH. Copy .env.example there and fill it in.' >&2
+    exit 1
+  fi
+  git fetch --quiet origin $BRANCH
+  # A deploy checkout has no work of its own, so it is reset rather than merged.
+  # Untracked files stay behind, which is how .env survives.
+  git reset --quiet --hard $COMMIT
+  git branch --quiet --set-upstream-to=origin/$BRANCH $BRANCH 2>/dev/null || true
+"
+
 echo "==> Building and starting"
-ssh "${SSH_OPTS[@]}" "$HOST" "cd $REMOTE_PATH && docker compose up -d --build"
+ssh "${SSH_OPTS[@]}" "$HOST" \
+  "cd $REMOTE_PATH && GIT_SHA=$SHORT docker compose up -d --build"
 
 echo "==> Waiting for the health check"
-for attempt in $(seq 1 60); do
+for _ in $(seq 1 60); do
   if ssh "${SSH_OPTS[@]}" "$HOST" \
       "curl -sf http://127.0.0.1:8087/api/health > /dev/null"; then
-    echo "==> Healthy"
+    echo "==> Healthy, running $SHORT"
     ssh "${SSH_OPTS[@]}" "$HOST" "curl -s http://127.0.0.1:8087/api/health"
     echo
     exit 0

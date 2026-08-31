@@ -52,6 +52,93 @@ export type ProviderInfo = {
   preferred: boolean;
 };
 
+export type InfraAction = {
+  action: string;
+  label: string;
+  confirm?: string;
+};
+
+export type Instance = {
+  provider: string;
+  kind: string;
+  id: string;
+  label: string;
+  status: string;
+  active: boolean;
+  gpu: string;
+  started_at: number | null;
+  age_label: string;
+  detail: string;
+  actions: InfraAction[];
+};
+
+export type InfraVolume = {
+  provider: string;
+  id: string;
+  name: string;
+  kind: string;
+  detail: string;
+  size_gb: number | null;
+  region: string;
+  browsable: boolean;
+  console_url: string;
+  primary: boolean;
+};
+
+export type Fact = { label: string; value: string };
+
+export type ProviderInfra = {
+  name: string;
+  available: boolean;
+  reason: string;
+  default: boolean;
+  console_url: string;
+  instances: Instance[];
+  volumes: InfraVolume[];
+  notices: string[];
+  facts: Fact[];
+  functions?: { name: string; deployed: boolean; backlog?: number; containers?: number }[];
+  account?: Record<string, number>;
+  jobs?: Record<string, number>;
+};
+
+export type StrandedRun = {
+  id: string;
+  user: string;
+  lab: string;
+  provider: string;
+  status: string;
+  job_id: string | null;
+  started_at: number;
+  age: number;
+  cancellable: boolean;
+  hint: string;
+};
+
+export type Infra = {
+  generated_at: number;
+  active: number;
+  providers: ProviderInfra[];
+  runs: StrandedRun[];
+};
+
+export type VolumeEntry = {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+  modified_at: number | null;
+};
+
+export type VolumeListing = {
+  provider: string;
+  volume: string;
+  path: string;
+  parent: string | null;
+  bytes: number;
+  entries: VolumeEntry[];
+};
+
 class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -115,6 +202,17 @@ export const api = {
     request<{ runs: Run[] }>(`/api/runs${lab ? `?lab=${encodeURIComponent(lab)}` : ""}`),
   providers: () =>
     request<{ default: string; providers: ProviderInfo[] }>("/api/providers"),
+  infra: () => request<Infra>("/api/infra"),
+  infraAction: (provider: string, action: string, target: string) =>
+    request<{ message: string }>("/api/infra/action", {
+      method: "POST",
+      body: JSON.stringify({ provider, action, target }),
+    }),
+  volume: (provider: string, name: string, path: string) =>
+    request<VolumeListing>(
+      `/api/infra/volume?provider=${encodeURIComponent(provider)}` +
+        `&name=${encodeURIComponent(name)}&path=${encodeURIComponent(path)}`,
+    ),
 };
 
 export type RunEvent =

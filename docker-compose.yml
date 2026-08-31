@@ -5,8 +5,9 @@
 #
 #   docker compose up -d --build
 #
-# This host is not wired to CI. After editing anything here, re-run that line,
-# or run scripts/deploy.sh from a workstation.
+# This directory is a clone of the repository. A deploy is `git fetch` to the
+# commit being released, then the line above; scripts/deploy.sh does both from a
+# workstation.
 
 name: learn-inference
 
@@ -15,6 +16,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # scripts/deploy.sh sets this to the commit being deployed.
+        GIT_SHA: ${GIT_SHA:-unknown}
     image: learn-inference:local
     container_name: learn-inference
     restart: unless-stopped

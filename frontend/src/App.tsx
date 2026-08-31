@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { api, type ChapterMeta } from "./lib/api";
+import ComputeBadge from "./components/ComputeBadge";
 import Login from "./components/Login";
 import Sidebar from "./components/Sidebar";
 import ChapterPage from "./pages/ChapterPage";
+import Compute from "./pages/Compute";
 import Dashboard from "./pages/Dashboard";
 
 export default function App() {
@@ -87,6 +89,7 @@ export default function App() {
             Learning workspace
           </div>
           <div className="flex items-center gap-3">
+            <ComputeBadge />
             <span className="hidden text-xs text-ink-500 sm:inline">Signed in as</span>
             <span className="rounded-lg border border-ink-700/70 bg-ink-850 px-2.5 py-1.5 text-xs font-medium text-ink-200">
               {name}
@@ -119,6 +122,7 @@ export default function App() {
                 <ChapterPage progress={progress} onProgress={changeProgress} />
               }
             />
+            <Route path="/compute" element={<Compute />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

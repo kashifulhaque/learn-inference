@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 from typing import Any
 
@@ -10,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import curriculum, db
+from . import curriculum, db, infra
 from .auth import clear_session, current_user, issue_session, read_session, verify_password
 from .config import Settings, get_settings
 from .providers import OutOfCredits, ProviderError, get_provider, provider_status
@@ -50,6 +51,12 @@ class RunBody(BaseModel):
     lab: str
     code: str
     provider: str | None = None
+
+
+class ActionBody(BaseModel):
+    provider: str
+    action: str
+    target: str = ""
 
 
 # --- auth -------------------------------------------------------------------
@@ -167,6 +174,44 @@ def providers(user: str = Depends(current_user)) -> dict[str, Any]:
     return provider_status()
 
 
+# --- compute panel ----------------------------------------------------------
+
+
+@app.get("/api/infra")
+async def infra_snapshot(user: str = Depends(current_user)) -> dict[str, Any]:
+    """What is running on Modal and RunPod right now."""
+    return await infra.snapshot()
+
+
+@app.post("/api/infra/action")
+async def infra_action(
+    body: ActionBody, user: str = Depends(current_user)
+) -> dict[str, Any]:
+    """Stop a container, pod, or job. Never deletes an endpoint or a volume."""
+    try:
+        return await infra.act(body.provider, body.action, body.target)
+    except ProviderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - the provider's message is the answer
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/infra/volume")
+async def infra_volume(
+    provider: str,
+    name: str,
+    path: str = "/",
+    user: str = Depends(current_user),
+) -> dict[str, Any]:
+    """List one directory of a provider volume, for the weight-cache browser."""
+    try:
+        return await infra.browse(provider, name, path)
+    except ProviderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 # --- lab execution ----------------------------------------------------------
 
 
@@ -198,6 +243,11 @@ async def run_lab(body: RunBody, user: str = Depends(current_user)) -> Streaming
                 timeout=lab["timeout"],
             ):
                 kind = event.get("type")
+                if kind == "job":
+                    # The provider's own id for this job. Recorded so the
+                    # compute panel can cancel a run whose tab has gone away.
+                    db.set_run_job(run_id, event.get("job_id", ""))
+                    continue
                 if kind == "log":
                     log_lines.append(event.get("line", ""))
                 elif kind == "result":
@@ -259,7 +309,12 @@ async def run_lab(body: RunBody, user: str = Depends(current_user)) -> Streaming
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "chapters": len(curriculum.chapter_list())}
+    return {
+        "ok": True,
+        "chapters": len(curriculum.chapter_list()),
+        # Set at build time from the commit being deployed.
+        "commit": os.environ.get("GIT_SHA", "unknown"),
+    }
 
 
 def _mount_frontend() -> None:

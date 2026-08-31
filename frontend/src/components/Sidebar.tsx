@@ -70,6 +70,23 @@ export default function Sidebar({ chapters, progress, open, onNavigate }: Props)
           Course overview
         </NavLink>
 
+        <NavLink
+          to="/compute"
+          onClick={onNavigate}
+          className={({ isActive }) =>
+            `mb-5 flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${
+              isActive
+                ? "bg-flame-500/12 text-flame-300"
+                : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
+            }`
+          }
+        >
+          <span className="flex h-5 w-5 items-center justify-center rounded-md border border-current/30 text-[11px]">
+            ◎
+          </span>
+          Compute
+        </NavLink>
+
         {Object.entries(parts).map(([part, items]) => (
           <div key={part} className="mb-6">
             <div className="mb-2 flex items-center gap-2 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-ink-600">

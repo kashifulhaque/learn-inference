@@ -16,7 +16,7 @@ The target model is [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B).
 | `engine/` | The reference engine the labs check against, and the chapters read. |
 | `gpu/` | The Modal app, the RunPod worker, and the lab runner both share. |
 | `backend/` | FastAPI: auth, content, progress, and the run stream. |
-| `frontend/` | React and Vite: reader, editor, and dashboard. |
+| `frontend/` | React and Vite: reader, editor, dashboard, and compute panel. |
 
 ## The curriculum
 
@@ -142,6 +142,27 @@ Switch a single run with the provider picker in the lab pane, or set
 `GPU_PROVIDER=runpod` to make it the default. When Modal reports that it is out
 of credit, the app says so and offers the switch.
 
+## The compute panel
+
+`/compute` in the app shows what is running on both providers, and stops it. The
+header carries the same count on every page, so a container nobody remembers
+starting is hard to miss.
+
+| Section | What it shows | What you can do |
+|---|---|---|
+| Modal | Running containers and ephemeral apps, in every environment on the workspace. Whether the lab app is deployed. | Stop a container. Stop an app left behind by `modal run`. |
+| RunPod | The serverless endpoint's workers and job queue, any GPU pods, the account balance, and spend over the last day and week. | Purge the job queue. Cancel a job. Set always-on workers back to zero. Stop a pod. |
+| Storage | Both providers' volumes, with the weight cache marked. | Browse a Modal volume's files. Open a RunPod network volume in the console. |
+| Unfinished runs | Runs this app started and never saw finish, which is what a closed browser tab leaves behind. | Cancel the run, and the provider job with it. |
+
+The panel never deletes anything. The RunPod serverless endpoint costs nothing
+while it is idle, so it stays deployed; the volumes hold a cache that takes an
+hour to refill.
+
+RunPod has no file API for network volumes — a network volume is only readable
+from a machine that mounts it — so that one links to the console instead of
+listing files.
+
 ## Deploy with Docker Compose
 
 ```bash
@@ -163,14 +184,27 @@ through an SSH tunnel if the proxy or its certificate is ever the problem:
 ssh -L 8087:127.0.0.1:8087 ifkash@vm.ifkash.dev
 ```
 
-For the deployment this repository targets:
+For the deployment this repository targets, push first, then deploy:
 
 ```bash
-./scripts/deploy.sh
+git push && ./scripts/deploy.sh
 ```
 
-The script syncs the repository to the VM, keeps the existing `.env`, rebuilds,
-and waits for the health check.
+The server holds a clone of this repository, so a deploy is a commit the server
+fetches, not a directory someone copied over. The script refuses to run with a
+dirty tree or an unpushed commit, resets the server's checkout to the commit
+being released, rebuilds, and waits for the health check. `/api/health` reports
+the commit it is running:
+
+```bash
+curl -s https://qwen.ifkash.dev/api/health
+{"ok":true,"chapters":21,"commit":"a1b2c3d"}
+```
+
+The server's `.env` is untracked and stays where it is; the database lives in a
+Docker volume, untouched by either step. To convert a server that has no
+checkout yet, or to set up a new one, run `./scripts/deploy.sh --init` once. The
+clone pulls over HTTPS, so the server needs no deploy key.
 
 ## Access
 

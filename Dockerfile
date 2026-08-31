@@ -27,6 +27,11 @@ COPY engine/ ./engine/
 COPY gpu/ ./gpu/
 COPY --from=frontend /build/dist ./frontend/dist
 
+# The commit this image was built from, reported by /api/health. Declared after
+# the COPY steps so changing it does not invalidate the layers above.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
+
 RUN useradd --create-home --uid 10001 app \
     && mkdir -p /data \
     && chown -R app:app /data /app

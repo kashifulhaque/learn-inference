@@ -10,6 +10,11 @@ from .runpod_provider import RunPodProvider
 _BUILDERS = {"modal": ModalProvider, "runpod": RunPodProvider}
 
 
+def provider_names() -> list[str]:
+    """Every provider this build knows about, preferred one first."""
+    return list(_BUILDERS)
+
+
 def get_provider(name: str | None = None) -> Provider:
     settings = get_settings()
     key = (name or settings.gpu_provider or "modal").lower()

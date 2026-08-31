@@ -69,6 +69,16 @@ def connect() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add columns that arrived after the first release."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(runs)")}
+    if "job_id" not in columns:
+        # The provider's own id for the job, so the compute panel can cancel a
+        # run whose browser tab is gone.
+        conn.execute("ALTER TABLE runs ADD COLUMN job_id TEXT")
 
 
 # --- progress ---------------------------------------------------------------
@@ -172,6 +182,27 @@ def finish_run(
         )
 
 
+def set_run_job(run_id: str, job_id: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE runs SET job_id=? WHERE id=?", (job_id, run_id))
+
+
+def list_active_runs(max_age: float = 6 * 3600) -> list[dict[str, Any]]:
+    """Runs that never reported finishing, newest first, across every user.
+
+    The compute panel shows these next to the provider's own view: a run left
+    as 'running' long after its lab timeout usually means the browser tab went
+    away mid-stream, and the GPU may still be busy.
+    """
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, user, lab, provider, status, job_id, started_at FROM runs "
+            "WHERE status='running' AND started_at > ? ORDER BY started_at DESC",
+            (time.time() - max_age,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def _row_to_run(row: sqlite3.Row) -> dict[str, Any]:
     run = dict(row)
     run["metrics"] = json.loads(run["metrics"]) if run["metrics"] else {}
@@ -194,6 +225,13 @@ def list_runs(user: str, lab: str | None = None, limit: int = 50) -> list[dict[s
     with connect() as conn:
         rows = conn.execute(query, params).fetchall()
     return [_row_to_run(r) for r in rows]
+
+
+def find_run(run_id: str) -> dict[str, Any] | None:
+    """A run by id, whoever started it. The compute panel is not user-scoped."""
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+    return _row_to_run(row) if row else None
 
 
 def get_run(user: str, run_id: str) -> dict[str, Any] | None:
