@@ -9,6 +9,11 @@ type Props = {
   onRun?: () => void;
   /** Path shown to Monaco, so it picks the language and keeps undo history per lab. */
   path: string;
+  /**
+   * Fill the parent instead of growing with the file. The split view gives the
+   * editor a pane of its own, so there the height is the pane's to decide.
+   */
+  fill?: boolean;
 };
 
 const LINE_HEIGHT = 22;
@@ -21,10 +26,11 @@ function clampHeight(contentHeight: number): number {
 }
 
 /**
- * The lab editor. It grows with the file up to a cap, so short starters do not
- * sit in an empty box and long ones do not trap the page scroll.
+ * The lab editor. In a pane it fills what it is given; laid out in a page it
+ * grows with the file up to a cap, so short starters do not sit in an empty box
+ * and long ones do not trap the page scroll.
  */
-export default function CodeEditor({ value, onChange, onRun, path }: Props) {
+export default function CodeEditor({ value, onChange, onRun, path, fill = false }: Props) {
   const [height, setHeight] = useState(MIN_HEIGHT);
   const runRef = useRef(onRun);
   runRef.current = onRun;
@@ -39,19 +45,24 @@ export default function CodeEditor({ value, onChange, onRun, path }: Props) {
 
   const handleMount: OnMount = (editor) => {
     editorRef.current = editor;
-    setHeight(clampHeight(editor.getContentHeight()));
-    editor.onDidContentSizeChange((event) => {
-      setHeight(clampHeight(event.contentHeight));
-    });
+    if (!fill) {
+      setHeight(clampHeight(editor.getContentHeight()));
+      editor.onDidContentSizeChange((event) => {
+        setHeight(clampHeight(event.contentHeight));
+      });
+    }
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       runRef.current?.();
     });
   };
 
   return (
-    <div className="bg-ink-950" style={{ height }}>
+    <div
+      className={fill ? "h-full min-h-0 bg-ink-950" : "bg-ink-950"}
+      style={fill ? undefined : { height }}
+    >
       <Editor
-        height={height}
+        height="100%"
         path={path}
         defaultLanguage="python"
         theme={THEME}
