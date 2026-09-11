@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import Editor from "@monaco-editor/react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { api, runLab, type Lab, type ProviderInfo, type RunEvent } from "../lib/api";
 
+// Monaco is heavy, so the editor is its own chunk and loads with the first lab.
+const CodeEditor = lazy(() => import("./CodeEditor"));
+
 type Check = { name: string; passed: boolean; detail: string };
+type SaveState = "idle" | "dirty" | "saving" | "saved" | "failed";
 
 type Props = {
   lab: Lab;
@@ -24,6 +27,7 @@ export default function LabPane({ lab, onPassed }: Props) {
   const [showSolution, setShowSolution] = useState(false);
   const [solution, setSolution] = useState("");
   const [elapsed, setElapsed] = useState(0);
+  const [saveState, setSaveState] = useState<SaveState>(lab.draft ? "saved" : "idle");
 
   const logRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -38,6 +42,7 @@ export default function LabPane({ lab, onPassed }: Props) {
     setMessage("");
     setShowSolution(false);
     setSolution("");
+    setSaveState(lab.draft ? "saved" : "idle");
   }, [lab.id, lab.draft, lab.starter]);
 
   useEffect(() => {
@@ -65,17 +70,37 @@ export default function LabPane({ lab, onPassed }: Props) {
   const scheduleSave = useCallback(
     (next: string) => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
+      setSaveState("dirty");
       saveTimer.current = window.setTimeout(() => {
-        api.saveDraft(lab.id, next).catch(() => undefined);
+        setSaveState("saving");
+        api
+          .saveDraft(lab.id, next)
+          .then(() => setSaveState("saved"))
+          .catch(() => setSaveState("failed"));
       }, 1000);
     },
     [lab.id],
   );
 
-  function handleChange(next: string | undefined) {
-    const value = next ?? "";
-    setCode(value);
-    scheduleSave(value);
+  function handleChange(next: string) {
+    setCode(next);
+    scheduleSave(next);
+  }
+
+  function resetToStarter() {
+    if (code === lab.starter) return;
+    if (!window.confirm("Replace your code with the starter file? This overwrites your draft.")) {
+      return;
+    }
+    handleChange(lab.starter);
+  }
+
+  function loadSolution() {
+    if (!solution || code === solution) return;
+    if (!window.confirm("Replace your code with the worked solution? This overwrites your draft.")) {
+      return;
+    }
+    handleChange(solution);
   }
 
   async function run() {
@@ -148,6 +173,15 @@ export default function LabPane({ lab, onPassed }: Props) {
   }
 
   const runnable = providers.find((p) => p.name === provider);
+  const canRun = status !== "running" && Boolean(runnable?.available);
+
+  const saveLabel: Record<SaveState, string> = {
+    idle: "Autosaves as you type",
+    dirty: "Unsaved edits",
+    saving: "Saving…",
+    saved: "Draft saved",
+    failed: "Could not save the draft",
+  };
 
   return (
     <section className="panel-glow overflow-hidden rounded-2xl border border-ink-700/80 bg-ink-900/85">
@@ -194,7 +228,7 @@ export default function LabPane({ lab, onPassed }: Props) {
           ) : (
             <button
               onClick={run}
-              disabled={!runnable?.available}
+              disabled={!canRun}
               className="rounded-lg bg-flame-500 px-4 py-2 text-xs font-bold text-ink-950 transition hover:bg-flame-400 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Run lab →
@@ -216,29 +250,52 @@ export default function LabPane({ lab, onPassed }: Props) {
       )}
 
       <div className="border-b border-ink-800">
-        <div className="flex items-center justify-between border-b border-ink-800 bg-ink-950/30 px-5 py-2.5">
-          <span className="font-mono text-[11px] text-ink-500">solution.py</span>
-          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-600">
-            Autosaves
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-ink-800 bg-ink-950/30 px-5 py-2.5">
+          <span className="font-mono text-[11px] text-ink-300">solution.py</span>
+          <span
+            className={`text-[11px] ${
+              saveState === "failed"
+                ? "text-rose-450"
+                : saveState === "dirty"
+                  ? "text-ink-400"
+                  : "text-ink-600"
+            }`}
+            aria-live="polite"
+          >
+            {saveLabel[saveState]}
           </span>
+          <div className="ml-auto flex items-center gap-3">
+            <span className="hidden items-center gap-1 text-[11px] text-ink-600 sm:flex">
+              <kbd className="rounded border border-ink-700 bg-ink-900 px-1.5 py-0.5 font-mono text-[10px] text-ink-400">
+                ⌘⏎
+              </kbd>
+              runs the lab
+            </span>
+            <button
+              onClick={resetToStarter}
+              disabled={code === lab.starter}
+              className="text-[11px] font-medium text-ink-400 underline decoration-ink-700 underline-offset-4 transition hover:text-flame-300 hover:decoration-flame-400 disabled:cursor-default disabled:no-underline disabled:opacity-40 disabled:hover:text-ink-400"
+            >
+              Reset to starter
+            </button>
+          </div>
         </div>
-        <Editor
-          height="420px"
-          defaultLanguage="python"
-          theme="vs-dark"
-          value={code}
-          onChange={handleChange}
-          options={{
-            fontSize: 13,
-            minimap: { enabled: false },
-            scrollBeyondLastLine: false,
-            padding: { top: 14, bottom: 14 },
-            fontFamily: 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace',
-            renderLineHighlight: "line",
-            tabSize: 4,
-            rulers: [80],
-          }}
-        />
+        <Suspense
+          fallback={
+            <div className="flex h-[432px] items-center justify-center bg-ink-950 text-xs text-ink-600">
+              Loading the editor…
+            </div>
+          }
+        >
+          <CodeEditor
+            path={`${lab.id}/solution.py`}
+            value={code}
+            onChange={handleChange}
+            onRun={() => {
+              if (canRun) run();
+            }}
+          />
+        </Suspense>
       </div>
 
       {lab.hints.length > 0 && (
@@ -360,9 +417,18 @@ export default function LabPane({ lab, onPassed }: Props) {
           {showSolution ? "Hide the worked solution" : "Show the worked solution"}
         </button>
         {showSolution && (
-          <pre className="mt-4 max-h-96 overflow-auto rounded-xl border border-ink-800 bg-ink-950 p-4 font-mono text-xs leading-relaxed text-ink-300">
-            {solution}
-          </pre>
+          <>
+            <pre className="mt-4 max-h-96 overflow-auto rounded-xl border border-ink-800 bg-ink-950 p-4 font-mono text-xs leading-relaxed text-ink-300">
+              {solution}
+            </pre>
+            <button
+              onClick={loadSolution}
+              disabled={code === solution}
+              className="mt-3 text-xs font-medium text-ink-500 underline decoration-ink-700 underline-offset-4 transition hover:text-flame-300 hover:decoration-flame-400 disabled:cursor-default disabled:no-underline disabled:opacity-40"
+            >
+              Load the solution into the editor
+            </button>
+          </>
         )}
       </div>
     </section>

@@ -13,8 +13,13 @@ export default defineConfig({
       },
     },
   },
+  // Monaco's editor worker is an ES module, so the worker bundle must be too.
+  worker: {
+    format: "es",
+  },
   build: {
     outDir: "dist",
-    chunkSizeWarningLimit: 1500,
+    // Monaco lands in its own chunk, which is large by nature.
+    chunkSizeWarningLimit: 4000,
   },
 });
