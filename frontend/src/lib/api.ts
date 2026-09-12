@@ -201,7 +201,9 @@ export const api = {
   runs: (lab?: string) =>
     request<{ runs: Run[] }>(`/api/runs${lab ? `?lab=${encodeURIComponent(lab)}` : ""}`),
   providers: () =>
-    request<{ default: string; providers: ProviderInfo[] }>("/api/providers"),
+    request<{ default: string; preferred: string; providers: ProviderInfo[] }>(
+      "/api/providers",
+    ),
   infra: () => request<Infra>("/api/infra"),
   infraAction: (provider: string, action: string, target: string) =>
     request<{ message: string }>("/api/infra/action", {

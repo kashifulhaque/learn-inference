@@ -1,8 +1,8 @@
-"""Fallback executor: a RunPod serverless endpoint.
+"""The default executor: a RunPod serverless endpoint.
 
-Used when Modal credits run out. The worker image is in gpu/runpod_worker/ and
-exposes the same lab contract as the Modal function. RunPod streams generator
-output through /stream/{job_id}, which this provider polls.
+The worker image is in gpu/runpod_worker/ and exposes the same lab contract as
+the Modal function, which is the alternative. RunPod streams generator output
+through /stream/{job_id}, which this provider polls.
 """
 
 import asyncio

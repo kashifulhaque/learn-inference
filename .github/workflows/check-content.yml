@@ -1,0 +1,103 @@
+# Guards the course content: every chapter's maths must render with the same
+# KaTeX build the site uses, every chapter's front matter must be loadable, and
+# every lab's reference solution must pass its own tests.
+#
+# The lab checker skips labs that need CUDA, because a hosted runner has no GPU.
+# Those are covered by running the lab in the app.
+
+name: Check content
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - content/**
+      - engine/**
+      - backend/**
+      - scripts/**
+      - .github/workflows/check-content.yml
+  pull_request:
+    paths:
+      - content/**
+      - engine/**
+      - backend/**
+      - scripts/**
+      - .github/workflows/check-content.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  maths:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the frontend's dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Render every chapter's maths
+        run: node scripts/check_math.mjs
+
+  chapters:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the backend's dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Load every chapter and lab
+        run: |
+          python - <<'PY'
+          from backend.app.curriculum import chapter_list, load_labs
+
+          chapters = chapter_list()
+          labs = load_labs()
+          print(f"{len(chapters)} chapters, {len(labs)} labs")
+
+          missing = [
+              (c["slug"], c["lab"])
+              for c in chapters
+              if c.get("lab") and c["lab"] not in labs
+          ]
+          if missing:
+              for slug, lab in missing:
+                  print(f"{slug} points at a lab that does not exist: {lab}")
+              raise SystemExit(1)
+
+          for chapter in chapters:
+              for field in ("title", "part", "summary"):
+                  if not chapter.get(field):
+                      raise SystemExit(f"{chapter['slug']} has no {field}")
+          PY
+
+  labs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install torch for CPU
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install numpy
+
+      - name: Run every lab's reference solution
+        run: python scripts/check_labs.py

@@ -131,7 +131,8 @@ def stable_softmax(x: Tensor, dim: int = -1) -> Tensor:
     and attention scores at long context reach further. Subtracting the row max
     leaves every exponent at most 0 and changes nothing mathematically, since
     the constant cancels between numerator and denominator. Every fast softmax
-    and every attention kernel does this; chapter 11 does it incrementally.
+    and every attention kernel does this; chapter 14 does it incrementally,
+    one block of keys at a time.
     """
     shifted = x - x.max(dim=dim, keepdim=True).values
     exp = shifted.exp()

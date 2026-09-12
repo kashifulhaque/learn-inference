@@ -200,5 +200,26 @@ body {
   margin: 2rem 0;
 }
 .prose-chapter .katex {
-  font-size: 1em;
+  font-size: 1.02em;
+}
+/* A display equation wider than the column scrolls inside its own box, so the
+   page body never scrolls sideways. The padding keeps a tall fraction's
+   descenders off the scrollbar. */
+.prose-chapter .katex-display {
+  margin: 1.4rem 0;
+  padding: 0.15rem 0 0.5rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.prose-chapter .katex-display > .katex {
+  text-align: center;
+  white-space: nowrap;
+}
+/* KaTeX renders an error as red inline text. Make it obvious rather than
+   something that reads as emphasis. */
+.prose-chapter .katex-error {
+  color: var(--color-rose-450);
+  background: color-mix(in srgb, var(--color-rose-450) 12%, transparent);
+  border-radius: 4px;
+  padding: 0 0.25em;
 }

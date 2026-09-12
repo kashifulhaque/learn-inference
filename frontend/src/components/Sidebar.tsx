@@ -91,8 +91,17 @@ export default function Sidebar({
     }
   }, [shutParts]);
 
+  // The chapters refer to each other by the number in their slug, so the rail
+  // shows that rather than a position in the list. The two stopped agreeing
+  // once a chapter was inserted between 00 and 01.
   const numbers = useMemo(
-    () => new Map(chapters.map((chapter, index) => [chapter.slug, index + 1])),
+    () =>
+      new Map(
+        chapters.map((chapter, index) => [
+          chapter.slug,
+          /^\d+[a-z]?/.exec(chapter.slug)?.[0] ?? String(index + 1),
+        ]),
+      ),
     [chapters],
   );
 
@@ -186,7 +195,7 @@ export default function Sidebar({
                 }`
               }
             >
-              {String(numbers.get(chapter.slug)).padStart(2, "0")}
+              {numbers.get(chapter.slug)}
             </NavLink>
           ))}
         </div>
@@ -325,7 +334,7 @@ export default function Sidebar({
                       )}`}
                       aria-hidden
                     >
-                      {String(numbers.get(chapter.slug)).padStart(2, "0")}
+                      {numbers.get(chapter.slug)}
                     </span>
                     <span className="min-w-0 flex-1 truncate leading-snug" title={chapter.title}>
                       {chapter.title}

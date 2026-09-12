@@ -50,7 +50,11 @@ export default function LabPane({ lab, onPassed }: Props) {
   useEffect(() => {
     api.providers().then((result) => {
       setProviders(result.providers);
-      setProvider(result.default);
+      // The configured default, unless it is not set up on this deployment, in
+      // which case pick something that can actually run.
+      const usable = result.providers.filter((item) => item.available);
+      const preset = usable.find((item) => item.name === result.default);
+      setProvider((preset ?? usable[0])?.name ?? result.default);
     });
   }, []);
 

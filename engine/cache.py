@@ -12,7 +12,7 @@ three-step convolution window. Size does not depend on sequence length.
 `HybridCache` is the simple contiguous version: one preallocated tensor per
 layer, sized to a maximum length. It is easy to read and wastes a lot of memory
 when requests are shorter than that maximum. `PagedKVCache` fixes the waste by
-handing out fixed-size blocks; see chapter 12.
+handing out fixed-size blocks; see chapter 15.
 """
 
 from __future__ import annotations
@@ -154,7 +154,7 @@ class PagedKVCache:
 
     The cost is one indirection. Attention can no longer read a contiguous
     range; it walks a block table. That is what the paged attention kernel in
-    chapter 12 does.
+    chapter 15 does.
     """
 
     def __init__(

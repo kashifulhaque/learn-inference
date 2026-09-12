@@ -44,9 +44,11 @@ def scaled_dot_product_attention(
         k, v: (batch, heads, kv_len, head_dim)
 
     This allocates a (batch, heads, q_len, kv_len) tensor. At 8k context with 24
-    heads that is 12 GB in bfloat16 for a single sequence, which is the entire
-    reason FlashAttention exists. Use it to check the kernels you write in
-    chapter 11; do not use it to serve.
+    heads that is 3.0 GiB in bfloat16 for a single sequence, and this function
+    accumulates in float32, so 6.0 GiB — with the softmax's intermediates live at
+    the same time, peak sits well past that. Scores that dwarf the weights they
+    came from is the entire reason FlashAttention exists. Use this to check the
+    kernels you write in chapter 14; do not use it to serve.
     """
     scale = scale or 1.0 / math.sqrt(q.shape[-1])
     scores = torch.matmul(q.float(), k.float().transpose(-1, -2)) * scale
@@ -66,7 +68,7 @@ def repeat_kv(x: Tensor, repeats: int) -> Tensor:
     """Expand KV heads to match query heads.
 
     This is the naive way to do GQA and it materialises `repeats` copies of the
-    cache. A real kernel indexes the shared KV head instead; chapter 12's paged
+    cache. A real kernel indexes the shared KV head instead; chapter 15's paged
     attention does exactly that.
     """
     if repeats == 1:

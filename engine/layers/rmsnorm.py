@@ -6,7 +6,7 @@ LayerNorm subtracts the mean and divides by the standard deviation. RMSNorm
 drops the mean subtraction, which costs nothing in quality and saves a pass
 over the data. It is memory bound: the arithmetic is trivial and the time goes
 entirely into reading x and writing y, which is why fusing it with the residual
-add (chapter 10) pays off.
+add (chapter 13) pays off.
 """
 
 from __future__ import annotations

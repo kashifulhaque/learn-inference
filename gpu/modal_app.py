@@ -1,5 +1,8 @@
 """Modal app that executes labs on an A100.
 
+The alternative to the default RunPod worker in gpu/runpod_worker/. Both expose
+the same lab contract, and the lab pane can send a single run to either.
+
 Deploy with:
 
     modal deploy gpu/modal_app.py

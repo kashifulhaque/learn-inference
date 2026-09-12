@@ -7,7 +7,10 @@ from .base import Provider
 from .modal_provider import ModalProvider
 from .runpod_provider import RunPodProvider
 
-_BUILDERS = {"modal": ModalProvider, "runpod": RunPodProvider}
+# Order matters: the first entry is the preferred provider, and the compute
+# panel renders the providers in this order.
+PREFERRED = "runpod"
+_BUILDERS = {"runpod": RunPodProvider, "modal": ModalProvider}
 
 
 def provider_names() -> list[str]:
@@ -17,7 +20,7 @@ def provider_names() -> list[str]:
 
 def get_provider(name: str | None = None) -> Provider:
     settings = get_settings()
-    key = (name or settings.gpu_provider or "modal").lower()
+    key = (name or settings.gpu_provider or PREFERRED).lower()
     builder = _BUILDERS.get(key)
     if builder is None:
         raise ValueError(f"Unknown GPU provider: {key}")
@@ -35,7 +38,11 @@ def provider_status() -> dict[str, Any]:
                 "name": key,
                 "available": ok,
                 "reason": why,
-                "preferred": key == "modal",
+                "preferred": key == PREFERRED,
             }
         )
-    return {"default": settings.gpu_provider, "providers": providers}
+    return {
+        "default": settings.gpu_provider or PREFERRED,
+        "preferred": PREFERRED,
+        "providers": providers,
+    }

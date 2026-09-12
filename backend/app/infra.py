@@ -102,8 +102,8 @@ def _active_runs() -> list[dict[str, Any]]:
                 "hint": (
                     "Cancel the job on the provider."
                     if run.get("job_id")
-                    else "No provider job id was recorded. Stop the container "
-                    "in the Modal section instead."
+                    else "No provider job id was recorded. Stop the worker in "
+                    f"the {run['provider']} section instead."
                 ),
             }
         )
@@ -142,7 +142,7 @@ async def _cancel_run(run_id: str) -> str:
     else:
         message = (
             "No provider job id was recorded for this run, so only this app's "
-            "record was closed. Check the provider's containers below."
+            f"record was closed. Check the {run['provider']} section below."
         )
     db.finish_run(run_id, status="cancelled", error="Cancelled from the compute panel")
     return message
