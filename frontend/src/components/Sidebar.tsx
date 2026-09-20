@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
 import type { ChapterMeta } from "../lib/api";
+import { useIsWide } from "../lib/useMediaQuery";
 
 type Props = {
   chapters: ChapterMeta[];
@@ -10,6 +11,8 @@ type Props = {
   /** Rail state on a wide screen. */
   collapsed: boolean;
   onNavigate: () => void;
+  /** Shuts the narrow-screen drawer without navigating anywhere. */
+  onClose: () => void;
   onToggleCollapsed: () => void;
 };
 
@@ -78,10 +81,12 @@ export default function Sidebar({
   open,
   collapsed,
   onNavigate,
+  onClose,
   onToggleCollapsed,
 }: Props) {
   const [filter, setFilter] = useState("");
   const [shutParts, setShutParts] = useState<string[]>(readShutParts);
+  const wide = useIsWide();
 
   useEffect(() => {
     try {
@@ -214,7 +219,11 @@ export default function Sidebar({
     <aside
       className={`${
         open ? "translate-x-0" : "-translate-x-full"
-      } fixed inset-y-0 left-0 z-30 flex w-72 shrink-0 flex-col border-r border-ink-800 bg-ink-900/95 shadow-2xl shadow-ink-950/40 backdrop-blur transition-transform duration-200 lg:static lg:translate-x-0 lg:shadow-none`}
+      } fixed inset-y-0 left-0 z-30 flex w-[min(18rem,86vw)] shrink-0 flex-col border-r border-ink-800 bg-ink-900/95 shadow-2xl shadow-ink-950/40 backdrop-blur transition-transform duration-200 lg:static lg:w-72 lg:translate-x-0 lg:shadow-none`}
+      // A shut drawer is only translated out of view, so without this its links
+      // stay in the tab order and a screen reader still reads them out. From
+      // `lg` up the same element is the static sidebar, which is never shut.
+      inert={!wide && !open ? true : undefined}
     >
       <div className="flex h-14 shrink-0 items-center gap-2.5 border-b border-ink-800 px-3">
         <NavLink to="/" onClick={onNavigate} className="group flex min-w-0 items-center gap-2.5">
@@ -237,6 +246,13 @@ export default function Sidebar({
           className="ml-auto hidden h-8 w-8 items-center justify-center rounded-lg text-ink-500 transition hover:bg-ink-850 hover:text-flame-300 lg:flex"
         >
           <PanelIcon collapsed={false} />
+        </button>
+        <button
+          onClick={onClose}
+          aria-label="Close the course list"
+          className="-mr-1 ml-auto flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-lg leading-none text-ink-400 transition hover:bg-ink-850 hover:text-flame-300 lg:hidden"
+        >
+          ✕
         </button>
       </div>
 
@@ -261,7 +277,7 @@ export default function Sidebar({
           end
           onClick={onNavigate}
           className={({ isActive }) =>
-            `flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition ${
+            `flex items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-[13px] font-medium transition lg:py-2 ${
               isActive
                 ? "bg-flame-500/12 text-flame-300"
                 : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
@@ -275,7 +291,7 @@ export default function Sidebar({
           to="/compute"
           onClick={onNavigate}
           className={({ isActive }) =>
-            `flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition ${
+            `flex items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-[13px] font-medium transition lg:py-2 ${
               isActive
                 ? "bg-flame-500/12 text-flame-300"
                 : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
@@ -304,7 +320,7 @@ export default function Sidebar({
             <div key={part} className="mb-1">
               <button
                 onClick={() => togglePart(part)}
-                className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-ink-500 transition hover:text-ink-300"
+                className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-2.5 text-[10px] font-bold uppercase tracking-[0.14em] text-ink-500 transition hover:text-ink-300 lg:py-2"
                 aria-expanded={!shut}
               >
                 <Chevron open={!shut} />
@@ -321,7 +337,7 @@ export default function Sidebar({
                     to={`/c/${chapter.slug}`}
                     onClick={onNavigate}
                     className={({ isActive }) =>
-                      `group flex items-center gap-2.5 rounded-lg py-1.5 pl-3 pr-2.5 text-[13px] transition ${
+                      `group flex items-center gap-2.5 rounded-lg py-2.5 pl-3 pr-2.5 text-[13px] transition lg:py-1.5 ${
                         isActive
                           ? "bg-ink-850 text-ink-100"
                           : "text-ink-400 hover:bg-ink-850/60 hover:text-ink-100"

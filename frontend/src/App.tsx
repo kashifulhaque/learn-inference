@@ -61,12 +61,14 @@ export default function App() {
   }, [collapsed]);
 
   // Cmd/Ctrl+B gives the chapter and its lab the whole screen, the way an
-  // editor hides its file tree.
+  // editor hides its file tree. Escape closes the narrow-screen drawer.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
         event.preventDefault();
         setCollapsed((current) => !current);
+      } else if (event.key === "Escape") {
+        setMenuOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -101,6 +103,7 @@ export default function App() {
         open={menuOpen}
         collapsed={collapsed}
         onNavigate={() => setMenuOpen(false)}
+        onClose={() => setMenuOpen(false)}
         onToggleCollapsed={() => setCollapsed((current) => !current)}
       />
 
@@ -113,14 +116,14 @@ export default function App() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-ink-800 bg-ink-900/70 px-3 backdrop-blur-xl lg:px-4">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-ink-800 bg-ink-900/70 px-3 backdrop-blur-xl lg:gap-3 lg:px-4">
           <button
             onClick={() => setMenuOpen((open) => !open)}
             aria-label="Open the course list"
-            className="flex h-8 items-center gap-2 rounded-lg border border-ink-800 bg-ink-850 px-2.5 text-xs font-semibold text-ink-200 transition hover:border-ink-600 lg:hidden"
+            className="flex h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-ink-800 bg-ink-850 px-2.5 text-xs font-semibold text-ink-200 transition hover:border-ink-600 lg:hidden"
           >
             <span className="text-sm leading-none">☰</span>
-            Chapters
+            <span className="hidden min-[360px]:inline">Chapters</span>
           </button>
 
           <div className="hidden items-center gap-2 text-[11px] text-ink-500 lg:flex">
@@ -131,14 +134,17 @@ export default function App() {
             </kbd>
           </div>
 
-          <div className="ml-auto flex items-center gap-2.5">
+          <div className="ml-auto flex min-w-0 items-center gap-2 lg:gap-2.5">
             <ComputeBadge />
-            <span className="rounded-lg border border-ink-800 bg-ink-850 px-2.5 py-1.5 text-[11px] font-medium text-ink-200">
+            {/* The name is only there to say whose progress this is. On a phone
+                that is worth less than the room it takes from the two
+                controls beside it. */}
+            <span className="hidden max-w-28 truncate rounded-lg border border-ink-800 bg-ink-850 px-2.5 py-1.5 text-[11px] font-medium text-ink-200 min-[420px]:block">
               {name}
             </span>
             <button
               onClick={signOut}
-              className="text-[11px] font-medium text-ink-500 transition hover:text-flame-400"
+              className="flex h-10 shrink-0 items-center whitespace-nowrap px-1 text-[11px] font-medium text-ink-500 transition hover:text-flame-400"
             >
               Sign out
             </button>

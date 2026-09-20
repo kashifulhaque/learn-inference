@@ -58,8 +58,8 @@ export default function ChapterPage({ progress, onProgress }: Props) {
 
   const readingPane = (
     <div className="flex h-full min-h-0 flex-col bg-ink-950/20">
-      <header className="flex h-14 shrink-0 items-center gap-2.5 border-b border-ink-800 bg-ink-900/70 px-4">
-        <span className="truncate rounded-lg border border-ink-800 bg-ink-900 px-2 py-1 text-[11px] font-medium text-ink-300">
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-ink-800 bg-ink-900/70 px-3 sm:gap-2.5 sm:px-4">
+        <span className="min-w-0 truncate rounded-lg border border-ink-800 bg-ink-900 px-2 py-1 text-[11px] font-medium text-ink-300">
           {chapter.part}
         </span>
         {chapter.minutes && (
@@ -67,28 +67,35 @@ export default function ChapterPage({ progress, onProgress }: Props) {
             {chapter.minutes} min read
           </span>
         )}
-        <span className="ml-auto flex items-center gap-2">
+        <span className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
           <button
             onClick={() => onProgress(slug, done ? "in_progress" : "done")}
-            className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition ${
+            aria-label={done ? "Mark this chapter unread" : "Mark this chapter done"}
+            className={`flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 text-[11px] font-semibold transition ${
               done
                 ? "border-mint-400/35 bg-mint-400/10 text-mint-400 hover:bg-mint-400/20"
                 : "border-ink-700 bg-ink-900 text-ink-300 hover:border-flame-500/60 hover:text-flame-300"
             }`}
           >
-            {done ? "✓ Done" : "Mark done"}
+            {/* "Mark done" breaks over two lines inside its own pill on a
+                narrow phone, so there the mark stands in for the words. */}
+            <span className={done ? "" : "min-[400px]:hidden"}>{done ? "✓" : "○"}</span>
+            <span className="hidden min-[400px]:inline">
+              {done ? "Done" : "Mark done"}
+            </span>
           </button>
           <span className="flex items-center gap-1">
             {chapter.prev ? (
               <Link
                 to={`/c/${chapter.prev}`}
                 title="Previous chapter"
-                className="flex h-7 w-7 items-center justify-center rounded-lg border border-ink-800 bg-ink-900 text-ink-400 transition hover:border-ink-600 hover:text-ink-100"
+                aria-label="Previous chapter"
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-ink-800 bg-ink-900 text-ink-400 transition hover:border-ink-600 hover:text-ink-100 lg:h-7 lg:w-7"
               >
                 ←
               </Link>
             ) : (
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-ink-800/60 text-ink-700">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-ink-800/60 text-ink-700 lg:h-7 lg:w-7">
                 ←
               </span>
             )}
@@ -96,12 +103,13 @@ export default function ChapterPage({ progress, onProgress }: Props) {
               <Link
                 to={`/c/${chapter.next}`}
                 title="Next chapter"
-                className="flex h-7 w-7 items-center justify-center rounded-lg border border-ink-800 bg-ink-900 text-ink-400 transition hover:border-ink-600 hover:text-ink-100"
+                aria-label="Next chapter"
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-ink-800 bg-ink-900 text-ink-400 transition hover:border-ink-600 hover:text-ink-100 lg:h-7 lg:w-7"
               >
                 →
               </Link>
             ) : (
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-ink-800/60 text-ink-700">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-ink-800/60 text-ink-700 lg:h-7 lg:w-7">
                 →
               </span>
             )}
@@ -110,7 +118,7 @@ export default function ChapterPage({ progress, onProgress }: Props) {
       </header>
 
       <div ref={reading} className="min-h-0 flex-1 overflow-y-auto">
-        <div className={`px-5 py-7 sm:px-8 ${hasLab ? "max-w-3xl" : "mx-auto max-w-3xl"}`}>
+        <div className={`px-4 py-6 sm:px-8 sm:py-7 ${hasLab ? "max-w-3xl" : "mx-auto max-w-3xl"}`}>
           {chapter.objectives.length > 0 && (
             <section className="mb-8 overflow-hidden rounded-xl border border-ink-800 bg-ink-900/60">
               <div className="border-b border-ink-800 bg-ink-850/50 px-4 py-2 text-[10px] font-bold uppercase tracking-[0.16em] text-ink-400">
@@ -210,7 +218,7 @@ export default function ChapterPage({ progress, onProgress }: Props) {
           <button
             key={option}
             onClick={() => setView(option)}
-            className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+            className={`flex-1 rounded-lg px-3 py-2.5 text-xs font-semibold transition ${
               view === option
                 ? "bg-ink-850 text-ink-100"
                 : "text-ink-500 hover:text-ink-200"

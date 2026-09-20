@@ -124,6 +124,8 @@ export default function SplitPane({
         tabIndex={0}
         onPointerDown={(event) => {
           event.preventDefault();
+          // A touch drag that leaves the hairline otherwise stops reporting.
+          event.currentTarget.setPointerCapture(event.pointerId);
           setDragging(true);
         }}
         onDoubleClick={() => setSize(initial)}
@@ -136,14 +138,28 @@ export default function SplitPane({
           else return;
           event.preventDefault();
         }}
+        // Without this the browser reads a drag along the divider as a page
+        // scroll and the pane never resizes on a touch screen.
+        style={{ touchAction: "none" }}
         className={`group relative shrink-0 bg-ink-800 transition-colors ${
           row ? "w-px cursor-col-resize" : "h-px cursor-row-resize"
         } ${dragging ? "bg-flame-500" : "hover:bg-flame-500/60"}`}
       >
-        {/* The visible line is a hairline; this widens what the pointer hits. */}
+        {/* The visible line is a hairline; this widens what the pointer hits.
+            A finger needs more of it than a mouse pointer does. */}
         <span
           className={`absolute ${
-            row ? "-inset-x-2 inset-y-0" : "-inset-y-2 inset-x-0"
+            row ? "-inset-x-2.5 inset-y-0" : "-inset-y-2.5 inset-x-0"
+          }`}
+          aria-hidden
+        />
+        {/* A grip, so the divider reads as something to drag rather than a
+            border. Only worth the pixels where there is no hover to reveal it. */}
+        <span
+          className={`pointer-events-none absolute rounded-full bg-ink-600 lg:hidden ${
+            row
+              ? "left-1/2 top-1/2 h-8 w-1 -translate-x-1/2 -translate-y-1/2"
+              : "left-1/2 top-1/2 h-1 w-8 -translate-x-1/2 -translate-y-1/2"
           }`}
           aria-hidden
         />

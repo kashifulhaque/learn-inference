@@ -25,6 +25,10 @@ html,
 body,
 #root {
   height: 100%;
+  /* A phone browser's address bar grows and shrinks as you scroll. With `100%`
+     alone the app shell is measured against the taller viewport, so its bottom
+     row hides behind the toolbar. `dvh` follows the bar. */
+  height: 100dvh;
 }
 
 body {
@@ -36,6 +40,17 @@ body {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+/* iOS Safari zooms the page when a control smaller than 16px takes focus, and
+   never zooms back out. The controls here are deliberately small on a desktop,
+   so raise them to 16px only where a touch keyboard is what opens. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
 }
 
 ::-webkit-scrollbar {

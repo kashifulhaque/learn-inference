@@ -55,14 +55,14 @@ export default function ComputeBadge() {
           ? "Something is running on a GPU provider"
           : "Nothing is running on a GPU provider"
       }
-      className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${
+      className={`flex h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border px-2.5 text-xs font-medium transition ${
         running
           ? "border-rose-450/45 bg-rose-450/10 text-rose-450 hover:bg-rose-450/15"
           : "border-ink-700/70 bg-ink-850 text-ink-400 hover:border-ink-600 hover:text-ink-200"
       }`}
     >
       <span
-        className={`h-1.5 w-1.5 rounded-full ${
+        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
           active === null
             ? "bg-ink-600"
             : running

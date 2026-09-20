@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { api, runLab, type Lab, type ProviderInfo, type RunEvent } from "../lib/api";
 import SplitPane from "./SplitPane";
+import { useIsWide } from "../lib/useMediaQuery";
 
 // Monaco is heavy, so the editor is its own chunk and loads with the first lab.
 const CodeEditor = lazy(() => import("./CodeEditor"));
@@ -34,6 +35,7 @@ export default function LabPane({ lab, onPassed }: Props) {
   const logRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const saveTimer = useRef<number | null>(null);
+  const wide = useIsWide();
 
   useEffect(() => {
     setCode(lab.draft || lab.starter);
@@ -259,12 +261,12 @@ export default function LabPane({ lab, onPassed }: Props) {
 
   const consolePane = (
     <>
-      <div className="flex shrink-0 items-stretch gap-px border-y border-ink-800 bg-ink-900">
+      <div className="flex shrink-0 items-stretch gap-px overflow-x-auto border-y border-ink-800 bg-ink-900">
         {tabs.map((item) => (
           <button
             key={item.id}
             onClick={() => (item.id === "solution" ? openSolution() : setTab(item.id))}
-            className={`flex items-center gap-1.5 border-b-2 px-3.5 py-2 text-[12px] font-medium transition ${
+            className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-[12px] font-medium transition sm:px-3.5 ${
               tab === item.id
                 ? "border-flame-500 text-ink-100"
                 : "border-transparent text-ink-500 hover:text-ink-200"
@@ -278,7 +280,7 @@ export default function LabPane({ lab, onPassed }: Props) {
             )}
           </button>
         ))}
-        <div className="ml-auto flex items-center gap-2 px-3 text-[11px]">
+        <div className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap px-3 text-[11px]">
           {status === "running" && (
             <span className="flex items-center gap-1.5 text-flame-400">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-flame-500" />
@@ -425,7 +427,7 @@ export default function LabPane({ lab, onPassed }: Props) {
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-ink-900/60">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-ink-800 bg-ink-900 px-3">
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-ink-800 bg-ink-900 px-3 sm:gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-flame-400">
@@ -440,16 +442,21 @@ export default function LabPane({ lab, onPassed }: Props) {
           </h2>
         </div>
 
+        {/* Spelling out "(not configured)" inside the closed select took 43% of
+            a 375px header and truncated the lab's own title to four letters.
+            A narrow screen gets a marker instead; either way the reason is a
+            line of its own under this bar. An option's text cannot be styled
+            per breakpoint, so this branch is in JavaScript. */}
         <select
           value={provider ?? ""}
           onChange={(event) => setProvider(event.target.value)}
-          className="rounded-lg border border-ink-800 bg-ink-950/60 px-2 py-1.5 text-[11px] text-ink-200 outline-none focus:border-flame-500"
+          className="h-9 min-w-0 max-w-28 shrink rounded-lg border border-ink-800 bg-ink-950/60 px-2 text-[11px] text-ink-200 outline-none focus:border-flame-500 sm:max-w-none"
           aria-label="GPU provider"
         >
           {providers.map((item) => (
             <option key={item.name} value={item.name} disabled={!item.available}>
               {item.name}
-              {item.available ? "" : " (not configured)"}
+              {item.available ? "" : wide ? " (not configured)" : " ⚠"}
             </option>
           ))}
         </select>
@@ -457,7 +464,7 @@ export default function LabPane({ lab, onPassed }: Props) {
         {status === "running" ? (
           <button
             onClick={cancel}
-            className="rounded-lg border border-rose-450/45 bg-rose-450/10 px-3 py-1.5 text-[11px] font-bold text-rose-450 transition hover:bg-rose-450/20"
+            className="flex h-9 shrink-0 items-center whitespace-nowrap rounded-lg border border-rose-450/45 bg-rose-450/10 px-3 text-[11px] font-bold text-rose-450 transition hover:bg-rose-450/20"
           >
             Stop · {elapsed}s
           </button>
@@ -465,7 +472,7 @@ export default function LabPane({ lab, onPassed }: Props) {
           <button
             onClick={run}
             disabled={!canRun}
-            className="rounded-lg bg-flame-500 px-3.5 py-1.5 text-[11px] font-bold text-ink-950 transition hover:bg-flame-400 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex h-9 shrink-0 items-center whitespace-nowrap rounded-lg bg-flame-500 px-3.5 text-[11px] font-bold text-ink-950 transition hover:bg-flame-400 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Run ▸
           </button>
