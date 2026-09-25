@@ -5,6 +5,8 @@
 //
 // The parser here mirrors remark-math: `$$...$$` is display math, `$...$` is
 // inline math, and neither is recognized inside a fenced or inline code span.
+// Math inside a callout carries the blockquote's `>` markers, which are
+// stripped first. The colour macros are the ones the site defines.
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
@@ -15,12 +17,16 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
 const require = createRequire(join(root, "frontend/node_modules/"));
 const katex = require("katex");
+const macros = JSON.parse(
+  readFileSync(join(root, "frontend/src/lib/katexMacros.json"), "utf8"),
+);
 
-/** Replaces fenced blocks and inline code with spaces, keeping offsets. */
+/** Replaces blockquote markers, fenced blocks, and inline code with spaces, keeping offsets. */
 function blankCode(text) {
   const blank = (match) => match.replace(/[^\n]/g, " ");
   return text
-    .replace(/^```[\s\S]*?^```/gm, blank)
+    .replace(/^[ \t]*(?:>[ \t]?)+/gm, blank)
+    .replace(/^[ \t]*```[\s\S]*?^[ \t]*```/gm, blank)
     .replace(/`[^`\n]*`/g, blank);
 }
 
@@ -69,6 +75,7 @@ for (const file of files) {
         displayMode: item.display,
         throwOnError: true,
         strict: "warn",
+        macros: { ...macros },
       });
     } catch (error) {
       failures.push({ file, ...item, message: error.message.split("\n")[0] });

@@ -19,6 +19,8 @@
   --color-flame-300: #c0ffe7;
   --color-mint-400: #87b7ff;
   --color-rose-450: #ff7690;
+  --color-amber-450: #ffc861;
+  --color-violet-400: #c3a6ff;
 }
 
 html,
@@ -106,13 +108,32 @@ body {
   letter-spacing: -0.02em;
 }
 .prose-chapter h2 {
-  font-size: 1.35rem;
-  font-weight: 650;
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  font-size: 1.4rem;
+  font-weight: 680;
+  line-height: 1.3;
   color: var(--color-ink-100);
-  margin: 2.5rem 0 0.9rem;
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--color-ink-800);
+  margin: 0 0 1rem;
   letter-spacing: -0.01em;
+  scroll-margin-top: 1rem;
+}
+/* Each section carries its number, so the header's "03/11" has something on
+   the page to point at. */
+.prose-chapter h2::before {
+  content: counter(section, decimal-leading-zero);
+  counter-increment: section;
+  flex-shrink: 0;
+  position: relative;
+  top: -0.12em;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-ink-950);
+  background: linear-gradient(135deg, var(--color-flame-500), var(--color-mint-400));
+  border-radius: 7px;
+  padding: 0.28rem 0.45rem;
 }
 .prose-chapter h3 {
   font-size: 1.1rem;
@@ -130,6 +151,18 @@ body {
 .prose-chapter em {
   color: var(--color-flame-300);
   font-style: italic;
+}
+/* ==highlight== marks the phrase a skimming reader must not miss. */
+.prose-chapter mark {
+  color: var(--color-ink-100);
+  background: linear-gradient(
+    180deg,
+    transparent 55%,
+    color-mix(in srgb, var(--color-amber-450) 34%, transparent) 55%
+  );
+  border-radius: 2px;
+  padding: 0 0.12em;
+  font-weight: 560;
 }
 .prose-chapter a {
   color: var(--color-flame-400);
@@ -165,14 +198,46 @@ body {
   border-radius: 5px;
   padding: 0.1em 0.36em;
   color: var(--color-flame-300);
+  /* A long identifier breaks rather than pushing a narrow column sideways. */
+  overflow-wrap: anywhere;
+}
+.prose-chapter .code-block {
+  margin: 0 0 1.3rem;
+  border: 1px solid var(--color-ink-800);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--color-ink-900);
+}
+.prose-chapter .code-block-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.3rem 0.5rem 0.3rem 0.9rem;
+  border-bottom: 1px solid var(--color-ink-800);
+  background: color-mix(in srgb, var(--color-ink-850) 70%, transparent);
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-ink-500);
+}
+.prose-chapter .code-block-bar button {
+  border-radius: 6px;
+  padding: 0.2rem 0.55rem;
+  color: var(--color-ink-400);
+  text-transform: none;
+  letter-spacing: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.prose-chapter .code-block-bar button:hover {
+  background: var(--color-ink-800);
+  color: var(--color-flame-300);
 }
 .prose-chapter pre {
-  background: var(--color-ink-900);
-  border: 1px solid var(--color-ink-800);
-  border-radius: 10px;
-  padding: 1rem 1.1rem;
+  padding: 0.9rem 1.1rem 1rem;
   overflow-x: auto;
-  margin: 0 0 1.3rem;
+  margin: 0;
   font-size: 0.86rem;
   line-height: 1.6;
 }
@@ -180,6 +245,7 @@ body {
   background: none;
   border: none;
   padding: 0;
+  overflow-wrap: normal;
   color: var(--color-ink-200);
   font-size: inherit;
 }
@@ -189,25 +255,41 @@ body {
   margin: 0 0 1.2rem;
   color: var(--color-ink-300);
 }
+/* A table wider than the column scrolls inside its own frame. */
+.prose-chapter .table-wrap {
+  margin: 0 0 1.4rem;
+  overflow-x: auto;
+  border: 1px solid var(--color-ink-800);
+  border-radius: 12px;
+}
 .prose-chapter table {
   width: 100%;
   border-collapse: collapse;
-  margin: 0 0 1.4rem;
   font-size: 0.92rem;
-  display: block;
-  overflow-x: auto;
+}
+.prose-chapter tbody tr:last-child td {
+  border-bottom: none;
 }
 .prose-chapter th {
   text-align: left;
-  font-weight: 600;
+  font-weight: 650;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
   color: var(--color-ink-100);
-  border-bottom: 1px solid var(--color-ink-600);
-  padding: 0.55rem 0.75rem;
+  background: var(--color-ink-850);
+  border-bottom: 1px solid var(--color-ink-700);
+  padding: 0.6rem 0.8rem;
   white-space: nowrap;
 }
 .prose-chapter td {
   border-bottom: 1px solid var(--color-ink-800);
-  padding: 0.55rem 0.75rem;
+  padding: 0.55rem 0.8rem;
+}
+.prose-chapter tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--color-ink-900) 55%, transparent);
+}
+.prose-chapter tbody tr:hover td {
+  background: color-mix(in srgb, var(--color-flame-500) 7%, transparent);
 }
 .prose-chapter hr {
   border: none;
@@ -220,11 +302,18 @@ body {
 /* A display equation wider than the column scrolls inside its own box, so the
    page body never scrolls sideways. The padding keeps a tall fraction's
    descenders off the scrollbar. */
+/* A display equation sits on its own panel, so the eye finds the maths when
+   scanning. One wider than the column scrolls inside that panel, so the page
+   body never scrolls sideways. */
 .prose-chapter .katex-display {
-  margin: 1.4rem 0;
-  padding: 0.15rem 0 0.5rem;
+  margin: 1.3rem 0;
+  padding: 0.85rem 1rem 0.95rem;
   overflow-x: auto;
   overflow-y: hidden;
+  background: color-mix(in srgb, var(--color-ink-900) 70%, transparent);
+  border: 1px solid var(--color-ink-800);
+  border-left: 3px solid color-mix(in srgb, var(--color-mint-400) 55%, transparent);
+  border-radius: 10px;
 }
 .prose-chapter .katex-display > .katex {
   text-align: center;
@@ -237,4 +326,244 @@ body {
   background: color-mix(in srgb, var(--color-rose-450) 12%, transparent);
   border-radius: 4px;
   padding: 0 0.25em;
+}
+
+/* Chapter structure --------------------------------------------------------- */
+
+/* The page header shows the title, so the body's own H1 would repeat it. */
+.chapter-article .chapter-intro > h1:first-child {
+  display: none;
+}
+.chapter-article .prose-chapter {
+  counter-reset: section;
+}
+.chapter-article .chapter-section {
+  transition: opacity 0.35s ease, filter 0.35s ease;
+}
+.chapter-article .chapter-section + .chapter-section {
+  margin-top: 2.75rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--color-ink-800);
+}
+/* Focus mode dims everything but the section being read. Pointing at a dimmed
+   section brings it back, so nothing is ever out of reach. */
+.chapter-article.focus-mode .chapter-section:not(.is-active) {
+  opacity: 0.28;
+  filter: saturate(0.4);
+}
+.chapter-article.focus-mode .chapter-section:not(.is-active):hover {
+  opacity: 0.75;
+  filter: none;
+}
+.chapter-article .chapter-section.is-active > h2::before {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-flame-500) 18%, transparent);
+}
+
+/* Callouts ------------------------------------------------------------------ */
+
+.prose-chapter .callout {
+  --tone: var(--color-mint-400);
+  position: relative;
+  margin: 1.5rem 0;
+  border: 1px solid color-mix(in srgb, var(--tone) 28%, var(--color-ink-800));
+  border-left: 4px solid var(--tone);
+  border-radius: 12px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--tone) 9%, var(--color-ink-900)),
+    color-mix(in srgb, var(--color-ink-900) 70%, transparent) 70%
+  );
+  color: var(--color-ink-200);
+}
+.prose-chapter .callout-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.65rem;
+  margin: 0;
+  padding: 0.8rem 1rem 0;
+}
+.prose-chapter .callout-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--tone);
+  white-space: nowrap;
+}
+.prose-chapter .callout-label::before {
+  content: "";
+  width: 1rem;
+  height: 1rem;
+  background: var(--tone);
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+}
+.prose-chapter .callout-title {
+  flex-basis: 100%;
+  font-size: 1rem;
+  font-weight: 650;
+  line-height: 1.5;
+  color: var(--color-ink-100);
+}
+.prose-chapter .callout-body {
+  padding: 0.55rem 1rem 0.2rem;
+}
+.prose-chapter .callout-head + .callout-body {
+  padding-top: 0.45rem;
+}
+.prose-chapter .callout-body > :last-child {
+  margin-bottom: 0.85rem;
+}
+.prose-chapter .callout .katex-display {
+  background: color-mix(in srgb, var(--color-ink-950) 45%, transparent);
+  border-left-color: color-mix(in srgb, var(--tone) 70%, transparent);
+}
+.prose-chapter .callout ul,
+.prose-chapter .callout ol {
+  margin-bottom: 0.85rem;
+}
+
+/* A key idea is the one thing to carry out of the section, so it glows. */
+.prose-chapter .callout-key {
+  --tone: var(--color-flame-500);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-flame-500) 12%, transparent),
+    0 12px 40px -18px color-mix(in srgb, var(--color-flame-500) 45%, transparent);
+}
+.prose-chapter .callout-key .callout-body {
+  font-size: 1.04rem;
+  color: var(--color-ink-100);
+}
+.prose-chapter .callout-tldr {
+  --tone: var(--color-amber-450);
+}
+.prose-chapter .callout-recap {
+  --tone: var(--color-flame-500);
+}
+.prose-chapter .callout-intuition,
+.prose-chapter .callout-note {
+  --tone: var(--color-mint-400);
+}
+.prose-chapter .callout-example {
+  --tone: var(--color-amber-450);
+}
+.prose-chapter .callout-tip,
+.prose-chapter .callout-try {
+  --tone: var(--color-flame-400);
+}
+.prose-chapter .callout-warning {
+  --tone: var(--color-rose-450);
+}
+.prose-chapter .callout-deepdive {
+  --tone: var(--color-violet-400);
+}
+.prose-chapter .callout-question {
+  --tone: var(--color-mint-400);
+}
+
+/* Collapsible callouts: a deep dive and a self-check question. */
+.prose-chapter details.callout > summary {
+  cursor: pointer;
+  list-style: none;
+  padding-bottom: 0.8rem;
+  border-radius: 12px;
+  transition: background 0.15s;
+}
+.prose-chapter details.callout > summary::-webkit-details-marker {
+  display: none;
+}
+.prose-chapter details.callout > summary:hover {
+  background: color-mix(in srgb, var(--tone) 6%, transparent);
+}
+.prose-chapter details.callout[open] > summary {
+  padding-bottom: 0;
+}
+.prose-chapter .callout-hint {
+  margin-left: auto;
+  order: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid color-mix(in srgb, var(--tone) 35%, transparent);
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.7rem;
+  font-weight: 650;
+  color: var(--tone);
+  white-space: nowrap;
+}
+.prose-chapter .callout-hint::after {
+  content: "▾";
+  transition: transform 0.2s;
+}
+.prose-chapter details[open] .callout-hint::after {
+  transform: rotate(180deg);
+}
+.prose-chapter details[open] .callout-hint {
+  font-size: 0;
+  gap: 0;
+  padding: 0.1rem 0.45rem;
+}
+.prose-chapter details[open] .callout-hint::after {
+  font-size: 0.7rem;
+}
+.prose-chapter details.callout > summary .callout-title {
+  order: 3;
+}
+.prose-chapter details.callout[open] > .callout-body {
+  animation: callout-reveal 0.25s ease;
+}
+@keyframes callout-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .prose-chapter details.callout[open] > .callout-body {
+    animation: none;
+  }
+  .chapter-article .chapter-section {
+    transition: none;
+  }
+}
+
+/* Icons, as masks so each takes its callout's colour. */
+.prose-chapter .callout {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 16v-4M12 8h.01'/%3E%3C/svg%3E");
+}
+.prose-chapter .callout-key {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='7.5' cy='15.5' r='4.5'/%3E%3Cpath d='m10.7 12.3 9.3-9.3M16 7l3 3M14 9l2 2'/%3E%3C/svg%3E");
+}
+.prose-chapter .callout-tldr {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13 2 4 14h7l-1 8 9-12h-7z'/%3E%3C/svg%3E");
+}
+.prose-chapter .callout-intuition {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V16h8v-1.3A7 7 0 0 0 12 2z'/%3E%3C/svg%3E");
+}
+.prose-chapter .callout-example {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='2' width='16' height='20' rx='2'/%3E%3Cpath d='M8 6h8M8 10h.01M12 10h.01M16 10h.01M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h4'/%3E%3C/svg%3E");
+}
+.prose-chapter .callout-warning {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01'/%3E%3C/svg%3E");
+}
+.prose-chapter .callout-deepdive {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m12 2 10 5-10 5L2 7zM2 17l10 5 10-5M2 12l10 5 10-5'/%3E%3C/svg%3E");
+}
+.prose-chapter .callout-question {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01'/%3E%3C/svg%3E");
+}
+.prose-chapter .callout-recap {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11'/%3E%3C/svg%3E");
+}
+.prose-chapter .callout-tip,
+.prose-chapter .callout-try {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5L20 7'/%3E%3C/svg%3E");
+}
+.prose-chapter .callout-try {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 3 14 9-14 9z'/%3E%3C/svg%3E");
 }

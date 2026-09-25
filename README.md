@@ -293,6 +293,19 @@ python3 scripts/check_labs.py
 Labs that need CUDA are skipped on a machine without a GPU and reported as
 skipped. To run those, use a GPU host, or open the lab in the app.
 
+## Write a chapter
+
+Chapters use a few reading aids on top of Markdown: callouts such as
+`> [!KEY]`, collapsible deep dives and self-check questions, `==highlights==`,
+and colour macros for maths symbols. For the syntax and the shape every chapter
+follows, see [the chapter style guide](content/STYLE.md).
+
+To check each chapter's callouts and outline, run the following command:
+
+```bash
+python3 scripts/check_chapters.py
+```
+
 ## Check the maths
 
 The chapters write their maths as LaTeX, which the reader renders with KaTeX.
