@@ -14,17 +14,28 @@ objectives:
 
 # Notation and prerequisites
 
+> [!TLDR]
+> - A shape lists named dimensions outermost first, and the last dimension is
+>   contiguous in memory.
+> - In an einsum string, a letter missing from the output is summed over.
+> - Softmax doesn't change when you shift every score by a constant, so every
+>   implementation subtracts the maximum to avoid overflow.
+> - bfloat16 has float32's range but only 8 significand bits: a running sum
+>   stops absorbing addends about 256 times smaller than itself.
+> - GB is for vendor figures and GiB is for shape arithmetic. The GPU words and
+>   the course's symbols are collected at the end.
+
 This is a reference page, not a lesson. It collects the background the rest of
-the course leans on: the shape conventions, the einsum notation, the four or
-five linear-algebra facts that recur, what floating-point formats actually
-store, and the GPU words that later chapters use without stopping to define.
+the course leans on: the shape conventions, the einsum notation, the linear
+algebra facts that recur, what floating-point formats actually store, and the
+GPU words that later chapters use without stopping to define.
 
-Skim it once. Come back to it when a chapter uses a symbol you do not
-recognize. Nothing here is proved at length; each item exists so that chapter 6
-can write $S_t = a_t S_{t-1} + \ldots$ and chapter 14 can say "subtract the
-running max" without a detour.
+Skim it once, and come back when a chapter uses a symbol you don't recognize.
+Nothing here is proved at length. Each item exists so that chapter 6 can write
+$S_t = a_t S_{t-1} + \ldots$ and chapter 14 can say "subtract the running max"
+without a detour.
 
-The course assumes you are comfortable with matrix multiplication, transposes,
+The course assumes you're comfortable with matrix multiplication, transposes,
 eigenvalues in passing, and the idea of a derivative. It assumes nothing about
 GPUs, transformers, or serving.
 
@@ -37,25 +48,28 @@ order they appear in memory, outermost first:
 (batch, heads, seq, head_dim)
 ```
 
-The rightmost dimension is contiguous: consecutive `head_dim` values sit in
+==The rightmost dimension is contiguous==: consecutive `head_dim` values sit at
 consecutive addresses. This matters constantly. A kernel that reads along the
 last dimension reads consecutive bytes; a kernel that reads along `seq` jumps
 `head_dim` elements per step.
 
-The standard names, used consistently from here on:
+The course uses the following names consistently:
 
-- `batch` or `B` — independent sequences processed together.
-- `seq`, `q_len`, `kv_len` — token positions. `q_len` is how many queries this
-  call computes, `kv_len` how many keys they attend to. In decode `q_len` is 1
-  and `kv_len` is the whole context.
-- `heads`, `kv_heads` — attention heads. They differ in this model.
-- `head_dim` — width of one head, 256 here.
-- `hidden` — width of the residual stream, 5120 here.
+- `batch` or `B`: independent sequences processed together.
+- `seq`, `q_len`, `kv_len`: token positions. `q_len` is how many queries this
+  call computes, and `kv_len` is how many keys they attend to. In decode,
+  `q_len` is 1 and `kv_len` is the whole context.
+- `heads`, `kv_heads`: attention heads. They differ in this model.
+- `head_dim`: width of one head, 256 here.
+- `hidden`: width of the residual stream, 5120 here.
 
-In maths, a bracketed subscript indexes a tensor and a plain subscript names a
-position. So $Q[b,h,i,c]$ is one element, and $q_t$ is the query vector at
-position $t$: a vector of length `head_dim`. Vectors are columns, so $q_t^\top
-k_j$ is a scalar and $k_j v_j^\top$ is a matrix.
+In maths, indices follow three rules:
+
+- A bracketed subscript indexes a tensor, so $Q[b,h,i,c]$ is one element.
+- A plain subscript names a position, so $q_t$ is the query vector at position
+  $t$: a vector of length `head_dim`.
+- Vectors are columns, so $q_t^\top k_j$ is a scalar and $k_j v_j^\top$ is a
+  matrix.
 
 A capital letter without indices is the whole tensor. $K$ is the key matrix of
 shape `(kv_len, head_dim)`, one key per row.
@@ -72,34 +86,35 @@ listings say the shape after every reshape.
 
 ## Einstein summation
 
-`torch.einsum` writes a contraction by naming the indices instead of arranging
-transposes and `reshape` calls until the dimensions line up. The rule is
-mechanical:
+`torch.einsum` writes a contraction by naming the indices, instead of arranging
+transposes and `reshape` calls until the dimensions line up. The whole
+specification is three rules:
 
 1. Each input gets a group of letters, one per dimension, in order.
 2. A letter that appears in the inputs but not in the output is summed over.
 3. A letter that appears in the output is kept, in the order the output lists.
 
-That is the entire specification. Three examples, each written out as an
-explicit sum.
+The following examples each write the contraction out as an explicit sum. The
+summed index is coloured $\hla{c}$ or $\hla{i}$.
 
 **A matrix multiply.** `torch.einsum("td,dk->tk", x, W)` with `x` of shape
 `(T, d)` and `W` of shape `(d, k)`. The letter `d` is absent from the output, so
-it is summed:
+it's summed:
 
 $$
-Y[t,k] = \sum_{c=0}^{d-1} x[t,c]\, W[c,k]
+Y[t,k] = \sum_{\hla{c}=0}^{d-1} x[t,\hla{c}]\, W[\hla{c},k]
 $$
 
 **Attention scores.** `torch.einsum("bhid,bhjd->bhij", q, k)` with both inputs
-of shape `(batch, heads, seq, head_dim)`. Here `b` and `h` appear in every term,
-so they are carried along untouched — batch dimensions. Only `d` is summed:
+of shape `(batch, heads, seq, head_dim)`. The letters `b` and `h` appear in
+every term, so they're carried along untouched as batch dimensions. Only `d` is
+summed:
 
 $$
-\mathrm{scores}[b,h,i,j] = \sum_{c=0}^{d_h-1} Q[b,h,i,c]\, K[b,h,j,c]
+\mathrm{scores}[b,h,i,j] = \sum_{\hla{c}=0}^{d_h-1} Q[b,h,i,\hla{c}]\, K[b,h,j,\hla{c}]
 $$
 
-That is a dot product between query $i$ and key $j$, computed for every pair.
+That's a dot product between query $i$ and key $j$, computed for every pair.
 
 **An outer product, per head.** `torch.einsum("hk,hv->hkv", k, v)` with `k` of
 shape `(heads, key_dim)` and `v` of shape `(heads, value_dim)`. No letter is
@@ -114,65 +129,66 @@ This one builds the linear-attention state in chapter 6. Reading the state back
 is the reverse contraction, `torch.einsum("hkv,hk->hv", S, q)`:
 
 $$
-o[h,j] = \sum_{i} S[h,i,j]\, q[h,i]
+o[h,j] = \sum_{\hla{i}} S[h,\hla{i},j]\, q[h,\hla{i}]
 $$
 
-which is $o_h = S_h^\top q_h$ written index by index.
+This is $o_h = S_h^\top q_h$ written index by index.
 
-Two practical notes. `einsum` does not promise a fast kernel; for a plain
-matrix multiply, `torch.matmul` dispatches to a tuned library and `einsum` may
-not. Use `einsum` when it makes the contraction readable, and `matmul` in the
-inner loop. And `einsum` silently accepts a string that contracts the wrong
-axis, as long as the sizes happen to match — which is exactly the bug that
-produces plausible-looking garbage.
+> [!TIP] Use einsum for clarity, matmul for speed
+> `einsum` doesn't promise a fast kernel. For a plain matrix multiply,
+> `torch.matmul` dispatches to a tuned library and `einsum` might not. Use
+> `einsum` when it makes the contraction readable, and `matmul` in the inner
+> loop.
 
 ## The linear algebra that keeps coming back
 
+Five facts recur across the course, each with the chapter that leans on it.
+
 **Outer products build state.** $k v^\top$ is a matrix of rank 1: every column
 is a multiple of $k$. Summing outer products, $S = \sum_j k_j v_j^\top$, packs
-many key-value pairs into one fixed-size matrix. Reading it back with a query,
-$S^\top q$, returns a blend of the stored values, weighted by how much $q$
-resembles each $k_j$:
+many key-value pairs into one fixed-size matrix. Reading it back with a query
+returns a blend of the stored values $\hlc{v_j}$, weighted by the similarity
+$\hlb{q^\top k_j}$ between the query and each key:
 
 $$
-S^\top q = \sum_j (q^\top k_j)\, v_j
+S^\top q = \sum_j \hlb{(q^\top k_j)}\, \hlc{v_j}
 $$
 
-That identity is the whole of linear attention. Chapter 6 derives it from
+==That identity is the whole of linear attention.== Chapter 6 derives it from
 softmax attention.
 
 **$q^\top K^\top$ is a similarity vector.** If $K$ has shape
 `(kv_len, head_dim)` with one key per row, then $K q$ is a vector of length
-`kv_len` whose $j$-th entry is $q^\top k_j$. Written as a row vector that is
+`kv_len` whose $j$-th entry is $q^\top k_j$. Written as a row vector, that's
 $q^\top K^\top$. Each entry measures alignment between the query and one key:
 large and positive when they point the same way, negative when opposed. Softmax
 then turns those numbers into weights. Attention is a similarity search
 expressed as a matrix multiply.
 
 **Matrix-vector and matrix-matrix cost the same per weight, but not per byte.**
-Multiplying an $n \times m$ matrix by one vector costs $2nm$ FLOPs — one
-multiply and one add per entry — and reads $nm$ matrix entries. Multiplying the
-same matrix by $T$ vectors at once costs $2nmT$ FLOPs and still reads $nm$
-entries. The arithmetic per byte read grows with $T$:
+An $n \times m$ matrix times one vector costs $2nm$ FLOPs, one multiply and one
+add per entry, and reads $nm$ matrix entries. The same matrix times $T$ vectors
+costs $2nmT$ FLOPs and still reads $nm$ entries. So the arithmetic per byte read
+grows with $T$:
 
 $$
-\text{intensity} \approx \frac{2nmT}{b \cdot nm} = \frac{2T}{b}
+\text{intensity} \approx \frac{2nm\hla{T}}{\hlb{b} \cdot nm} = \boxed{\frac{2\hla{T}}{\hlb{b}}}
 $$
 
-where $b$ is bytes per matrix entry. This single ratio, with $b = 2$ for
-bfloat16, is why decoding one token at a time wastes a GPU and why batching
+Here $\hlb{b}$ is bytes per matrix entry. With $\hlb{b} = 2$ for bfloat16, this
+single ratio is why decoding one token at a time wastes a GPU and why batching
 fixes it. Chapters 0 and 10 use it.
 
 **Low-rank updates are cheap.** Adding $k v^\top$ to an $n \times m$ matrix
 costs $nm$ multiply-adds and no factorization. Chapter 6's delta rule is a
-rank-1 update applied once per token; the chunked form batches many of them and
+rank-1 update applied once per token. The chunked form batches many of them and
 turns the sequence of rank-1 updates into one matrix multiply.
 
 **Triangular solves avoid inverses.** A system $Tx = b$ with $T$ lower
 triangular is solved by forward substitution in $O(n^2)$ operations: read off
 $x_1$, substitute, read off $x_2$, and so on. Forming $T^{-1}$ explicitly costs
 $O(n^3)$ and loses accuracy. Chapter 6's chunked delta rule inverts a unit lower
-triangular matrix of size `chunk x chunk`; it is a triangular solve, and that is
+triangular matrix of size `chunk x chunk`. It's a triangular solve, and that's
 why the chunk size can stay small.
 
 ## Softmax, and why every implementation subtracts the max
@@ -183,43 +199,48 @@ $$
 \mathrm{softmax}(x)_i = \frac{e^{x_i}}{\sum_j e^{x_j}}
 $$
 
-The entries are positive and sum to 1. The function is invariant to adding a
-constant to every entry. Let $c$ be any scalar:
+The entries are positive and sum to 1. The function is also invariant to adding
+the same constant $\hld{c}$ to every entry. To see why, factor $e^{\hld{c}}$ out
+of the numerator and the denominator:
 
 $$
-\mathrm{softmax}(x + c)_i
-= \frac{e^{x_i + c}}{\sum_j e^{x_j + c}}
-= \frac{e^{c} e^{x_i}}{e^{c} \sum_j e^{x_j}}
+\mathrm{softmax}(x + \hld{c})_i
+= \frac{e^{x_i + \hld{c}}}{\sum_j e^{x_j + \hld{c}}}
+= \frac{e^{\hld{c}} e^{x_i}}{e^{\hld{c}} \sum_j e^{x_j}}
 = \mathrm{softmax}(x)_i
 $$
 
-The $e^c$ cancels. Mathematically the shift changes nothing.
+The $e^{\hld{c}}$ cancels. ==Mathematically the shift changes nothing;
+numerically it changes everything.==
 
-Numerically it changes everything. `float32` overflows at about $3.4 \times
-10^{38}$, and $e^{89}$ already exceeds that. Attention scores at long context
-routinely reach values where $e^{x}$ is `inf`, and `inf / inf` is `nan`. So every
-implementation picks $c = -\max_i x_i$ first:
+`float32` overflows at about $3.4 \times 10^{38}$, and $e^{89}$ already exceeds
+that. Attention scores at long context routinely reach values where $e^{x}$ is
+`inf`, and `inf / inf` is `nan`. So every implementation picks
+$\hld{c} = -\max_i x_i$ first:
 
 $$
-\mathrm{softmax}(x)_i = \frac{e^{x_i - \max_j x_j}}{\sum_j e^{x_j - \max_j x_j}}
+\boxed{\mathrm{softmax}(x)_i = \frac{e^{x_i - \max_j x_j}}{\sum_j e^{x_j - \max_j x_j}}}
 $$
 
-Now the largest exponent is $e^0 = 1$, nothing overflows, and the smallest terms
-underflow to zero — which is harmless, because they were going to contribute
-almost nothing anyway.
+> [!INTUITION]
+> After the shift, the largest exponent is $e^0 = 1$, so nothing overflows. The
+> smallest terms underflow to zero, which is harmless, because they were going
+> to contribute almost nothing anyway.
 
-Two later chapters depend on this. Chapter 11 applies a temperature and a
-top-*p* cut to logits before sampling, and the shift is what keeps that stable.
-Chapter 14 goes further: FlashAttention never has the whole score row in memory
-at once, so it carries a *running* maximum and rescales the partial sum every
-time the maximum grows. Shift invariance is what makes that rescaling exact
-rather than approximate.
+Two later chapters depend on this:
 
-## Floating point
+- **Chapter 11** applies a temperature and a top-*p* cut to logits before
+  sampling, and the shift is what keeps that stable.
+- **Chapter 14** goes further. FlashAttention never has the whole score row in
+  memory at once, so it carries a *running* maximum and rescales the partial sum
+  every time the maximum grows. Shift invariance is what makes that rescaling
+  exact rather than approximate.
+
+## Floating-point formats
 
 Three formats appear in this course. Each stores a sign bit, an exponent field,
-and a mantissa field, and the value is roughly $(-1)^s \times 1.m \times
-2^{e - \text{bias}}$.
+and a mantissa field, and the value is roughly
+$(-1)^s \times 1.m \times 2^{e - \text{bias}}$:
 
 | Format | Sign | Exponent | Mantissa | Significand bits | Max finite |
 |---|---|---|---|---|---|
@@ -230,24 +251,29 @@ and a mantissa field, and the value is roughly $(-1)^s \times 1.m \times
 The significand column counts the stored mantissa bits plus the implicit leading
 1.
 
-bfloat16 is float32 with 16 mantissa bits deleted. It keeps the 8-bit exponent,
-so it has float32's range: any float32 value that is not subnormal converts to
-bfloat16 without overflowing or flushing to zero. What it gives up is precision
-— 8 significand bits, about 2 decimal digits. float16 makes the opposite trade:
-11 significand bits, but an exponent that runs out at 65504, which is why
-float16 training needs loss scaling and why this course keeps weights in
-bfloat16.
+The two 16-bit formats make opposite trades:
 
-**ULP and relative error.** A *unit in the last place* is the gap between one
-representable number and the next. For a value in $[2^e, 2^{e+1})$ with $p$
-significand bits, that gap is
+- **bfloat16 is float32 with 16 mantissa bits deleted.** It keeps the 8-bit
+  exponent, so it has float32's range: any float32 value that isn't subnormal
+  converts to bfloat16 without overflowing or flushing to zero. What it gives up
+  is precision: 8 significand bits, about 2 decimal digits.
+- **float16 keeps precision and gives up range.** It has 11 significand bits,
+  but an exponent that runs out at 65504. That's why float16 training needs loss
+  scaling and why this course keeps weights in bfloat16.
+
+## Rounding error and vanishing addends
+
+A *unit in the last place* (ULP) is the gap between one representable number and
+the next. For a value in $[2^e, 2^{e+1})$ with $\hlb{p}$ significand bits, that
+gap is:
 
 $$
-\mathrm{ULP} = 2^{e - p + 1}
+\mathrm{ULP} = 2^{e - \hlb{p} + 1}
 $$
 
 Rounding to nearest puts the answer within half a ULP, so the *relative* error
-of a single stored value is at most $2^{-p}$. That constant is the unit roundoff:
+of a single stored value is at most $2^{-\hlb{p}}$. That constant is the *unit
+roundoff*:
 
 | Format | Unit roundoff $2^{-p}$ | Decimal |
 |---|---|---|
@@ -255,69 +281,67 @@ of a single stored value is at most $2^{-p}$. That constant is the unit roundoff
 | float16 | $2^{-11}$ | $4.9 \times 10^{-4}$ |
 | bfloat16 | $2^{-8}$ | $3.9 \times 10^{-3}$ |
 
-A bfloat16 number carries about four significant bits of fraction. That is why
-this course checks kernels against a float32 reference and accepts agreement to
-around $10^{-2}$ in bfloat16, while a float32 kernel is expected to agree to
-$10^{-6}$.
+That's why this course checks kernels against a float32 reference and accepts
+agreement to around $10^{-2}$ in bfloat16, while a float32 kernel is expected to
+agree to $10^{-6}$.
 
 **A running sum stops absorbing small addends.** Take a sum $s$ and an addend
 $x$. The exact result $s + x$ is rounded back into the format, and if $x$ is
 smaller than half a ULP of $s$, the rounded result is $s$ again. The addend
 vanishes.
 
-Work it through in bfloat16. At $s = 256 = 2^8$ with $p = 8$ significand bits,
+> [!EXAMPLE] Adding 1 to 256 in bfloat16
+> At $s = 256 = 2^8$ with $\hlb{p} = 8$ significand bits, the gap above 256 is:
+>
+> $$
+> \mathrm{ULP}(256) = 2^{8 - 8 + 1} = 2
+> $$
+>
+> The representable neighbours of 256 are 255 below and 258 above. Now add 1:
+>
+> $$
+> 256 + 1 = 257 = \tfrac{256 + 258}{2}
+> $$
+>
+> That's exactly halfway, and round-to-nearest-even picks 256. Adding 1 to 256
+> in bfloat16 returns 256. Add 1 a thousand more times and the sum is still 256.
 
-$$
-\mathrm{ULP}(256) = 2^{8 - 8 + 1} = 2
-$$
+The general rule follows from the ULP formula. A running sum in a format with
+$\hlb{p}$ significand bits stops moving once the addends fall below about
+$s \cdot 2^{-\hlb{p}}$:
 
-so the representable neighbours of 256 are 254, 256, 258. Now add 1:
+> [!KEY] Addends vanish at a ratio of 256
+> In bfloat16, an addend smaller than about $1/256$ of the running sum rounds
+> away entirely. In float32, the ratio is $1/16{,}777{,}216$.
 
-$$
-256 + 1 = 257 = \tfrac{256 + 258}{2}
-$$
-
-which is exactly halfway. Round-to-nearest-even picks 256. Adding 1 to 256 in
-bfloat16 returns 256. Add 1 a thousand more times and the sum is still 256.
-
-The general rule follows from the ULP formula: a running sum in a format with
-$p$ significand bits stops moving once the addends fall below about $s \cdot
-2^{-p}$. In bfloat16 that is a ratio of $1/256$; in float32, $1/16{,}777{,}216$.
 This is why the linear-attention state in chapter 6 is kept in float32 even
-though the weights are bfloat16 — the state accumulates over thousands of
+though the weights are bfloat16. The state accumulates over thousands of
 tokens, and a bfloat16 accumulator would quietly stop learning from the tail of
-the sequence. It is also why reductions inside kernels accumulate in float32 and
+the sequence. It's also why reductions inside kernels accumulate in float32 and
 cast down only at the end.
-
-**What goes wrong, and how it looks.** Overflow in float16 shows up as `inf`
-then `nan` and is loud. Precision loss in bfloat16 is silent: the output is
-finite, plausible, and wrong in the third digit, which a correctness test with a
-loose tolerance will pass. The symptom is usually a model that works at short
-context and degrades at long context, because the error accumulates with the
-number of terms summed.
 
 ## GPU vocabulary
 
-Enough to read the kernel chapters. The numbers are for the A100 80GB this
-course targets.
+This section gives enough vocabulary to read the kernel chapters, with numbers
+for the A100 80GB this course targets.
 
 **Streaming multiprocessor (SM).** The GPU's unit of independent execution. An
-A100 has 108 of them. Each has its own registers, scheduler, and shared memory.
-A kernel that does not produce enough work to occupy all 108 leaves most of the
-chip idle no matter how good the inner loop is.
+A100 has 108 of them, and each has its own registers, scheduler, and shared
+memory. A kernel that doesn't produce enough work to occupy all 108 leaves most
+of the chip idle no matter how good the inner loop is.
 
 **Warp.** 32 threads that execute the same instruction at the same time. The
 warp, not the thread, is the real unit of scheduling. If threads in a warp take
 different branches, the warp executes both paths in turn and masks off the
-inactive threads — *divergence*, and it costs exactly what it sounds like.
+inactive threads. That's *divergence*, and it costs exactly what it sounds like.
 
 **Thread block.** A group of threads, up to 1024, that runs on one SM and can
 cooperate through shared memory and barriers. Blocks within a kernel launch
-cannot synchronize with each other. You choose the block size; it is usually a
+can't synchronize with each other. You choose the block size; it's usually a
 multiple of 32.
 
-**The memory hierarchy.** Four levels, each an order of magnitude faster and
-smaller than the one before:
+**The memory hierarchy.** Four levels, from the smallest and fastest to the
+largest and slowest:
 
 | Level | Size on an A100 | Scope | Cost to reach |
 |---|---|---|---|
@@ -326,21 +350,21 @@ smaller than the one before:
 | L2 cache | 40 MB | Whole GPU | Hundreds of cycles |
 | HBM (global memory) | 80 GB | Whole GPU | Hundreds of cycles, 1275 GB/s measured |
 
-HBM is high-bandwidth memory: the DRAM stacked next to the die. It is where the
-weights and the KV cache live, and it is the bottleneck in almost everything
-this course measures. Shared memory is a software-managed scratchpad, not a
-cache — you copy into it explicitly. FlashAttention is, in one sentence, an
-attention kernel that keeps its working set in shared memory instead of
-round-tripping through HBM.
+*HBM* is high-bandwidth memory: the DRAM stacked next to the die. It's where
+the weights and the KV cache live, and ==it's the bottleneck in almost
+everything this course measures==. Shared memory is a software-managed
+scratchpad, not a cache: you copy into it explicitly. In one sentence,
+FlashAttention is an attention kernel that keeps its working set in shared
+memory instead of round-tripping through HBM.
 
 **Kernel launch.** Handing one GPU function to the driver to run across many
-blocks. Each launch costs 5 to 10 microseconds of overhead, which is nothing for
-a big kernel and a serious cost for a decode step that issues several hundred
-small ones. That overhead is why CUDA graphs exist.
+blocks. Each launch costs 5 to 10 microseconds of overhead. That's nothing for a
+big kernel and a serious cost for a decode step that issues several hundred
+small ones, which is why CUDA graphs exist.
 
 **Memory coalescing.** When the 32 threads of a warp read 32 consecutive
 addresses, the hardware merges them into a few wide transactions. When they read
-addresses scattered across memory, it issues many narrow ones and most of each
+addresses scattered across memory, it issues many narrow ones, and most of each
 transaction is thrown away. On this hardware the measured gap between coalesced
 and strided access is 6.9x. Coalescing is the main reason kernel code cares
 which tensor dimension is contiguous.
@@ -353,15 +377,17 @@ goal; a kernel at 25% occupancy that saturates bandwidth is finished.
 
 ## Units
 
-Storage has two conventions and this course uses both, deliberately:
+Storage has two conventions, and this course uses both deliberately:
 
 $$
 1\ \mathrm{GB} = 10^{9}\ \text{bytes}, \qquad
 1\ \mathrm{GiB} = 2^{30} = 1{,}073{,}741{,}824\ \text{bytes}
 $$
 
-The convention here: **decimal units (GB) for anything a vendor prints**, and
-**binary units (KiB, MiB, GiB) for anything computed from a power-of-two shape.**
+> [!KEY] Decimal for vendors, binary for shapes
+> Use decimal units (GB) for anything a vendor prints, and binary units (KiB,
+> MiB, GiB) for anything computed from a power-of-two shape.
+
 So the weights are 53.8 GB, matching the way model sizes are quoted, and the KV
 cache is 64 KiB per token, because $64 \times 1024$ is what the shape arithmetic
 produces. The same 53.8 GB is 50.1 GiB; both numbers describe the same bytes.
@@ -376,6 +402,9 @@ driver version, which is why the budget carries explicit headroom rather than
 pretending to be exact.
 
 ## Symbols used across the course
+
+The following table lists the symbols later chapters use, with their values for
+this model:
 
 | Symbol | Meaning | This model |
 |---|---|---|
@@ -401,30 +430,55 @@ pretending to be exact.
 
 Where a chapter needs a symbol not in this table, it defines it on first use.
 
+## What goes wrong
+
+The numerical failures this page sets up look like this:
+
+- **Overflow is loud.** In float16 it shows up as `inf`, then `nan`.
+- **Precision loss is silent.** In bfloat16 the output is finite, plausible,
+  and wrong in the third digit, which a correctness test with a loose tolerance
+  passes. The usual symptom is a model that works at short context and degrades
+  at long context, because the error accumulates with the number of terms
+  summed.
+
+> [!WARNING] A wrong einsum string can still run
+> `einsum` silently accepts a string that contracts the wrong axis, as long as
+> the sizes happen to match. That's exactly the bug that produces
+> plausible-looking garbage.
+
+> [!RECAP]
+> - Shapes are named, outermost first, and the last dimension is contiguous.
+> - An einsum letter missing from the output is summed; one present is kept.
+> - Subtract the maximum before exponentiating: it's free mathematically and
+>   mandatory numerically.
+> - bfloat16 has float32's range and about 2 decimal digits. A bfloat16 running
+>   sum ignores addends below about $1/256$ of itself, so accumulate in float32.
+> - HBM bandwidth is the bottleneck in almost everything the course measures,
+>   and GB is for vendor figures while GiB is for shape arithmetic.
+
 ## Check your understanding
 
-**A tensor has shape `(batch, heads, seq, head_dim)`. Which reads are
-coalesced?** Reads along `head_dim`, the last and contiguous dimension. A read
-that walks `seq` with the other indices fixed strides by `head_dim` elements —
-512 bytes in bfloat16 — and every warp transaction wastes most of its payload.
-This is why attention kernels tile over `seq` but keep `head_dim` whole.
+> [!QUESTION] A tensor has shape `(batch, heads, seq, head_dim)`. Which reads are coalesced?
+> Reads along `head_dim`, the last and contiguous dimension. A read that walks
+> `seq` with the other indices fixed strides by `head_dim` elements, 512 bytes
+> in bfloat16, and every warp transaction wastes most of its payload. This is
+> why attention kernels tile over `seq` but keep `head_dim` whole.
 
-**Why does subtracting the maximum not change the softmax output?** Because the
-factor $e^c$ appears in every numerator and in the denominator, so it cancels.
-The subtraction is free mathematically and mandatory numerically.
+> [!QUESTION] Why does subtracting the maximum not change the softmax output?
+> The factor $e^c$ appears in every numerator and in the denominator, so it
+> cancels. The subtraction is free mathematically and mandatory numerically.
 
-**In bfloat16, at what running-sum magnitude does adding 1.0 stop having any
-effect?** Once the sum exceeds roughly $2^8 = 256$, since the ULP there is 2 and
-1.0 is at most half a ULP. The exact crossover depends on rounding mode and the
-sum's exponent, but the order of magnitude — a ratio of 256 between sum and
-addend — is the number to remember.
+> [!QUESTION] In bfloat16, at what running-sum magnitude does adding 1.0 stop having any effect?
+> Once the sum exceeds roughly $2^8 = 256$, since the ULP there is 2 and 1.0 is
+> at most half a ULP. The exact crossover depends on rounding mode and the sum's
+> exponent, but the order of magnitude, a ratio of 256 between sum and addend,
+> is the number to remember.
 
-**`torch.einsum("bhid,bhjd->bhij", q, k)` runs without error on tensors where
-`q_len` and `head_dim` happen to be equal. What could still be wrong?** Nothing
-in the shapes, but everything in the meaning: if `q` was left in
-`(batch, seq, heads, head_dim)` order and never transposed, the string contracts
-over heads instead of head_dim and the sizes still line up. The result is a
-finite, wrong tensor. Assert the shape, do not infer it.
+> [!QUESTION] `torch.einsum("bhid,bhjd->bhij", q, k)` runs without error on tensors where `q_len` and `head_dim` happen to be equal. What could still be wrong?
+> Nothing in the shapes, but everything in the meaning. If `q` was left in
+> `(batch, seq, heads, head_dim)` order and never transposed, the string
+> contracts over heads instead of head_dim, and the sizes still line up. The
+> result is a finite, wrong tensor. Assert the shape; don't infer it.
 
 ## Further reading
 
