@@ -1,4 +1,9 @@
-"""learn-inference — HTTP API and static file server."""
+"""learn-inference — HTTP API and static file server.
+
+Everything under `/api` needs a session cookie except `/api/health`,
+`/api/me`, `/api/login`, and `/api/logout`, and so does the PDF book under
+`/book`. Everything else is the single-page app.
+"""
 
 import asyncio
 import json
@@ -131,6 +136,49 @@ def lab_solution(lab_id: str, user: str = Depends(current_user)) -> dict[str, st
     if not found:
         raise HTTPException(status_code=404, detail="No such lab")
     return {"solution": found["solution"]}
+
+
+def book_info(settings: Settings) -> dict[str, Any] | None:
+    """The PDF book on disk, as the book build's manifest describes it.
+
+    The PDF is built on the deploying machine and copied beside the app, so a
+    fresh checkout has none. Then this is None and the sidebar shows no
+    download link, rather than one that leads to a 404.
+    """
+    try:
+        manifest = json.loads((settings.book_dir / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    name = manifest.get("file")
+    if not isinstance(name, str) or "/" in name or not (settings.book_dir / name).is_file():
+        return None
+    return {
+        "title": manifest.get("title"),
+        "pages": manifest.get("pages"),
+        "bytes": manifest.get("bytes"),
+        "built": manifest.get("built"),
+        "commit": manifest.get("commit"),
+        "url": f"/book/{name}",
+    }
+
+
+@app.get("/api/book")
+def book(
+    user: str = Depends(current_user), settings: Settings = Depends(get_settings)
+) -> dict[str, Any]:
+    """The whole course as one PDF, or None when this server has no PDF."""
+    return {"book": book_info(settings)}
+
+
+@app.get("/book/{name}")
+def book_file(
+    name: str, user: str = Depends(current_user), settings: Settings = Depends(get_settings)
+) -> FileResponse:
+    """The PDF, sent as a download. Only the file the manifest names is served."""
+    info = book_info(settings)
+    if info is None or info["url"] != f"/book/{name}":
+        raise HTTPException(status_code=404, detail="No such book")
+    return FileResponse(settings.book_dir / name, media_type="application/pdf", filename=name)
 
 
 # --- user state -------------------------------------------------------------
@@ -324,12 +372,13 @@ async def run_lab(body: RunBody, user: str = Depends(current_user)) -> Streaming
 
 
 @app.get("/api/health")
-def health() -> dict[str, Any]:
+def health(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     return {
         "ok": True,
         "chapters": len(curriculum.chapter_list()),
         # Set at build time from the commit being deployed.
         "commit": os.environ.get("GIT_SHA", "unknown"),
+        "book_pages": (book_info(settings) or {}).get("pages", 0),
     }
 
 

@@ -9,6 +9,11 @@
 # The server keeps its own .env, which is not in the repository, and its data
 # lives in a Docker volume. Neither is touched here.
 #
+# The PDF book is the one thing built here rather than on the VM, because
+# printing it needs Chrome and the VM has neither the memory nor the disk to
+# spare. The build skips itself when no chapter or layout file has changed. To
+# deploy without touching the PDF already on the VM, set LI_SKIP_BOOK=1.
+#
 # Usage:
 #   scripts/deploy.sh [--host HOST] [--path PATH] [--key KEY] [--branch BRANCH]
 #
@@ -63,6 +68,11 @@ if ! git merge-base --is-ancestor "$COMMIT" "origin/$BRANCH"; then
   exit 1
 fi
 
+if [[ "${LI_SKIP_BOOK:-0}" != "1" ]]; then
+  echo "==> Building the PDF book"
+  node frontend/scripts/build-book.mjs
+fi
+
 # --- the server -------------------------------------------------------------
 
 if [[ "$INIT" == "1" ]]; then
@@ -96,6 +106,17 @@ ssh "${SSH_OPTS[@]}" "$HOST" "
   git reset --quiet --hard $COMMIT
   git branch --quiet --set-upstream-to=origin/$BRANCH $BRANCH 2>/dev/null || true
 "
+
+# The directory must exist before compose mounts it, or Docker creates it as
+# root and the next copy fails.
+ssh "${SSH_OPTS[@]}" "$HOST" "mkdir -p $REMOTE_PATH/book"
+if [[ "${LI_SKIP_BOOK:-0}" != "1" ]]; then
+  echo "==> Copying the PDF book"
+  # rsync does not expand a leading ~, and a relative remote path is relative
+  # to the home directory anyway.
+  rsync -az --delete --exclude .build -e "ssh ${SSH_OPTS[*]}" \
+    book/ "$HOST:${REMOTE_PATH#\~/}/book/"
+fi
 
 echo "==> Building and starting"
 ssh "${SSH_OPTS[@]}" "$HOST" \

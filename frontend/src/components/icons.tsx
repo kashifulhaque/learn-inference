@@ -197,3 +197,10 @@ export const ResetIcon = (p: IconProps) => (
     <path d="M2.8 6.5A5.5 5.5 0 1 1 3 10" />
   </Icon>
 );
+
+export const DownloadIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7" />
+    <path d="M2.75 11v1.5a1 1 0 0 0 1 1h8.5a1 1 0 0 0 1-1V11" />
+  </Icon>
+);

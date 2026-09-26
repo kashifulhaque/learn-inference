@@ -1,6 +1,7 @@
 # Guards the course content: every chapter's maths must render with the same
-# KaTeX build the site uses, every chapter's front matter must be loadable, and
-# every lab's reference solution must pass its own tests.
+# KaTeX build the site uses, every chapter's front matter must be loadable,
+# every lab's reference solution must pass its own tests, and the whole course
+# must print as a PDF book.
 #
 # The lab checker skips labs that need CUDA, because a hosted runner has no GPU.
 # Those are covered by running the lab in the app.
@@ -17,6 +18,11 @@ on:
       - backend/**
       - scripts/**
       - frontend/src/lib/katexMacros.json
+      - frontend/src/**
+      - frontend/scripts/**
+      - frontend/book.html
+      - frontend/vite.book.config.ts
+      - frontend/package-lock.json
       - .github/workflows/check-content.yml
   pull_request:
     paths:
@@ -25,6 +31,11 @@ on:
       - backend/**
       - scripts/**
       - frontend/src/lib/katexMacros.json
+      - frontend/src/**
+      - frontend/scripts/**
+      - frontend/book.html
+      - frontend/vite.book.config.ts
+      - frontend/package-lock.json
       - .github/workflows/check-content.yml
   workflow_dispatch:
 
@@ -114,3 +125,39 @@ jobs:
 
       - name: Run every lab's reference solution
         run: python scripts/check_labs.py
+
+  book:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the loader's dependencies
+        run: pip install -r backend/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the frontend's dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      # Fails on maths KaTeX can't render and on anything wider than the page,
+      # either of which would make a page of the book wrong.
+      - name: Build the PDF book
+        run: node frontend/scripts/build-book.mjs --force
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+          PYTHON: python
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: book
+          path: book/*.pdf
+          retention-days: 7

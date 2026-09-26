@@ -7,7 +7,9 @@
 #
 # This directory is a clone of the repository. A deploy is `git fetch` to the
 # commit being released, then the line above; scripts/deploy.sh does both from a
-# workstation.
+# workstation. The PDF book in ./book is built on that workstation too, copied
+# here, and mounted read-only; without it the app runs as before, with no
+# download link.
 
 name: learn-inference
 
@@ -36,6 +38,7 @@ services:
       DATA_DIR: /data
     volumes:
       - learn-inference-data:/data
+      - ./book:/app/book:ro
     networks:
       - edge
     healthcheck:

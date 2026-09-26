@@ -234,13 +234,41 @@ curl -s https://qwen.ifkash.dev/api/health
 The output is similar to the following:
 
 ```json
-{"ok":true,"chapters":22,"commit":"a1b2c3d"}
+{"ok":true,"chapters":22,"commit":"a1b2c3d","book_pages":498}
 ```
 
 The server's `.env` is untracked and stays where it is; the database lives in a
 Docker volume, untouched by either step. To convert a server that has no
 checkout yet, or to set up a new one, run `./scripts/deploy.sh --init` once. The
 clone pulls over HTTPS, so the server needs no deploy key.
+
+## The PDF book
+
+The sidebar's **Course PDF** link downloads the whole course as one book: a
+cover, a contents page, every chapter with its objectives and sections, every
+lab's brief, starter file, and hints, and the reference solutions in an
+appendix. The PDF has a bookmark for every chapter and section, running heads,
+and live links between chapters, labs, and solutions.
+
+`frontend/scripts/build-book.mjs` renders the print layout in
+`frontend/src/book/` with the site's own Markdown pipeline, then prints it with
+headless Chrome until the page numbers stop moving. The build fails on maths
+that KaTeX can't render and on anything wider than the page. To build the book
+locally, run the following command:
+
+```bash
+node frontend/scripts/build-book.mjs --force
+```
+
+The PDF lands in `book/`, which is untracked. The script finds Chrome through
+`CHROME_PATH` or in the usual install locations, and without `--force` it skips
+the build when no chapter, lab, or layout file has changed.
+
+`scripts/deploy.sh` builds the book on the workstation, because printing needs
+more memory than the VM has to spare, and copies it to the server, where the
+container mounts it read-only. To deploy without touching the PDF on the server,
+set `LI_SKIP_BOOK=1`. A server without a PDF shows no download link. The
+download needs a signed-in session, like the chapters.
 
 ## Access
 

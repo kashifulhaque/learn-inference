@@ -17,3 +17,6 @@ frontend/tsconfig.tsbuildinfo
 .pytest_cache
 .ruff_cache
 .DS_Store
+frontend/dist-book
+# Mounted into the container instead, see docker-compose.yml.
+book

@@ -34,6 +34,16 @@ export type Chapter = ChapterMeta & {
   lab_detail?: Lab;
 };
 
+/** The whole course as one PDF, built at deploy time. */
+export type BookFile = {
+  title: string;
+  pages: number;
+  bytes: number;
+  built: string;
+  commit: string;
+  url: string;
+};
+
 export type Run = {
   id: string;
   lab: string;
@@ -183,6 +193,7 @@ export const api = {
   chapter: (slug: string) => request<Chapter>(`/api/chapters/${slug}`),
   lab: (id: string) => request<Lab>(`/api/labs/${id}`),
   solution: (id: string) => request<{ solution: string }>(`/api/labs/${id}/solution`),
+  book: () => request<{ book: BookFile | null }>("/api/book"),
   setProgress: (chapter: string, status: "in_progress" | "done") =>
     request<{ ok: boolean }>("/api/progress", {
       method: "POST",

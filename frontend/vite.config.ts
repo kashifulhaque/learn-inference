@@ -8,7 +8,12 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8000",
+        target: process.env.API_TARGET ?? "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      // The PDF book, which the backend serves from book/.
+      "/book": {
+        target: process.env.API_TARGET ?? "http://127.0.0.1:8000",
         changeOrigin: true,
       },
     },

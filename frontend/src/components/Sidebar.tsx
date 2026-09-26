@@ -5,6 +5,7 @@ import { chapterNumbers, groupByPart, labTitle, splitPart } from "../lib/chapter
 import { useIsWide } from "../lib/useMediaQuery";
 import { Mark, ThemeCycle, ThemeSwitch } from "./Brand";
 import { ComputeDot, computeLabel, computeTitle } from "./ComputeBadge";
+import { DownloadBookItem, DownloadBookRailItem, useBook } from "./DownloadBook";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -98,6 +99,7 @@ export default function Sidebar({
   const [filter, setFilter] = useState("");
   const [shutParts, setShutParts] = useState<string[]>(readShutParts);
   const wide = useIsWide();
+  const book = useBook();
 
   useEffect(() => {
     try {
@@ -159,6 +161,7 @@ export default function Sidebar({
               <ComputeDot active={active} />
             </span>
           </NavLink>
+          {book && <DownloadBookRailItem book={book} />}
 
           <div className="my-2 h-px w-6 bg-line" />
 
@@ -250,6 +253,7 @@ export default function Sidebar({
         >
           Compute
         </NavItem>
+        {book && <DownloadBookItem book={book} />}
       </nav>
 
       <div className="shrink-0 border-t border-line px-3.5 pb-3 pt-3.5">
