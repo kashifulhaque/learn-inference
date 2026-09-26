@@ -1,17 +1,31 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, type Chapter } from "../lib/api";
+import { api, type Chapter, type ChapterMeta } from "../lib/api";
+import { chapterNumbers, splitPart } from "../lib/chapters";
 import Markdown from "../components/Markdown";
 import LabPane from "../components/LabPane";
 import SplitPane from "../components/SplitPane";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  ClockIcon,
+  FlaskIcon,
+  FocusIcon,
+  ListIcon,
+} from "../components/icons";
+import { Button, buttonClass, IconButton, Kbd, Loading } from "../components/ui";
 import { useIsWide } from "../lib/useMediaQuery";
 
 type Props = {
+  chapters: ChapterMeta[];
   progress: Record<string, string>;
   onProgress: (slug: string, status: "in_progress" | "done") => void;
 };
 
 type Section = { index: number; id: string; title: string };
+type NoteState = "idle" | "dirty" | "saved" | "failed";
 
 // Scrolling updates this page many times a second. The chapter body is the
 // expensive part to render and never changes while you read it.
@@ -38,10 +52,11 @@ function headingText(heading: HTMLElement): string {
   return (clone.textContent ?? "").replace(/\s+/g, " ").trim();
 }
 
-export default function ChapterPage({ progress, onProgress }: Props) {
+export default function ChapterPage({ chapters, progress, onProgress }: Props) {
   const { slug = "" } = useParams();
   const [chapter, setChapter] = useState<Chapter | null>(null);
   const [note, setNote] = useState("");
+  const [noteState, setNoteState] = useState<NoteState>("idle");
   const [error, setError] = useState("");
   const [view, setView] = useState<"read" | "lab">("read");
   const [sections, setSections] = useState<Section[]>([]);
@@ -58,6 +73,9 @@ export default function ChapterPage({ progress, onProgress }: Props) {
   const tracker = useRef<HTMLDivElement>(null);
   const wide = useIsWide();
 
+  const numbers = useMemo(() => chapterNumbers(chapters), [chapters]);
+  const bySlug = useMemo(() => new Map(chapters.map((c) => [c.slug, c])), [chapters]);
+
   useEffect(() => {
     setChapter(null);
     setError("");
@@ -66,6 +84,7 @@ export default function ChapterPage({ progress, onProgress }: Props) {
     setActive(0);
     setFurthest(0);
     setMapOpen(false);
+    setNoteState("idle");
     api
       .chapter(slug)
       .then((result) => {
@@ -73,7 +92,7 @@ export default function ChapterPage({ progress, onProgress }: Props) {
         setNote(result.note);
         if (!progress[slug]) onProgress(slug, "in_progress");
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => setError(String((e as Error).message ?? e)));
     reading.current?.scrollTo({ top: 0 });
     // Progress is intentionally excluded: marking a chapter read must not refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -207,26 +226,49 @@ export default function ChapterPage({ progress, onProgress }: Props) {
 
   function editNote(value: string) {
     setNote(value);
+    setNoteState("dirty");
     if (noteTimer.current) window.clearTimeout(noteTimer.current);
     noteTimer.current = window.setTimeout(() => {
-      api.saveNote(slug, value).catch(() => undefined);
+      api
+        .saveNote(slug, value)
+        .then(() => setNoteState("saved"))
+        .catch(() => setNoteState("failed"));
     }, 800);
   }
 
   if (error) {
-    return <p className="p-10 text-sm text-rose-450">{error}</p>;
+    const missing = /no such chapter/i.test(error);
+    return (
+      <div className="mx-auto max-w-md px-6 py-20 text-center">
+        <p className="font-serif text-2xl font-semibold text-fg">
+          {missing ? "There's no chapter here" : "This chapter didn't load"}
+        </p>
+        <p className="mt-2 text-[13.5px] leading-6 text-fg-subtle">
+          {missing ? "The link may be out of date. The overview lists every chapter." : error}
+        </p>
+        <Link to="/" className={buttonClass("secondary", "md", "mt-6")}>
+          <ArrowLeftIcon className="size-3.5" />
+          Back to the overview
+        </Link>
+      </div>
+    );
   }
   if (!chapter) {
-    return <p className="p-10 text-sm text-ink-500">Loading…</p>;
+    return <Loading label="Loading the chapter" />;
   }
 
   const done = progress[slug] === "done";
   const hasLab = Boolean(chapter.lab_detail);
   const position = sections.findIndex((section) => section.index === active);
   const current = position >= 0 ? sections[position] : null;
+  const part = splitPart(chapter.part);
+  const prev = chapter.prev ? bySlug.get(chapter.prev) : undefined;
+  const next = chapter.next ? bySlug.get(chapter.next) : undefined;
+
+  const toggleDone = () => onProgress(slug, done ? "in_progress" : "done");
 
   const sectionList = (compact: boolean) => (
-    <ol className={compact ? "space-y-0.5" : "grid gap-1 sm:grid-cols-2"}>
+    <ol className={compact ? "space-y-px" : "grid gap-x-4 gap-y-px sm:grid-cols-2"}>
       {sections.map((section) => {
         const isCurrent = section.index === active;
         const seen = section.index <= furthest && !isCurrent;
@@ -236,22 +278,16 @@ export default function ChapterPage({ progress, onProgress }: Props) {
               type="button"
               onClick={() => goTo(section.id)}
               aria-current={isCurrent ? "location" : undefined}
-              className={`group flex w-full items-start gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] leading-5 transition ${
-                isCurrent
-                  ? "bg-flame-500/12 text-flame-300"
-                  : "text-ink-300 hover:bg-ink-800/70 hover:text-ink-100"
+              className={`flex w-full items-baseline gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] leading-5 transition-colors ${
+                isCurrent ? "bg-accent/8 text-fg" : "text-fg-muted hover:bg-tint hover:text-fg"
               }`}
             >
               <span
-                className={`mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-md font-mono text-[10px] font-bold ${
-                  isCurrent
-                    ? "bg-flame-500 text-ink-950"
-                    : seen
-                      ? "bg-mint-400/15 text-mint-400"
-                      : "bg-ink-800 text-ink-500 group-hover:text-ink-300"
+                className={`flex w-5 shrink-0 justify-end font-mono text-[11.5px] tabular-nums ${
+                  isCurrent ? "text-accent" : seen ? "text-ok" : "text-fg-faint"
                 }`}
               >
-                {seen ? "✓" : pad(section.index)}
+                {seen ? <CheckIcon className="size-3.5 translate-y-0.5" /> : pad(section.index)}
               </span>
               <span className="min-w-0">{section.title}</span>
             </button>
@@ -262,162 +298,181 @@ export default function ChapterPage({ progress, onProgress }: Props) {
   );
 
   const readingPane = (
-    <div className="flex h-full min-h-0 flex-col bg-ink-950/20">
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-ink-800 bg-ink-900/70 px-3 sm:gap-2.5 sm:px-4">
-        <span className="min-w-0 truncate rounded-lg border border-ink-800 bg-ink-900 px-2 py-1 text-[11px] font-medium text-ink-300">
-          {chapter.part}
-        </span>
-        {minutesLeft !== null && (
-          <span className="hidden whitespace-nowrap text-[11px] text-ink-500 sm:inline">
-            {minutesLeft > 0 ? `About ${minutesLeft} min left` : "Finished reading"}
-          </span>
-        )}
-        <span className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
-          <button
-            onClick={() => onProgress(slug, done ? "in_progress" : "done")}
-            aria-label={done ? "Mark this chapter unread" : "Mark this chapter done"}
-            className={`flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 text-[11px] font-semibold transition ${
-              done
-                ? "border-mint-400/35 bg-mint-400/10 text-mint-400 hover:bg-mint-400/20"
-                : "border-ink-700 bg-ink-900 text-ink-300 hover:border-flame-500/60 hover:text-flame-300"
-            }`}
-          >
-            {/* "Mark done" breaks over two lines inside its own pill on a
-                narrow phone, so there the mark stands in for the words. */}
-            <span className={done ? "" : "min-[400px]:hidden"}>{done ? "✓" : "○"}</span>
-            <span className="hidden min-[400px]:inline">
-              {done ? "Done" : "Mark done"}
-            </span>
-          </button>
-          <span className="flex items-center gap-1">
-            {chapter.prev ? (
-              <Link
-                to={`/c/${chapter.prev}`}
-                title="Previous chapter"
-                aria-label="Previous chapter"
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-ink-800 bg-ink-900 text-ink-400 transition hover:border-ink-600 hover:text-ink-100 lg:h-7 lg:w-7"
-              >
-                ←
-              </Link>
-            ) : (
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-ink-800/60 text-ink-700 lg:h-7 lg:w-7">
-                ←
-              </span>
-            )}
-            {chapter.next ? (
-              <Link
-                to={`/c/${chapter.next}`}
-                title="Next chapter"
-                aria-label="Next chapter"
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-ink-800 bg-ink-900 text-ink-400 transition hover:border-ink-600 hover:text-ink-100 lg:h-7 lg:w-7"
-              >
-                →
-              </Link>
-            ) : (
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-ink-800/60 text-ink-700 lg:h-7 lg:w-7">
-                →
-              </span>
-            )}
-          </span>
-        </span>
-      </header>
-
-      {/* The section tracker: where you are, how far you have come, and a
-          way to jump anywhere without scrolling back to the top. */}
-      <div ref={tracker} className="relative shrink-0 border-b border-ink-800 bg-ink-900/40">
-        <div className="flex h-10 items-center gap-2 px-3 sm:px-4">
+    <div className="@container flex h-full min-h-0 flex-col bg-paper">
+      {/* One bar for the whole reader: where you are, a way to jump anywhere,
+          and the controls for the chapter. Its height matches the lab's
+          header, so the two line up across the split. */}
+      <div ref={tracker} className="relative shrink-0">
+        <header className="flex h-12 items-center gap-1 border-b border-line px-2 sm:gap-1.5 sm:px-3">
           <button
             type="button"
             onClick={() => setMapOpen((open) => !open)}
             aria-expanded={mapOpen}
-            aria-label="Show the sections of this chapter"
-            className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-1 text-left transition hover:bg-ink-800/60"
+            aria-haspopup="true"
+            aria-label="Sections of this chapter"
+            className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-tint"
           >
-            <span className="shrink-0 rounded-md bg-ink-800 px-1.5 py-0.5 font-mono text-[10px] font-bold text-flame-400">
-              {current ? `${pad(current.index)}/${pad(sections.length)}` : "Intro"}
+            <ListIcon className="size-4 text-fg-subtle" />
+            <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-fg-faint">
+              {current ? `${pad(current.index)}/${pad(sections.length)}` : "00"}
             </span>
-            <span className="min-w-0 truncate text-[12px] font-medium text-ink-200">
+            <span className="min-w-0 truncate text-[13px] font-medium text-fg">
               {current ? current.title : chapter.title}
             </span>
-            <span className={`shrink-0 text-[10px] text-ink-500 transition ${mapOpen ? "rotate-180" : ""}`}>
-              ▾
-            </span>
+            <ChevronDownIcon
+              className={`size-3.5 text-fg-faint transition-transform ${mapOpen ? "rotate-180" : ""}`}
+            />
           </button>
+
           <button
             type="button"
             onClick={() => setFocus((on) => !on)}
             aria-pressed={focus}
-            title="Dim every section except the one you are reading"
-            className={`flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-[11px] font-semibold transition ${
-              focus
-                ? "border-flame-500/50 bg-flame-500/12 text-flame-300"
-                : "border-ink-800 text-ink-400 hover:border-ink-600 hover:text-ink-100"
+            title="Dim every section except the one you're reading"
+            className={`flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-[12.5px] font-medium transition-colors ${
+              focus ? "bg-accent/10 text-accent" : "text-fg-subtle hover:bg-tint hover:text-fg"
             }`}
           >
-            <span className={`h-1.5 w-1.5 rounded-full ${focus ? "bg-flame-400" : "bg-ink-600"}`} />
-            Focus
+            <FocusIcon />
+            <span className="hidden @xl:inline">Focus</span>
           </button>
-        </div>
-        <div className="h-[3px] w-full overflow-hidden bg-ink-800/60">
+
+          <button
+            type="button"
+            onClick={toggleDone}
+            aria-pressed={done}
+            aria-label={done ? "Mark this chapter not done" : "Mark this chapter done"}
+            title={done ? "Mark this chapter not done" : "Mark this chapter done"}
+            className={`flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[12.5px] font-medium transition-colors sm:px-2.5 ${
+              done
+                ? "border-ok/30 bg-ok/8 text-ok hover:bg-ok/14"
+                : "border-line bg-card text-fg-muted hover:border-line-strong hover:text-fg"
+            }`}
+          >
+            <CheckIcon className="size-3.5" />
+            {/* In a narrow pane the words would squeeze the section title to
+                nothing, so there the check stands in for them. */}
+            <span className="hidden @md:inline">{done ? "Done" : "Mark done"}</span>
+          </button>
+
+          <span className="ml-0.5 flex items-center">
+            {prev ? (
+              <Link
+                to={`/c/${prev.slug}`}
+                title={`Previous: ${prev.title}`}
+                aria-label="Previous chapter"
+                className="flex size-8 items-center justify-center rounded-md text-fg-subtle transition-colors hover:bg-tint hover:text-fg"
+              >
+                <ArrowLeftIcon />
+              </Link>
+            ) : (
+              <IconButton size="sm" disabled aria-label="No previous chapter" className="size-8">
+                <ArrowLeftIcon />
+              </IconButton>
+            )}
+            {next ? (
+              <Link
+                to={`/c/${next.slug}`}
+                title={`Next: ${next.title}`}
+                aria-label="Next chapter"
+                className="flex size-8 items-center justify-center rounded-md text-fg-subtle transition-colors hover:bg-tint hover:text-fg"
+              >
+                <ArrowRightIcon />
+              </Link>
+            ) : (
+              <IconButton size="sm" disabled aria-label="No next chapter" className="size-8">
+                <ArrowRightIcon />
+              </IconButton>
+            )}
+          </span>
+        </header>
+
+        <div className="absolute inset-x-0 bottom-0 h-[2px]" aria-hidden>
           <div
             ref={bar}
-            className="h-full origin-left bg-gradient-to-r from-flame-500 via-mint-400 to-amber-400 transition-transform duration-150"
+            className="h-full origin-left bg-accent transition-transform duration-150"
             style={{ transform: "scaleX(0)" }}
           />
         </div>
+
         {mapOpen && sections.length > 0 && (
-          <div className="absolute inset-x-2 top-full z-20 mt-1 max-h-[60vh] overflow-y-auto rounded-xl border border-ink-700 bg-ink-900 p-2 shadow-2xl shadow-black/40 sm:inset-x-4">
+          <div className="absolute inset-x-2 top-full z-20 mt-1.5 max-h-[65vh] overflow-y-auto rounded-lg border border-line bg-card p-1.5 shadow-pop sm:left-3 sm:right-auto sm:w-[26rem]">
+            <div className="flex items-baseline justify-between gap-3 px-2 pb-1.5 pt-1 text-[12px]">
+              <span className="font-medium text-fg-muted">
+                {sections.length} sections
+              </span>
+              {minutesLeft !== null && (
+                <span className="flex items-center gap-1.5 text-fg-subtle">
+                  <ClockIcon className="size-3.5" />
+                  {minutesLeft > 0 ? `About ${minutesLeft} min left` : "Finished reading"}
+                </span>
+              )}
+            </div>
             {sectionList(true)}
-            <p className="mt-2 border-t border-ink-800 px-2.5 pt-2 text-[10.5px] text-ink-500">
-              Press <kbd className="rounded bg-ink-800 px-1 font-mono">[</kbd> and{" "}
-              <kbd className="rounded bg-ink-800 px-1 font-mono">]</kbd> to step between sections.
+            <p className="mt-1.5 flex items-center gap-1.5 border-t border-line px-2 pb-0.5 pt-2 text-[11.5px] text-fg-faint">
+              <Kbd>[</Kbd>
+              <Kbd>]</Kbd>
+              step between sections
             </p>
           </div>
         )}
       </div>
 
       <div ref={reading} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
-        <div className={`px-4 py-6 sm:px-8 sm:py-8 ${hasLab ? "max-w-3xl" : "mx-auto max-w-3xl"}`}>
-          <div className="chapter-hero mb-7">
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-flame-400">
-              {chapter.part}
+        <div className={`px-5 pb-16 pt-8 @lg:px-10 @lg:pt-12 ${hasLab ? "max-w-[46rem]" : "mx-auto max-w-[46rem]"}`}>
+          <header className="mb-8">
+            <p className="text-[12.5px] text-fg-subtle">
+              {part.label && <span>{part.label} · </span>}
+              {part.name}
             </p>
-            <h1 className="mt-2 text-[1.9rem] font-bold leading-tight tracking-[-0.02em] text-ink-100 sm:text-[2.2rem]">
+            <h1 className="mt-2 font-serif text-[2rem] font-semibold leading-[1.15] tracking-[-0.01em] text-fg sm:text-[2.35rem]">
+              <span className="mr-3 font-mono text-[0.55em] font-normal tracking-normal text-accent align-[0.2em]">
+                {numbers.get(chapter.slug)}
+              </span>
               {chapter.title}
             </h1>
             {chapter.summary && (
-              <p className="mt-3 text-[15px] leading-7 text-ink-300">{chapter.summary}</p>
+              <p className="mt-3 font-serif text-[1.125rem] leading-7 text-fg-muted">{chapter.summary}</p>
             )}
-            <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-medium text-ink-400">
+            <p className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] text-fg-subtle">
               {chapter.minutes && (
-                <span className="rounded-full border border-ink-800 bg-ink-900/70 px-2.5 py-1">
+                <span className="flex items-center gap-1.5">
+                  <ClockIcon className="size-3.5 text-fg-faint" />
                   {chapter.minutes} min
                 </span>
               )}
               {sections.length > 0 && (
-                <span className="rounded-full border border-ink-800 bg-ink-900/70 px-2.5 py-1">
+                <span className="flex items-center gap-1.5">
+                  <ListIcon className="size-3.5 text-fg-faint" />
                   {sections.length} sections
                 </span>
               )}
               {hasLab && (
-                <span className="rounded-full border border-flame-500/30 bg-flame-500/10 px-2.5 py-1 text-flame-300">
-                  Hands-on lab
+                <span className="flex items-center gap-1.5">
+                  <FlaskIcon className="size-3.5 text-fg-faint" />
+                  {wide ? "Lab alongside" : (
+                    <button
+                      type="button"
+                      onClick={() => setView("lab")}
+                      className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+                    >
+                      Open the lab
+                    </button>
+                  )}
                 </span>
               )}
-            </div>
-          </div>
+            </p>
+          </header>
 
           {(chapter.objectives.length > 0 || sections.length > 0) && (
-            <section className="mb-9 overflow-hidden rounded-2xl border border-ink-800 bg-ink-900/60">
+            <section className="mb-10 rounded-lg border border-line bg-well/60">
               {chapter.objectives.length > 0 && (
-                <div className="border-b border-ink-800 px-4 py-4">
-                  <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-ink-400">
-                    By the end, you can
-                  </div>
-                  <ul className="mt-3 space-y-2 text-[13px] leading-6 text-ink-300">
+                <div className="px-5 py-4">
+                  <h2 className="text-[13px] font-semibold text-fg">By the end, you can</h2>
+                  <ul className="mt-2.5 space-y-1.5 text-[13.5px] leading-6 text-fg-muted">
                     {chapter.objectives.map((objective) => (
                       <li key={objective} className="flex gap-2.5">
-                        <span className="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-flame-500" />
+                        <span className="mt-[0.7em] h-px w-2.5 shrink-0 bg-fg-faint" aria-hidden />
                         {objective}
                       </li>
                     ))}
@@ -425,10 +480,8 @@ export default function ChapterPage({ progress, onProgress }: Props) {
                 </div>
               )}
               {sections.length > 0 && (
-                <div className="px-2 py-3">
-                  <div className="px-2.5 pb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-ink-400">
-                    Your route through this chapter
-                  </div>
+                <div className={`px-3 pb-3 pt-3.5 ${chapter.objectives.length ? "border-t border-line" : ""}`}>
+                  <h2 className="px-2 pb-1.5 text-[13px] font-semibold text-fg">In this chapter</h2>
                   {sectionList(false)}
                 </div>
               )}
@@ -439,45 +492,84 @@ export default function ChapterPage({ progress, onProgress }: Props) {
             <ChapterBody>{chapter.body}</ChapterBody>
           </article>
 
-          <section className="mt-10 rounded-xl border border-ink-800 bg-ink-900/60 p-4">
-            <label
-              htmlFor="note"
-              className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-ink-500"
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-ink-600" />
-              Chapter notes
-            </label>
+          <section className="mt-14">
+            <div className="mb-2 flex items-baseline justify-between gap-3">
+              <label htmlFor="note" className="text-[13px] font-semibold text-fg">
+                Your notes
+              </label>
+              <span
+                className={`text-[12px] ${noteState === "failed" ? "text-bad" : "text-fg-faint"}`}
+                aria-live="polite"
+              >
+                {noteState === "dirty"
+                  ? "Saving…"
+                  : noteState === "saved"
+                    ? "Saved"
+                    : noteState === "failed"
+                      ? "Couldn't save your note"
+                      : "Saved as you type"}
+              </span>
+            </div>
             <textarea
               id="note"
               value={note}
               onChange={(event) => editNote(event.target.value)}
               rows={4}
-              placeholder="Capture the idea you want to revisit."
-              className="mt-3 w-full resize-y rounded-lg border border-ink-800 bg-ink-950/50 px-3 py-2.5 text-[13px] leading-6 text-ink-200 outline-none transition placeholder:text-ink-600 focus:border-flame-500 focus:bg-ink-950"
+              placeholder="The idea you want to come back to, a question for later…"
+              className="w-full resize-y rounded-lg border border-line bg-card px-3.5 py-3 text-[14px] leading-6 text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-line-strong"
             />
-            <p className="mt-2 text-[11px] text-ink-600">
-              Notes save automatically after you stop typing.
-            </p>
           </section>
 
-          <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-ink-800 pt-5">
-            <button
-              onClick={() => onProgress(slug, done ? "in_progress" : "done")}
-              className={`rounded-lg px-3.5 py-2 text-xs font-bold transition ${
-                done
-                  ? "border border-mint-400/35 bg-mint-400/10 text-mint-400 hover:bg-mint-400/20"
-                  : "border border-ink-700 bg-ink-900 text-ink-300 hover:border-flame-500/60 hover:text-flame-300"
-              }`}
-            >
-              {done ? "✓ Chapter complete" : "Mark chapter complete"}
-            </button>
-            {chapter.next && (
-              <Link
-                to={`/c/${chapter.next}`}
-                className="rounded-lg bg-flame-500 px-3.5 py-2 text-xs font-bold text-ink-950 transition hover:bg-flame-400"
+          <div className="mt-10 border-t border-line pt-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-[13.5px] text-fg-muted">
+                {done ? "You've marked this chapter done." : "Finished with this chapter?"}
+              </p>
+              <Button
+                variant={done ? "secondary" : "primary"}
+                onClick={toggleDone}
+                className={done ? "text-ok" : ""}
               >
-                Next chapter →
-              </Link>
+                <CheckIcon className="size-3.5" />
+                {done ? "Done" : "Mark chapter done"}
+              </Button>
+            </div>
+
+            {(prev || next) && (
+              <nav className="mt-6 grid gap-3 sm:grid-cols-2" aria-label="Chapters">
+                {prev ? (
+                  <Link
+                    to={`/c/${prev.slug}`}
+                    className="group rounded-lg border border-line px-4 py-3 transition-colors hover:border-line-strong hover:bg-tint/40"
+                  >
+                    <span className="flex items-center gap-1.5 text-[12px] text-fg-subtle">
+                      <ArrowLeftIcon className="size-3.5" />
+                      Previous
+                    </span>
+                    <span className="mt-1 block text-[14px] font-medium text-fg group-hover:text-accent">
+                      <span className="mr-2 font-mono text-[12px] text-fg-faint">{numbers.get(prev.slug)}</span>
+                      {prev.title}
+                    </span>
+                  </Link>
+                ) : (
+                  <span className="hidden sm:block" />
+                )}
+                {next && (
+                  <Link
+                    to={`/c/${next.slug}`}
+                    className="group rounded-lg border border-line px-4 py-3 text-right transition-colors hover:border-line-strong hover:bg-tint/40"
+                  >
+                    <span className="flex items-center justify-end gap-1.5 text-[12px] text-fg-subtle">
+                      Next
+                      <ArrowRightIcon className="size-3.5" />
+                    </span>
+                    <span className="mt-1 block text-[14px] font-medium text-fg group-hover:text-accent">
+                      <span className="mr-2 font-mono text-[12px] text-fg-faint">{numbers.get(next.slug)}</span>
+                      {next.title}
+                    </span>
+                  </Link>
+                )}
+              </nav>
             )}
           </div>
         </div>
@@ -513,20 +605,23 @@ export default function ChapterPage({ progress, onProgress }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 gap-1 border-b border-ink-800 bg-ink-900 p-1.5">
-        {(["read", "lab"] as const).map((option) => (
-          <button
-            key={option}
-            onClick={() => setView(option)}
-            className={`flex-1 rounded-lg px-3 py-2.5 text-xs font-semibold transition ${
-              view === option
-                ? "bg-ink-850 text-ink-100"
-                : "text-ink-500 hover:text-ink-200"
-            }`}
-          >
-            {option === "read" ? "Chapter" : "Lab"}
-          </button>
-        ))}
+      <div className="shrink-0 border-b border-line bg-well px-2 py-1.5" role="tablist">
+        <div className="flex rounded-md border border-line bg-paper p-0.5">
+          {(["read", "lab"] as const).map((option) => (
+            <button
+              key={option}
+              role="tab"
+              aria-selected={view === option}
+              onClick={() => setView(option)}
+              className={`flex h-8 flex-1 items-center justify-center gap-1.5 rounded text-[13px] font-medium transition-colors ${
+                view === option ? "bg-card text-fg shadow-[0_0_0_1px_var(--line)]" : "text-fg-subtle hover:text-fg"
+              }`}
+            >
+              {option === "read" ? <ListIcon className="size-3.5" /> : <FlaskIcon className="size-3.5" />}
+              {option === "read" ? "Chapter" : "Lab"}
+            </button>
+          ))}
+        </div>
       </div>
       {/* Both panes stay mounted: switching tabs must not throw away a draft
           or a run in flight. */}

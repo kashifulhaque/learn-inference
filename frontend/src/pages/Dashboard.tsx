@@ -1,219 +1,250 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { api, type ChapterMeta, type Run } from "../lib/api";
+import { chapterNumbers, groupByPart, labTitle, splitPart } from "../lib/chapters";
+import { formatAgo, formatMinutes } from "../lib/format";
+import { ArrowRightIcon, CheckIcon, ClockIcon, FlaskIcon } from "../components/icons";
+import { BlockHeading, buttonClass, Dot, Loading, Panel, Tag } from "../components/ui";
 
 type Props = {
-  chapters: ChapterMeta[];
+  /** Null until the course list has loaded. */
+  chapters: ChapterMeta[] | null;
   progress: Record<string, string>;
   model: string;
   gpu: string;
 };
 
+const RECENT_RUNS = 5;
+
+function RunOutcome({ run }: { run: Run }) {
+  if (run.passed === true) return <Tag tone="ok">Passed</Tag>;
+  if (run.passed === false) return <Tag tone="bad">Failed</Tag>;
+  return <Tag>{run.status.replace(/_/g, " ")}</Tag>;
+}
+
 export default function Dashboard({ chapters, progress, model, gpu }: Props) {
   const [runs, setRuns] = useState<Run[]>([]);
 
   useEffect(() => {
-    api.runs().then((result) => setRuns(result.runs));
+    api.runs().then((result) => setRuns(result.runs)).catch(() => undefined);
   }, []);
 
-  const done = chapters.filter((c) => progress[c.slug] === "done");
-  const next = chapters.find((c) => progress[c.slug] !== "done") ?? chapters[0];
-  const passed = runs.filter((r) => r.passed).length;
-  const completion = chapters.length ? Math.round((done.length / chapters.length) * 100) : 0;
-
-  const attempts = useMemo(
-    () =>
-      Object.entries(
-        runs.reduce<Record<string, { total: number; passed: number }>>((acc, run) => {
-          const entry = (acc[run.lab] ||= { total: 0, passed: 0 });
-          entry.total += 1;
-          if (run.passed) entry.passed += 1;
-          return acc;
-        }, {}),
-      )
-        .map(([lab, counts]) => ({ lab: lab.slice(0, 2), ...counts }))
-        .sort((a, b) => a.lab.localeCompare(b.lab)),
-    [runs],
+  const list = useMemo(() => chapters ?? [], [chapters]);
+  const numbers = useMemo(() => chapterNumbers(list), [list]);
+  const byLab = useMemo(
+    () => new Map(list.filter((c) => c.lab).map((c) => [c.lab as string, c])),
+    [list],
   );
 
-  const parts = chapters.reduce<Record<string, ChapterMeta[]>>((groups, chapter) => {
-    (groups[chapter.part] ||= []).push(chapter);
-    return groups;
-  }, {});
-  const numbers = new Map(chapters.map((chapter, index) => [chapter.slug, index + 1]));
+  if (!chapters) return <Loading label="Loading the course" />;
 
-  const tiles = [
-    { label: "Course complete", value: `${completion}%`, note: `${done.length} of ${chapters.length} chapters` },
-    { label: "Labs passed", value: String(passed), note: "verified runs" },
-    { label: "Total runs", value: String(runs.length), note: "across all labs" },
-    { label: "Compute target", value: gpu || "—", note: "active accelerator" },
+  const done = list.filter((c) => progress[c.slug] === "done");
+  const next = list.find((c) => progress[c.slug] !== "done");
+  const labs = list.filter((c) => c.lab).length;
+  // A lab counts once however many times it passed.
+  const labsPassed = new Set(runs.filter((r) => r.passed).map((r) => r.lab)).size;
+  const minutesLeft = list
+    .filter((c) => progress[c.slug] !== "done")
+    .reduce((sum, c) => sum + (c.minutes ?? 0), 0);
+  const recent = [...runs].sort((a, b) => b.started_at - a.started_at).slice(0, RECENT_RUNS);
+
+  const stats = [
+    { label: "Chapters done", value: `${done.length}`, of: `of ${list.length}` },
+    { label: "Labs passed", value: `${labsPassed}`, of: `of ${labs}` },
+    { label: "Lab runs", value: `${runs.length}`, of: "" },
+    { label: "Reading left", value: minutesLeft ? formatMinutes(minutesLeft) : "None", of: "" },
   ];
 
   return (
-    <div className="mx-auto max-w-6xl px-5 py-7 sm:px-8">
-      <section className="surface-grid relative overflow-hidden rounded-2xl border border-ink-800 bg-ink-900/70 px-6 py-8 sm:px-8">
-        <div className="pointer-events-none absolute -right-24 -top-28 h-72 w-72 rounded-full bg-flame-500/10 blur-3xl" />
-        <div className="relative max-w-2xl">
-          <div className="mb-4 flex items-center gap-2.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-flame-500" />
-            <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-flame-400">
-              Course dashboard
-            </span>
-          </div>
-          <h1 className="text-3xl font-semibold tracking-[-0.035em] text-ink-100 sm:text-4xl">
-            Build an inference engine.
-          </h1>
-          <p className="mt-4 text-sm leading-6 text-ink-400">
-            Trace the path from a safetensors file to a serving engine — CUDA kernels, paged
-            cache, continuous batching, and hybrid attention for{" "}
-            <span className="rounded bg-ink-850 px-1.5 py-0.5 font-mono text-[0.88em] text-ink-200">
-              {model || "your model"}
-            </span>
-            .
-          </p>
-          {next && (
-            <Link
-              to={`/c/${next.slug}`}
-              className="mt-6 inline-flex items-center gap-2 rounded-lg bg-flame-500 px-4 py-2 text-xs font-bold text-ink-950 transition hover:bg-flame-400"
-            >
-              {progress[next.slug] === "in_progress" ? "Continue" : "Start"}: {next.title}
-              <span aria-hidden>→</span>
-            </Link>
-          )}
-        </div>
-      </section>
+    <div className="mx-auto max-w-4xl px-4 pb-16 pt-8 sm:px-8 lg:pt-14">
+      <header className="max-w-2xl">
+        <h1 className="font-serif text-[2rem] font-semibold leading-[1.15] tracking-[-0.01em] text-fg sm:text-[2.4rem]">
+          Build an inference engine
+        </h1>
+        <p className="mt-3 text-[15px] leading-7 text-fg-muted">
+          From a safetensors file to a serving engine: CUDA kernels, a paged cache, continuous
+          batching, and hybrid attention for{" "}
+          <code className="rounded border border-line bg-code px-1 py-px font-mono text-[0.86em] text-fg">
+            {model || "the target model"}
+          </code>
+          {gpu ? `. The labs run on an ${gpu}.` : "."}
+        </p>
+      </header>
 
-      <section className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {tiles.map((tile) => (
-          <div
-            key={tile.label}
-            className="rounded-xl border border-ink-800 bg-ink-900/60 px-4 py-3.5 transition hover:border-ink-700"
-          >
-            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink-500">
-              {tile.label}
-            </div>
-            <div className="mt-1.5 truncate text-2xl font-semibold tracking-[-0.03em] text-ink-100">
-              {tile.value}
-            </div>
-            <div className="mt-0.5 truncate text-[11px] text-ink-500">{tile.note}</div>
+      {next ? (
+        <Panel className="mt-8 flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:gap-6 sm:p-6">
+          <div className="min-w-0 flex-1">
+            <p className="text-[12.5px] font-medium text-accent">
+              {progress[next.slug] ? "Pick up where you left off" : "Start here"}
+            </p>
+            <p className="mt-1.5 flex items-baseline gap-2.5">
+              <span className="font-mono text-[13px] text-fg-faint">{numbers.get(next.slug)}</span>
+              <span className="font-serif text-[1.35rem] font-semibold leading-snug text-fg">
+                {next.title}
+              </span>
+            </p>
+            <p className="mt-1.5 text-[13.5px] leading-6 text-fg-subtle">{next.summary}</p>
+            <p className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] text-fg-subtle">
+              <span>{splitPart(next.part).name}</span>
+              {next.minutes && (
+                <span className="flex items-center gap-1.5">
+                  <ClockIcon className="size-3.5 text-fg-faint" />
+                  {next.minutes} min
+                </span>
+              )}
+              {next.lab && (
+                <span className="flex items-center gap-1.5">
+                  <FlaskIcon className="size-3.5 text-fg-faint" />
+                  {next.gpu ? "GPU lab" : "Lab"}
+                </span>
+              )}
+            </p>
+          </div>
+          <Link to={`/c/${next.slug}`} className={buttonClass("primary", "md", "self-start sm:self-center")}>
+            {progress[next.slug] ? "Continue" : "Start chapter"}
+            <ArrowRightIcon className="size-3.5" />
+          </Link>
+        </Panel>
+      ) : (
+        <Panel className="mt-8 p-5 sm:p-6">
+          <p className="text-[12.5px] font-medium text-ok">Course complete</p>
+          <p className="mt-1.5 font-serif text-[1.35rem] font-semibold text-fg">
+            You've worked through every chapter.
+          </p>
+          <p className="mt-1.5 text-[13.5px] leading-6 text-fg-subtle">
+            The labs stay open, so you can go back and push any of them further.
+          </p>
+        </Panel>
+      )}
+
+      <dl className="mt-4 grid grid-cols-2 overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-4 [&>div]:bg-card gap-px">
+        {stats.map((stat) => (
+          <div key={stat.label} className="px-4 py-3.5">
+            <dt className="text-[12px] text-fg-subtle">{stat.label}</dt>
+            <dd className="mt-1 flex items-baseline gap-1.5">
+              <span className="text-xl font-semibold tabular-nums tracking-tight text-fg">
+                {stat.value}
+              </span>
+              {stat.of && <span className="text-[12.5px] tabular-nums text-fg-faint">{stat.of}</span>}
+            </dd>
           </div>
         ))}
-      </section>
+      </dl>
 
-      {attempts.length > 0 && (
-        <section className="mt-4 rounded-xl border border-ink-800 bg-ink-900/60 p-5">
-          <div className="mb-4 flex items-start justify-between gap-4">
-            <div>
-              <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink-500">
-                Lab activity
-              </div>
-              <h2 className="mt-1 text-base font-semibold tracking-tight text-ink-100">
-                Attempts and passes
-              </h2>
-            </div>
-            <span className="rounded-lg border border-ink-800 bg-ink-850 px-2.5 py-1 text-[11px] text-ink-400">
-              Run history
-            </span>
-          </div>
-          <div className="h-52">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={attempts}>
-                <CartesianGrid stroke="#172a40" vertical={false} />
-                <XAxis dataKey="lab" stroke="#6f88a3" fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis stroke="#6f88a3" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{
-                    background: "#0b1726",
-                    border: "1px solid #27415e",
-                    borderRadius: 10,
-                    fontSize: 12,
-                  }}
-                  cursor={{ fill: "rgba(101, 230, 176, 0.06)" }}
-                />
-                <Bar dataKey="total" fill="#46617f" radius={[4, 4, 0, 0]} name="runs" />
-                <Bar dataKey="passed" fill="#65e6b0" radius={[4, 4, 0, 0]} name="passed" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+      {recent.length > 0 && (
+        <section className="mt-10">
+          <BlockHeading aside={`${runs.length} in total`}>Recent lab runs</BlockHeading>
+          <Panel className="divide-y divide-line overflow-hidden">
+            {recent.map((run) => {
+              const chapter = byLab.get(run.lab);
+              const seconds =
+                run.finished_at !== null ? Math.round(run.finished_at - run.started_at) : null;
+              const body = (
+                <>
+                  <RunOutcome run={run} />
+                  <span className="min-w-0 flex-1 truncate text-[13px] text-fg">
+                    {chapter ? chapter.title : run.lab}
+                  </span>
+                  <span className="hidden font-mono text-[12px] text-fg-faint sm:inline">
+                    {run.provider}
+                  </span>
+                  {seconds !== null && (
+                    <span className="hidden w-12 text-right font-mono text-[12px] tabular-nums text-fg-subtle sm:inline">
+                      {seconds}s
+                    </span>
+                  )}
+                  <span className="w-20 shrink-0 text-right text-[12px] text-fg-subtle">
+                    {formatAgo(run.started_at)}
+                  </span>
+                </>
+              );
+              return chapter ? (
+                <Link
+                  key={run.id}
+                  to={`/c/${chapter.slug}`}
+                  className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-tint/60"
+                >
+                  {body}
+                </Link>
+              ) : (
+                <div key={run.id} className="flex items-center gap-3 px-4 py-2.5">
+                  {body}
+                </div>
+              );
+            })}
+          </Panel>
         </section>
       )}
 
-      <section className="mt-8">
-        <div className="mb-4 flex items-end justify-between gap-4">
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink-500">
-              Curriculum
-            </div>
-            <h2 className="mt-1 text-lg font-semibold tracking-tight text-ink-100">All chapters</h2>
-          </div>
-          <span className="text-[11px] text-ink-500">{chapters.length} chapters</span>
-        </div>
-
-        <div className="space-y-6">
-          {Object.entries(parts).map(([part, items]) => (
-            <div key={part}>
-              <div className="mb-2 flex items-center gap-3">
-                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink-500">
-                  {part}
-                </span>
-                <span className="h-px flex-1 bg-ink-800" />
-                <span className="font-mono text-[10px] text-ink-600">
-                  {items.filter((c) => progress[c.slug] === "done").length}/{items.length}
-                </span>
+      <section className="mt-12">
+        <BlockHeading aside={`${list.length} chapters`}>Contents</BlockHeading>
+        <div className="space-y-8">
+          {groupByPart(list).map(([part, items]) => {
+            const { label, name } = splitPart(part);
+            const partDone = items.filter((c) => progress[c.slug] === "done").length;
+            return (
+              <div key={part}>
+                <div className="flex items-baseline gap-3 border-b border-line pb-2">
+                  {label && <span className="font-mono text-[12px] text-fg-faint">{label}</span>}
+                  <h3 className="text-[15px] font-semibold text-fg">{name}</h3>
+                  <span className="ml-auto text-[12px] tabular-nums text-fg-subtle">
+                    {partDone} of {items.length} done
+                  </span>
+                </div>
+                <ol>
+                  {items.map((chapter) => {
+                    const status = progress[chapter.slug];
+                    return (
+                      <li key={chapter.slug} className="border-b border-line/70 last:border-b-0">
+                        <Link
+                          to={`/c/${chapter.slug}`}
+                          className="group -mx-2 flex items-start gap-3 rounded-md px-2 py-3 transition-colors hover:bg-tint/50 sm:gap-4"
+                        >
+                          <span
+                            className={`mt-px flex w-8 shrink-0 justify-start font-mono text-[12.5px] tabular-nums ${
+                              status === "done" ? "text-ok" : "text-fg-faint"
+                            }`}
+                          >
+                            {status === "done" ? (
+                              <CheckIcon className="mt-0.5 size-3.5" />
+                            ) : (
+                              numbers.get(chapter.slug)
+                            )}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-2">
+                              <span className="text-[14px] font-medium text-fg group-hover:text-accent">
+                                {chapter.title}
+                              </span>
+                              {status === "in_progress" && (
+                                <span className="flex items-center gap-1.5 text-[12px] text-fg-subtle">
+                                  <Dot tone="accent" />
+                                  <span className="hidden sm:inline">In progress</span>
+                                </span>
+                              )}
+                            </span>
+                            <span className="mt-0.5 block text-[13px] leading-5 text-fg-subtle">
+                              {chapter.summary}
+                            </span>
+                          </span>
+                          <span className="mt-0.5 hidden shrink-0 items-center gap-3 text-[12px] text-fg-faint sm:flex">
+                            {chapter.lab && (
+                              <span title={labTitle(chapter)}>
+                                <FlaskIcon className="size-3.5" />
+                              </span>
+                            )}
+                            {chapter.minutes && (
+                              <span className="w-14 text-right tabular-nums">{chapter.minutes} min</span>
+                            )}
+                          </span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ol>
               </div>
-              <div className="overflow-hidden rounded-xl border border-ink-800">
-                {items.map((chapter) => (
-                  <Link
-                    key={chapter.slug}
-                    to={`/c/${chapter.slug}`}
-                    className="group flex items-center gap-3.5 border-b border-ink-800 bg-ink-900/50 px-4 py-3 transition last:border-b-0 hover:bg-ink-850"
-                  >
-                    <span
-                      className={`flex h-7 w-8 shrink-0 items-center justify-center rounded-lg border font-mono text-[11px] ${
-                        progress[chapter.slug] === "done"
-                          ? "border-mint-400 bg-mint-400/12 text-mint-400"
-                          : progress[chapter.slug]
-                            ? "border-flame-500 bg-flame-500/12 text-flame-400"
-                            : "border-ink-700 text-ink-500"
-                      }`}
-                    >
-                      {String(numbers.get(chapter.slug)).padStart(2, "0")}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-semibold text-ink-100 transition group-hover:text-flame-300">
-                        {chapter.title}
-                      </span>
-                      <span className="mt-0.5 block truncate text-[11px] leading-5 text-ink-500">
-                        {chapter.summary}
-                      </span>
-                    </span>
-                    {chapter.gpu && (
-                      <span className="hidden shrink-0 rounded bg-flame-500/12 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-flame-400 sm:inline">
-                        lab
-                      </span>
-                    )}
-                    {chapter.minutes && (
-                      <span className="hidden w-14 shrink-0 text-right text-[11px] text-ink-600 sm:inline">
-                        {chapter.minutes} min
-                      </span>
-                    )}
-                    <span className="shrink-0 text-ink-700 transition group-hover:text-flame-400">
-                      →
-                    </span>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
     </div>

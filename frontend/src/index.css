@@ -1,27 +1,175 @@
 @import "tailwindcss";
 @import "katex/dist/katex.min.css";
-@import "highlight.js/styles/github-dark.css";
+@import "@fontsource-variable/source-serif-4/opsz.css";
+@import "@fontsource-variable/source-serif-4/opsz-italic.css";
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+
+/* Theme ---------------------------------------------------------------------
+
+   Every colour in the app is one of the semantic tokens below. Components use
+   them through Tailwind (`bg-paper`, `text-fg-muted`, `border-line`,
+   `bg-accent/10`), never a raw hex value, so the light and dark themes are one
+   set of variables apart.
+
+   The theme follows the system unless the reader picks one; the choice is an
+   attribute on <html>, set before first paint by the script in index.html. */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces, from the page outward. */
+  --paper: #fcfbf8; /* the reading surface */
+  --well: #f4f2ed; /* sidebars, bars, and the lab chrome */
+  --card: #ffffff; /* inputs, menus, and raised panels */
+  --tint: #ebe8e1; /* hover and selected rows */
+  --line: #e4e0d7;
+  --line-strong: #cdc7ba;
+
+  /* Text, from most to least important. */
+  --fg: #1d1b18;
+  --fg-muted: #48443d;
+  --fg-subtle: #706a60;
+  --fg-faint: #a09a8f;
+
+  /* One accent, used for the primary action, links, and "you are here". */
+  --accent: #c2410c;
+  --accent-strong: #9a330a;
+  --on-accent: #ffffff;
+
+  /* Status. */
+  --ok: #2d7a4c;
+  --bad: #b42318;
+  --warn: #9a5b06;
+  --info: #2c5ea8;
+  --violet: #6d4fb0;
+
+  /* Code, in the chapter and in the editor. Monaco's themes mirror these. */
+  --code-bg: #f4f2ed;
+  --syn-keyword: #a13d12;
+  --syn-string: #3b7738;
+  --syn-number: #8a5a00;
+  --syn-comment: #8d877c;
+  --syn-function: #2c5ea8;
+  --syn-type: #7446b0;
+  --syn-punct: #6b655b;
+
+  /* The four maths colours, \hla to \hld. */
+  --hl-a: #2d7a4c;
+  --hl-b: #2c5ea8;
+  --hl-c: #a15c07;
+  --hl-d: #b4335a;
+
+  --pop-shadow: 0 1px 2px rgb(40 30 10 / 0.06), 0 8px 24px -6px rgb(40 30 10 / 0.14);
+}
+
+/* Dark is written out twice: once for a system preference the reader has not
+   overridden, and once for an explicit choice. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #171614;
+    --well: #121110;
+    --card: #1f1d1b;
+    --tint: #282623;
+    --line: #2c2a26;
+    --line-strong: #3d3a35;
+    --fg: #ece8e1;
+    --fg-muted: #c5bfb4;
+    --fg-subtle: #968f83;
+    --fg-faint: #6c665c;
+    --accent: #f0864a;
+    --accent-strong: #f6a574;
+    --on-accent: #1c0e05;
+    --ok: #74c291;
+    --bad: #f2806f;
+    --warn: #e2a954;
+    --info: #8db1ee;
+    --violet: #b8a0ea;
+    --code-bg: #1d1b19;
+    --syn-keyword: #f0955f;
+    --syn-string: #a3cf8c;
+    --syn-number: #e6b566;
+    --syn-comment: #7f786d;
+    --syn-function: #8db1ee;
+    --syn-type: #c2a8f0;
+    --syn-punct: #a39c90;
+    --hl-a: #7fcf9a;
+    --hl-b: #8db1ee;
+    --hl-c: #e6b566;
+    --hl-d: #f08aa6;
+    --pop-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -8px rgb(0 0 0 / 0.55);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #171614;
+  --well: #121110;
+  --card: #1f1d1b;
+  --tint: #282623;
+  --line: #2c2a26;
+  --line-strong: #3d3a35;
+  --fg: #ece8e1;
+  --fg-muted: #c5bfb4;
+  --fg-subtle: #968f83;
+  --fg-faint: #6c665c;
+  --accent: #f0864a;
+  --accent-strong: #f6a574;
+  --on-accent: #1c0e05;
+  --ok: #74c291;
+  --bad: #f2806f;
+  --warn: #e2a954;
+  --info: #8db1ee;
+  --violet: #b8a0ea;
+  --code-bg: #1d1b19;
+  --syn-keyword: #f0955f;
+  --syn-string: #a3cf8c;
+  --syn-number: #e6b566;
+  --syn-comment: #7f786d;
+  --syn-function: #8db1ee;
+  --syn-type: #c2a8f0;
+  --syn-punct: #a39c90;
+  --hl-a: #7fcf9a;
+  --hl-b: #8db1ee;
+  --hl-c: #e6b566;
+  --hl-d: #f08aa6;
+  --pop-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -8px rgb(0 0 0 / 0.55);
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-well: var(--well);
+  --color-card: var(--card);
+  --color-tint: var(--tint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-fg-faint: var(--fg-faint);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-on-accent: var(--on-accent);
+  --color-ok: var(--ok);
+  --color-bad: var(--bad);
+  --color-warn: var(--warn);
+  --color-info: var(--info);
+  --color-violet: var(--violet);
+  --color-code: var(--code-bg);
+  --shadow-pop: var(--pop-shadow);
+}
 
 @theme {
-  --color-ink-950: #07111d;
-  --color-ink-900: #0b1726;
-  --color-ink-850: #101f32;
-  --color-ink-800: #172a40;
-  --color-ink-700: #27415e;
-  --color-ink-600: #46617f;
-  --color-ink-500: #6f88a3;
-  --color-ink-400: #92a8bc;
-  --color-ink-300: #b7c7d5;
-  --color-ink-200: #d7e2eb;
-  --color-ink-100: #f4f8fb;
-  --color-flame-500: #65e6b0;
-  --color-flame-400: #91f4ce;
-  --color-flame-300: #c0ffe7;
-  --color-mint-400: #87b7ff;
-  --color-rose-450: #ff7690;
-  --color-amber-450: #ffc861;
-  --color-violet-400: #c3a6ff;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: "Source Serif 4 Variable", "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
+
+/* Base ---------------------------------------------------------------------- */
 
 html,
 body,
@@ -34,14 +182,13 @@ body,
 }
 
 body {
-  background:
-    radial-gradient(circle at 80% -20%, rgba(87, 151, 224, 0.17), transparent 31rem),
-    radial-gradient(circle at -10% 100%, rgba(42, 173, 136, 0.12), transparent 32rem),
-    var(--color-ink-950);
-  color: var(--color-ink-100);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+  background: var(--paper);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 /* iOS Safari zooms the page when a control smaller than 16px takes focus, and
@@ -51,10 +198,14 @@ body {
   input,
   select,
   textarea {
-    font-size: 16px;
+    font-size: 16px !important;
   }
 }
 
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -63,120 +214,127 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-ink-700);
-  border-radius: 6px;
+  background: var(--line-strong);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 8px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-ink-600);
+  background-color: var(--fg-faint);
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--color-flame-500) 38%, transparent);
-  color: var(--color-ink-100);
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-flame-400);
-  outline-offset: 3px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
-.surface-grid {
-  background-image:
-    linear-gradient(rgba(157, 195, 225, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(157, 195, 225, 0.035) 1px, transparent 1px);
-  background-size: 28px 28px;
+kbd {
+  font-family: var(--font-mono);
 }
 
-.panel-glow {
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.035) inset,
-    0 24px 64px rgba(2, 8, 18, 0.25);
-}
-
-/* Chapter body ------------------------------------------------------------ */
+/* Chapter body ------------------------------------------------------------- */
 
 .prose-chapter {
-  color: var(--color-ink-200);
-  line-height: 1.75;
-  font-size: 1.02rem;
+  font-family: var(--font-serif);
+  font-optical-sizing: auto;
+  font-size: 1.0625rem;
+  line-height: 1.7;
+  color: var(--fg-muted);
+  hanging-punctuation: first;
+}
+.prose-chapter h1,
+.prose-chapter h2,
+.prose-chapter h3,
+.prose-chapter h4 {
+  font-family: var(--font-sans);
+  color: var(--fg);
+  text-wrap: balance;
 }
 .prose-chapter h1 {
   font-size: 2rem;
-  font-weight: 700;
-  color: var(--color-ink-100);
+  font-weight: 600;
   margin: 0 0 1.25rem;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.015em;
 }
 .prose-chapter h2 {
   display: flex;
   align-items: baseline;
-  gap: 0.75rem;
-  font-size: 1.4rem;
-  font-weight: 680;
+  gap: 0.8rem;
+  font-size: 1.375rem;
+  font-weight: 600;
   line-height: 1.3;
-  color: var(--color-ink-100);
-  margin: 0 0 1rem;
   letter-spacing: -0.01em;
-  scroll-margin-top: 1rem;
+  margin: 0 0 1rem;
+  scroll-margin-top: 1.25rem;
 }
-/* Each section carries its number, so the header's "03/11" has something on
+/* Each section carries its number, so the tracker's "03 / 11" has something on
    the page to point at. */
 .prose-chapter h2::before {
   content: counter(section, decimal-leading-zero);
   counter-increment: section;
   flex-shrink: 0;
-  position: relative;
-  top: -0.12em;
-  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
-  font-size: 0.7rem;
-  font-weight: 700;
-  color: var(--color-ink-950);
-  background: linear-gradient(135deg, var(--color-flame-500), var(--color-mint-400));
-  border-radius: 7px;
-  padding: 0.28rem 0.45rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--accent);
+  transform: translateY(-0.08em);
 }
 .prose-chapter h3 {
-  font-size: 1.1rem;
+  font-size: 1.075rem;
   font-weight: 600;
-  color: var(--color-ink-100);
-  margin: 1.75rem 0 0.6rem;
+  line-height: 1.4;
+  margin: 2rem 0 0.6rem;
+}
+.prose-chapter h4 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.5rem;
 }
 .prose-chapter p {
-  margin: 0 0 1.1rem;
+  margin: 0 0 1.05rem;
 }
 .prose-chapter strong {
-  color: var(--color-ink-100);
+  color: var(--fg);
   font-weight: 620;
 }
+/* Italics mark a term on first use (see content/STYLE.md). */
 .prose-chapter em {
-  color: var(--color-flame-300);
+  color: var(--fg);
   font-style: italic;
 }
 /* ==highlight== marks the phrase a skimming reader must not miss. */
 .prose-chapter mark {
-  color: var(--color-ink-100);
+  color: var(--fg);
   background: linear-gradient(
     180deg,
-    transparent 55%,
-    color-mix(in srgb, var(--color-amber-450) 34%, transparent) 55%
+    transparent 58%,
+    color-mix(in srgb, var(--warn) 30%, transparent) 58%
   );
-  border-radius: 2px;
-  padding: 0 0.12em;
-  font-weight: 560;
+  padding: 0 0.1em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 .prose-chapter a {
-  color: var(--color-flame-400);
+  color: var(--accent);
   text-decoration: underline;
+  text-decoration-thickness: 1px;
   text-underline-offset: 3px;
-  text-decoration-color: color-mix(in srgb, var(--color-flame-400) 40%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  transition: text-decoration-color 0.15s;
 }
 .prose-chapter a:hover {
-  text-decoration-color: var(--color-flame-400);
+  text-decoration-color: var(--accent);
 }
 .prose-chapter ul,
 .prose-chapter ol {
-  margin: 0 0 1.1rem;
-  padding-left: 1.4rem;
+  margin: 0 0 1.05rem;
+  padding-left: 1.35rem;
 }
 .prose-chapter ul {
   list-style: disc;
@@ -185,60 +343,63 @@ body {
   list-style: decimal;
 }
 .prose-chapter li {
-  margin: 0.35rem 0;
+  margin: 0.3rem 0;
+  padding-left: 0.2rem;
 }
 .prose-chapter li::marker {
-  color: var(--color-ink-400);
+  color: var(--fg-faint);
+}
+.prose-chapter ol > li::marker {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
 }
 .prose-chapter code {
-  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
-  font-size: 0.875em;
-  background: var(--color-ink-800);
-  border: 1px solid var(--color-ink-700);
-  border-radius: 5px;
-  padding: 0.1em 0.36em;
-  color: var(--color-flame-300);
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.08em 0.32em;
+  color: var(--fg);
   /* A long identifier breaks rather than pushing a narrow column sideways. */
   overflow-wrap: anywhere;
 }
 .prose-chapter .code-block {
-  margin: 0 0 1.3rem;
-  border: 1px solid var(--color-ink-800);
-  border-radius: 12px;
+  margin: 0.25rem 0 1.35rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   overflow: hidden;
-  background: var(--color-ink-900);
+  background: var(--code-bg);
 }
 .prose-chapter .code-block-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.3rem 0.5rem 0.3rem 0.9rem;
-  border-bottom: 1px solid var(--color-ink-800);
-  background: color-mix(in srgb, var(--color-ink-850) 70%, transparent);
-  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-ink-500);
+  height: 2rem;
+  padding: 0 0.4rem 0 0.9rem;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--fg-subtle);
 }
 .prose-chapter .code-block-bar button {
-  border-radius: 6px;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 5px;
   padding: 0.2rem 0.55rem;
-  color: var(--color-ink-400);
-  text-transform: none;
-  letter-spacing: 0;
+  color: var(--fg-subtle);
   transition: background 0.15s, color 0.15s;
 }
 .prose-chapter .code-block-bar button:hover {
-  background: var(--color-ink-800);
-  color: var(--color-flame-300);
+  background: var(--tint);
+  color: var(--fg);
 }
 .prose-chapter pre {
-  padding: 0.9rem 1.1rem 1rem;
+  padding: 0.85rem 1rem 0.95rem;
   overflow-x: auto;
   margin: 0;
-  font-size: 0.86rem;
+  font-size: 0.84rem;
   line-height: 1.6;
 }
 .prose-chapter pre code {
@@ -246,86 +407,147 @@ body {
   border: none;
   padding: 0;
   overflow-wrap: normal;
-  color: var(--color-ink-200);
+  color: var(--fg);
   font-size: inherit;
 }
 .prose-chapter blockquote {
-  border-left: 3px solid var(--color-flame-500);
+  border-left: 2px solid var(--line-strong);
   padding-left: 1rem;
   margin: 0 0 1.2rem;
-  color: var(--color-ink-300);
+  color: var(--fg-subtle);
 }
 /* A table wider than the column scrolls inside its own frame. */
 .prose-chapter .table-wrap {
-  margin: 0 0 1.4rem;
+  margin: 0.25rem 0 1.4rem;
   overflow-x: auto;
-  border: 1px solid var(--color-ink-800);
-  border-radius: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 .prose-chapter table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.92rem;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.prose-chapter th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--fg);
+  background: var(--well);
+  border-bottom: 1px solid var(--line);
+  padding: 0.55rem 0.8rem;
+  white-space: nowrap;
+}
+.prose-chapter td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.5rem 0.8rem;
+  vertical-align: top;
 }
 .prose-chapter tbody tr:last-child td {
   border-bottom: none;
 }
-.prose-chapter th {
-  text-align: left;
-  font-weight: 650;
-  font-size: 0.78rem;
-  letter-spacing: 0.02em;
-  color: var(--color-ink-100);
-  background: var(--color-ink-850);
-  border-bottom: 1px solid var(--color-ink-700);
-  padding: 0.6rem 0.8rem;
-  white-space: nowrap;
-}
-.prose-chapter td {
-  border-bottom: 1px solid var(--color-ink-800);
-  padding: 0.55rem 0.8rem;
-}
-.prose-chapter tbody tr:nth-child(even) td {
-  background: color-mix(in srgb, var(--color-ink-900) 55%, transparent);
-}
 .prose-chapter tbody tr:hover td {
-  background: color-mix(in srgb, var(--color-flame-500) 7%, transparent);
+  background: color-mix(in srgb, var(--tint) 55%, transparent);
 }
 .prose-chapter hr {
   border: none;
-  border-top: 1px solid var(--color-ink-800);
+  border-top: 1px solid var(--line);
   margin: 2rem 0;
 }
 .prose-chapter .katex {
-  font-size: 1.02em;
+  font-size: 1.05em;
+  color: var(--fg);
 }
 /* A display equation wider than the column scrolls inside its own box, so the
    page body never scrolls sideways. The padding keeps a tall fraction's
    descenders off the scrollbar. */
-/* A display equation sits on its own panel, so the eye finds the maths when
-   scanning. One wider than the column scrolls inside that panel, so the page
-   body never scrolls sideways. */
 .prose-chapter .katex-display {
-  margin: 1.3rem 0;
-  padding: 0.85rem 1rem 0.95rem;
+  margin: 1.1rem 0 1.25rem;
+  padding: 0.4rem 0 0.55rem;
   overflow-x: auto;
   overflow-y: hidden;
-  background: color-mix(in srgb, var(--color-ink-900) 70%, transparent);
-  border: 1px solid var(--color-ink-800);
-  border-left: 3px solid color-mix(in srgb, var(--color-mint-400) 55%, transparent);
-  border-radius: 10px;
 }
 .prose-chapter .katex-display > .katex {
   text-align: center;
   white-space: nowrap;
 }
+.prose-chapter .katex .boxed {
+  border-color: var(--line-strong) !important;
+}
 /* KaTeX renders an error as red inline text. Make it obvious rather than
    something that reads as emphasis. */
 .prose-chapter .katex-error {
-  color: var(--color-rose-450);
-  background: color-mix(in srgb, var(--color-rose-450) 12%, transparent);
-  border-radius: 4px;
+  color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
+  border-radius: 3px;
   padding: 0 0.25em;
+}
+/* The maths colour macros, \hla to \hld. */
+.hl-a {
+  color: var(--hl-a);
+}
+.hl-b {
+  color: var(--hl-b);
+}
+.hl-c {
+  color: var(--hl-c);
+}
+.hl-d {
+  color: var(--hl-d);
+}
+
+/* Syntax colours for fenced code, as highlight.js classes. */
+.hljs-keyword,
+.hljs-built_in,
+.hljs-literal,
+.hljs-selector-tag,
+.hljs-meta .hljs-keyword {
+  color: var(--syn-keyword);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-attribute {
+  color: var(--syn-string);
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet {
+  color: var(--syn-number);
+}
+.hljs-comment,
+.hljs-quote,
+.hljs-meta {
+  color: var(--syn-comment);
+  font-style: italic;
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-section,
+.hljs-name {
+  color: var(--syn-function);
+}
+.hljs-type,
+.hljs-title.class_,
+.hljs-class .hljs-title,
+.hljs-params,
+.hljs-variable.language_ {
+  color: var(--syn-type);
+}
+.hljs-punctuation,
+.hljs-operator {
+  color: var(--syn-punct);
+}
+.hljs-deletion {
+  color: var(--bad);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
 }
 
 /* Chapter structure --------------------------------------------------------- */
@@ -338,139 +560,133 @@ body {
   counter-reset: section;
 }
 .chapter-article .chapter-section {
-  transition: opacity 0.35s ease, filter 0.35s ease;
+  transition: opacity 0.3s ease;
 }
 .chapter-article .chapter-section + .chapter-section {
-  margin-top: 2.75rem;
-  padding-top: 2rem;
-  border-top: 1px solid var(--color-ink-800);
+  margin-top: 3rem;
 }
 /* Focus mode dims everything but the section being read. Pointing at a dimmed
    section brings it back, so nothing is ever out of reach. */
 .chapter-article.focus-mode .chapter-section:not(.is-active) {
-  opacity: 0.28;
-  filter: saturate(0.4);
+  opacity: 0.32;
 }
 .chapter-article.focus-mode .chapter-section:not(.is-active):hover {
-  opacity: 0.75;
-  filter: none;
-}
-.chapter-article .chapter-section.is-active > h2::before {
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-flame-500) 18%, transparent);
+  opacity: 0.8;
 }
 
-/* Callouts ------------------------------------------------------------------ */
+/* Callouts ------------------------------------------------------------------
+
+   A callout is a rule down the left edge in its tone, a label, and a faint
+   wash. The tones come from the status palette, so there are only a handful. */
 
 .prose-chapter .callout {
-  --tone: var(--color-mint-400);
-  position: relative;
+  --tone: var(--info);
   margin: 1.5rem 0;
-  border: 1px solid color-mix(in srgb, var(--tone) 28%, var(--color-ink-800));
-  border-left: 4px solid var(--tone);
-  border-radius: 12px;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--tone) 9%, var(--color-ink-900)),
-    color-mix(in srgb, var(--color-ink-900) 70%, transparent) 70%
-  );
-  color: var(--color-ink-200);
+  border-left: 2px solid var(--tone);
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--tone) 5%, var(--paper));
+  color: var(--fg-muted);
 }
 .prose-chapter .callout-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.35rem 0.65rem;
+  gap: 0.25rem 0.6rem;
   margin: 0;
-  padding: 0.8rem 1rem 0;
+  padding: 0.75rem 1rem 0;
+  font-family: var(--font-sans);
 }
 .prose-chapter .callout-label {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.68rem;
-  font-weight: 750;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.4;
   color: var(--tone);
   white-space: nowrap;
 }
 .prose-chapter .callout-label::before {
   content: "";
-  width: 1rem;
-  height: 1rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  flex-shrink: 0;
   background: var(--tone);
   -webkit-mask: var(--icon) center / contain no-repeat;
   mask: var(--icon) center / contain no-repeat;
 }
 .prose-chapter .callout-title {
   flex-basis: 100%;
-  font-size: 1rem;
-  font-weight: 650;
-  line-height: 1.5;
-  color: var(--color-ink-100);
+  font-size: 0.975rem;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--fg);
 }
 .prose-chapter .callout-body {
-  padding: 0.55rem 1rem 0.2rem;
-}
-.prose-chapter .callout-head + .callout-body {
-  padding-top: 0.45rem;
+  padding: 0.4rem 1rem 0.1rem;
 }
 .prose-chapter .callout-body > :last-child {
-  margin-bottom: 0.85rem;
-}
-.prose-chapter .callout .katex-display {
-  background: color-mix(in srgb, var(--color-ink-950) 45%, transparent);
-  border-left-color: color-mix(in srgb, var(--tone) 70%, transparent);
+  margin-bottom: 0.8rem;
 }
 .prose-chapter .callout ul,
 .prose-chapter .callout ol {
-  margin-bottom: 0.85rem;
+  margin-bottom: 0.8rem;
+}
+.prose-chapter .callout .code-block {
+  background: var(--card);
 }
 
-/* A key idea is the one thing to carry out of the section, so it glows. */
+/* The one idea to carry out of a section. */
 .prose-chapter .callout-key {
-  --tone: var(--color-flame-500);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--color-flame-500) 12%, transparent),
-    0 12px 40px -18px color-mix(in srgb, var(--color-flame-500) 45%, transparent);
+  --tone: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--paper));
 }
 .prose-chapter .callout-key .callout-body {
-  font-size: 1.04rem;
-  color: var(--color-ink-100);
+  color: var(--fg);
 }
+/* The chapter summary reads as a boxed abstract, not an alert. */
 .prose-chapter .callout-tldr {
-  --tone: var(--color-amber-450);
+  --tone: var(--fg-subtle);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--well);
+}
+.prose-chapter .callout-tldr .callout-label {
+  color: var(--fg-subtle);
 }
 .prose-chapter .callout-recap {
-  --tone: var(--color-flame-500);
+  --tone: var(--ok);
 }
 .prose-chapter .callout-intuition,
 .prose-chapter .callout-note {
-  --tone: var(--color-mint-400);
+  --tone: var(--info);
 }
 .prose-chapter .callout-example {
-  --tone: var(--color-amber-450);
+  --tone: var(--warn);
 }
 .prose-chapter .callout-tip,
 .prose-chapter .callout-try {
-  --tone: var(--color-flame-400);
+  --tone: var(--ok);
+}
+.prose-chapter .callout-try {
+  --tone: var(--accent);
 }
 .prose-chapter .callout-warning {
-  --tone: var(--color-rose-450);
+  --tone: var(--bad);
 }
 .prose-chapter .callout-deepdive {
-  --tone: var(--color-violet-400);
+  --tone: var(--violet);
 }
 .prose-chapter .callout-question {
-  --tone: var(--color-mint-400);
+  --tone: var(--info);
 }
 
 /* Collapsible callouts: a deep dive and a self-check question. */
 .prose-chapter details.callout > summary {
   cursor: pointer;
   list-style: none;
-  padding-bottom: 0.8rem;
-  border-radius: 12px;
+  padding-bottom: 0.75rem;
+  border-radius: 0 6px 6px 0;
   transition: background 0.15s;
 }
 .prose-chapter details.callout > summary::-webkit-details-marker {
@@ -487,40 +703,40 @@ body {
   order: 2;
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  border: 1px solid color-mix(in srgb, var(--tone) 35%, transparent);
-  border-radius: 999px;
-  padding: 0.1rem 0.6rem;
-  font-size: 0.7rem;
-  font-weight: 650;
-  color: var(--tone);
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--fg-subtle);
   white-space: nowrap;
 }
 .prose-chapter .callout-hint::after {
-  content: "▾";
+  content: "";
+  width: 0.7rem;
+  height: 0.7rem;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E")
+    center / contain no-repeat;
   transition: transform 0.2s;
-}
-.prose-chapter details[open] .callout-hint::after {
-  transform: rotate(180deg);
 }
 .prose-chapter details[open] .callout-hint {
   font-size: 0;
   gap: 0;
-  padding: 0.1rem 0.45rem;
 }
 .prose-chapter details[open] .callout-hint::after {
-  font-size: 0.7rem;
+  transform: rotate(180deg);
 }
 .prose-chapter details.callout > summary .callout-title {
   order: 3;
 }
 .prose-chapter details.callout[open] > .callout-body {
-  animation: callout-reveal 0.25s ease;
+  animation: callout-reveal 0.2s ease;
 }
 @keyframes callout-reveal {
   from {
     opacity: 0;
-    transform: translateY(-4px);
+    transform: translateY(-3px);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -540,7 +756,7 @@ body {
   --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='7.5' cy='15.5' r='4.5'/%3E%3Cpath d='m10.7 12.3 9.3-9.3M16 7l3 3M14 9l2 2'/%3E%3C/svg%3E");
 }
 .prose-chapter .callout-tldr {
-  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13 2 4 14h7l-1 8 9-12h-7z'/%3E%3C/svg%3E");
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6h16M4 12h16M4 18h10'/%3E%3C/svg%3E");
 }
 .prose-chapter .callout-intuition {
   --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V16h8v-1.3A7 7 0 0 0 12 2z'/%3E%3C/svg%3E");
@@ -560,8 +776,7 @@ body {
 .prose-chapter .callout-recap {
   --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11'/%3E%3C/svg%3E");
 }
-.prose-chapter .callout-tip,
-.prose-chapter .callout-try {
+.prose-chapter .callout-tip {
   --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5L20 7'/%3E%3C/svg%3E");
 }
 .prose-chapter .callout-try {

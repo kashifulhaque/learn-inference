@@ -2,9 +2,24 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { api, runLab, type Lab, type ProviderInfo, type RunEvent } from "../lib/api";
 import SplitPane from "./SplitPane";
 import { useIsWide } from "../lib/useMediaQuery";
+import { Button, Dot, Kbd, Notice, Tag } from "./ui";
+import { CheckIcon, CloseIcon, FileIcon, PlayIcon, ResetIcon, StopIcon } from "./icons";
 
 // Monaco is heavy, so the editor is its own chunk and loads with the first lab.
 const CodeEditor = lazy(() => import("./CodeEditor"));
+
+// The editor binds Cmd+Enter on a Mac and Ctrl+Enter elsewhere; the hint says
+// whichever this reader will actually press.
+const RUN_KEYS =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform)
+    ? "⌘↵"
+    : "Ctrl ↵";
+
+/** "wall_seconds" reads as "Wall seconds". */
+function metricLabel(key: string): string {
+  const words = key.replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
 
 type Check = { name: string; passed: boolean; detail: string };
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "failed";
@@ -31,6 +46,12 @@ export default function LabPane({ lab, onPassed }: Props) {
   const [elapsed, setElapsed] = useState(0);
   const [saveState, setSaveState] = useState<SaveState>(lab.draft ? "saved" : "idle");
   const [tab, setTab] = useState<Tab>("console");
+  // Hints and the solution are opened on purpose, one step at a time, so a
+  // learner takes only as much help as they need.
+  const [revealed, setRevealed] = useState(0);
+  const [solutionShown, setSolutionShown] = useState(false);
+  const labId = useRef(lab.id);
+  labId.current = lab.id;
 
   const logRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -48,6 +69,11 @@ export default function LabPane({ lab, onPassed }: Props) {
     setTab("console");
     setSaveState(lab.draft ? "saved" : "idle");
   }, [lab.id, lab.draft, lab.starter]);
+
+  useEffect(() => {
+    setRevealed(0);
+    setSolutionShown(false);
+  }, [lab.id]);
 
   useEffect(() => {
     api.providers().then((result) => {
@@ -174,11 +200,15 @@ export default function LabPane({ lab, onPassed }: Props) {
     setMessage("Cancelled. The GPU job may still be finishing.");
   }
 
-  async function openSolution() {
-    setTab("solution");
+  // The Solution tab only explains itself; the code is fetched and shown once
+  // the learner asks for it.
+  async function showSolution() {
+    setSolutionShown(true);
     if (!solution) {
-      const result = await api.solution(lab.id);
-      setSolution(result.solution);
+      const id = lab.id;
+      const result = await api.solution(id);
+      // The reader may have moved to another chapter while this loaded.
+      if (labId.current === id) setSolution(result.solution);
     }
   }
 
@@ -201,46 +231,48 @@ export default function LabPane({ lab, onPassed }: Props) {
     { id: "solution", label: "Solution" },
   ];
 
+
   const editorPane = (
     <>
-      <div className="flex shrink-0 items-center gap-3 border-b border-ink-800 bg-ink-950/40 px-3 py-1.5">
-        <span className="flex items-center gap-1.5 rounded border border-ink-800 bg-ink-900 px-2 py-0.5 font-mono text-[11px] text-ink-300">
-          <span className="h-1.5 w-1.5 rounded-full bg-flame-500/80" aria-hidden />
+      <div className="flex h-9 shrink-0 items-center gap-3 border-b border-line bg-well px-3">
+        <span className="flex min-w-0 items-center gap-1.5 font-mono text-[12px] text-fg-muted">
+          <FileIcon className="size-3.5 text-fg-faint" />
           solution.py
         </span>
         <span
-          className={`truncate text-[11px] ${
+          className={`truncate text-[12px] ${
             saveState === "failed"
-              ? "text-rose-450"
+              ? "text-bad"
               : saveState === "dirty"
-                ? "text-ink-400"
-                : "text-ink-600"
+                ? "text-fg-subtle"
+                : "text-fg-faint"
           }`}
           aria-live="polite"
         >
           {saveLabel[saveState]}
         </span>
-        <div className="ml-auto flex items-center gap-3">
-          <span className="hidden items-center gap-1 text-[11px] text-ink-600 xl:flex">
-            <kbd className="rounded border border-ink-700 bg-ink-900 px-1.5 py-0.5 font-mono text-[10px] text-ink-400">
-              ⌘⏎
-            </kbd>
-            run
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <span className="hidden items-center gap-1.5 text-[12px] text-fg-faint xl:flex">
+            <Kbd>{RUN_KEYS}</Kbd>
+            to run
           </span>
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={resetToStarter}
             disabled={code === lab.starter}
-            className="text-[11px] font-medium text-ink-400 transition hover:text-flame-300 disabled:cursor-default disabled:opacity-40 disabled:hover:text-ink-400"
+            title="Replace your code with the starter file"
           >
+            <ResetIcon className="size-3.5" />
             Reset
-          </button>
+          </Button>
         </div>
       </div>
 
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 bg-paper">
         <Suspense
           fallback={
-            <div className="flex h-full items-center justify-center bg-ink-950 text-xs text-ink-600">
+            <div className="flex h-full items-center justify-center bg-paper text-[12.5px] text-fg-faint">
               Loading the editor…
             </div>
           }
@@ -261,66 +293,80 @@ export default function LabPane({ lab, onPassed }: Props) {
 
   const consolePane = (
     <>
-      <div className="flex shrink-0 items-stretch gap-px overflow-x-auto border-y border-ink-800 bg-ink-900">
-        {tabs.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => (item.id === "solution" ? openSolution() : setTab(item.id))}
-            className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-[12px] font-medium transition sm:px-3.5 ${
-              tab === item.id
-                ? "border-flame-500 text-ink-100"
-                : "border-transparent text-ink-500 hover:text-ink-200"
-            }`}
-          >
-            {item.label}
-            {item.badge && (
-              <span className="rounded bg-ink-800 px-1.5 py-0.5 font-mono text-[10px] text-ink-400">
-                {item.badge}
-              </span>
-            )}
-          </button>
-        ))}
-        <div className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap px-3 text-[11px]">
+      <div className="flex shrink-0 items-stretch overflow-x-auto border-y border-line bg-well">
+        <div className="flex shrink-0 items-stretch px-1" role="tablist" aria-label="Lab output">
+          {tabs.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.id}
+              onClick={() => setTab(item.id)}
+              className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-2.5 py-2 text-[12.5px] font-medium transition-colors sm:px-3 ${
+                tab === item.id
+                  ? "border-accent text-fg"
+                  : "border-transparent text-fg-subtle hover:text-fg"
+              }`}
+            >
+              {item.label}
+              {item.badge && (
+                <span className="rounded bg-tint px-1 font-mono text-[10.5px] leading-4 tabular-nums text-fg-subtle">
+                  {item.badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap px-3 text-[12px]">
           {status === "running" && (
-            <span className="flex items-center gap-1.5 text-flame-400">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-flame-500" />
+            <span className="flex items-center gap-1.5 font-mono tabular-nums text-fg-subtle">
+              <Dot tone="accent" pulse />
               {elapsed}s
             </span>
           )}
-          {status === "passed" && <span className="text-mint-400">All checks passed</span>}
-          {status === "failed" && <span className="text-rose-450">Checks failed</span>}
+          {status === "passed" && <span className="font-medium text-ok">All checks passed</span>}
+          {status === "failed" && <span className="font-medium text-bad">Checks failed</span>}
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto bg-ink-950">
+      <div className="min-h-0 flex-1 overflow-y-auto bg-paper">
         {tab === "console" && (
-          <div ref={logRef} className="h-full overflow-y-auto px-4 py-3 font-mono text-xs leading-relaxed">
+          <div
+            ref={logRef}
+            className="h-full overflow-y-auto px-4 py-3 font-mono text-[12px] leading-relaxed"
+          >
             {logs.length === 0 && status !== "running" && (
-              <p className="text-ink-600">
-                Run the lab to stream the GPU output here.
-              </p>
+              <div className="max-w-md font-sans text-[13px] leading-5 text-fg-subtle">
+                <p>
+                  Run the lab to send your code to a GPU. Output streams here as it runs, and the
+                  checks open when it finishes.
+                </p>
+                <p className="mt-2 flex items-center gap-1.5 text-[12px] text-fg-faint">
+                  <Kbd>{RUN_KEYS}</Kbd> runs it from the editor.
+                </p>
+              </div>
             )}
             {logs.map((line, index) => (
               <div
                 key={index}
                 className={
                   line.startsWith("[PASS]")
-                    ? "text-mint-400"
+                    ? "text-ok"
                     : line.startsWith("[FAIL]")
-                      ? "text-rose-450"
+                      ? "text-bad"
                       : line.startsWith("—")
-                        ? "text-ink-600"
-                        : "whitespace-pre-wrap text-ink-300"
+                        ? "text-fg-faint"
+                        : "whitespace-pre-wrap text-fg-muted"
                 }
               >
                 {line}
               </div>
             ))}
-            {status === "running" && <div className="text-ink-600">▍ waiting on the GPU…</div>}
+            {status === "running" && <div className="text-fg-faint">▍ waiting on the GPU…</div>}
             {status === "error" && message && (
-              <div className="mt-3 rounded-lg border border-rose-450/30 bg-rose-450/10 px-3 py-2 text-rose-450">
+              <Notice tone="bad" className="mt-3 font-sans">
                 {message}
-              </div>
+              </Notice>
             )}
           </div>
         )}
@@ -328,54 +374,53 @@ export default function LabPane({ lab, onPassed }: Props) {
         {tab === "checks" && (
           <div className="px-4 py-3.5">
             {checks.length === 0 ? (
-              <p className="text-xs text-ink-600">No results yet. Run the lab.</p>
+              <p className="text-[13px] text-fg-subtle">No results yet. Run the lab.</p>
             ) : (
               <>
-                <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-                  <span
-                    className={
-                      status === "passed"
-                        ? "rounded-lg border border-mint-400/25 bg-mint-400/10 px-2.5 py-1 font-semibold text-mint-400"
-                        : "rounded-lg border border-rose-450/25 bg-rose-450/10 px-2.5 py-1 font-semibold text-rose-450"
-                    }
-                  >
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <Tag tone={status === "passed" ? "ok" : "bad"} className="tabular-nums">
                     {passedCount}/{checks.length} checks passed
-                  </span>
-                  {message && <span className="text-ink-500">{message}</span>}
+                  </Tag>
+                  {message && (
+                    <span className="text-[12px] tabular-nums text-fg-subtle">{message}</span>
+                  )}
                 </div>
                 <ul className="space-y-2">
                   {checks.map((check) => (
-                    <li key={check.name} className="flex gap-2.5 text-xs">
+                    <li key={check.name} className="flex gap-2.5 text-[13px] leading-5">
                       <span
-                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] ${
-                          check.passed
-                            ? "bg-mint-400/15 text-mint-400"
-                            : "bg-rose-450/15 text-rose-450"
+                        className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full ${
+                          check.passed ? "bg-ok/12 text-ok" : "bg-bad/12 text-bad"
                         }`}
                       >
-                        {check.passed ? "✓" : "×"}
+                        {check.passed ? (
+                          <CheckIcon className="size-3" />
+                        ) : (
+                          <CloseIcon className="size-3" />
+                        )}
+                        <span className="sr-only">{check.passed ? "Passed:" : "Failed:"}</span>
                       </span>
-                      <span className="leading-4 text-ink-300">
+                      <span className="min-w-0 text-fg">
                         {check.name}
-                        {check.detail && <span className="text-ink-500"> — {check.detail}</span>}
+                        {check.detail && <span className="text-fg-subtle"> — {check.detail}</span>}
                       </span>
                     </li>
                   ))}
                 </ul>
 
                 {Object.keys(metrics).length > 0 && (
-                  <div className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-ink-800 bg-ink-800 sm:grid-cols-3">
+                  <dl className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-line bg-line sm:grid-cols-3">
                     {Object.entries(metrics).map(([key, value]) => (
-                      <div key={key} className="bg-ink-900 px-3 py-2.5">
-                        <div className="truncate text-[10px] font-bold uppercase tracking-[0.12em] text-ink-600">
-                          {key}
-                        </div>
-                        <div className="mt-0.5 truncate font-mono text-sm text-ink-100">
+                      <div key={key} className="min-w-0 bg-card px-3 py-2">
+                        <dt className="truncate text-[12px] text-fg-subtle" title={key}>
+                          {metricLabel(key)}
+                        </dt>
+                        <dd className="mt-0.5 truncate font-mono text-[13px] tabular-nums text-fg">
                           {String(value)}
-                        </div>
+                        </dd>
                       </div>
                     ))}
-                  </div>
+                  </dl>
                 )}
               </>
             )}
@@ -385,36 +430,64 @@ export default function LabPane({ lab, onPassed }: Props) {
         {tab === "hints" && (
           <div className="px-4 py-3.5">
             {lab.hints.length === 0 ? (
-              <p className="text-xs text-ink-600">This lab ships without hints.</p>
+              <p className="text-[13px] text-fg-subtle">This lab ships without hints.</p>
             ) : (
-              <ul className="space-y-2.5">
-                {lab.hints.map((hint, index) => (
-                  <li key={hint} className="flex gap-2.5 text-xs leading-5 text-ink-300">
-                    <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-flame-500/12 font-mono text-[10px] text-flame-400">
-                      {index + 1}
-                    </span>
-                    {hint}
-                  </li>
-                ))}
-              </ul>
+              <>
+                {revealed === 0 && (
+                  <p className="mb-3 max-w-md text-[13px] leading-5 text-fg-subtle">
+                    Each hint is a nudge, not the answer. Open one, try again, and open the next
+                    only if you're still stuck.
+                  </p>
+                )}
+                {revealed > 0 && (
+                  <ol className="mb-3 space-y-2.5">
+                    {lab.hints.slice(0, revealed).map((hint, index) => (
+                      <li key={hint} className="flex gap-2.5 text-[13px] leading-5 text-fg-muted">
+                        <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded bg-tint font-mono text-[10.5px] tabular-nums text-fg-subtle">
+                          {index + 1}
+                        </span>
+                        <span className="min-w-0">{hint}</span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+                {revealed < lab.hints.length ? (
+                  <Button size="sm" onClick={() => setRevealed((count) => count + 1)}>
+                    Show hint {revealed + 1} of {lab.hints.length}
+                  </Button>
+                ) : (
+                  <p className="text-[12px] text-fg-faint">That's every hint for this lab.</p>
+                )}
+              </>
             )}
           </div>
         )}
 
         {tab === "solution" && (
           <div className="px-4 py-3.5">
-            {!solution ? (
-              <p className="text-xs text-ink-600">Loading the worked solution…</p>
+            {!solutionShown ? (
+              <>
+                <p className="mb-3 max-w-md text-[13px] leading-5 text-fg-subtle">
+                  The worked solution passes every check. Looking at it before you've tried the lab
+                  skips the part that teaches.
+                </p>
+                <Button size="sm" onClick={showSolution}>
+                  Show the solution
+                </Button>
+              </>
+            ) : !solution ? (
+              <p className="text-[13px] text-fg-subtle">Loading the worked solution…</p>
             ) : (
               <>
-                <button
+                <Button
+                  size="sm"
                   onClick={loadSolution}
                   disabled={code === solution}
-                  className="mb-3 rounded-lg border border-ink-700 bg-ink-900 px-3 py-1.5 text-[11px] font-semibold text-ink-300 transition hover:border-flame-500/60 hover:text-flame-300 disabled:cursor-default disabled:opacity-40"
+                  className="mb-3"
                 >
                   Load into the editor
-                </button>
-                <pre className="overflow-auto rounded-lg border border-ink-800 bg-ink-900 p-3.5 font-mono text-xs leading-relaxed text-ink-300">
+                </Button>
+                <pre className="overflow-auto rounded-md border border-line bg-code p-3.5 font-mono text-[12px] leading-relaxed text-fg-muted">
                   {solution}
                 </pre>
               </>
@@ -426,20 +499,16 @@ export default function LabPane({ lab, onPassed }: Props) {
   );
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-ink-900/60">
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-ink-800 bg-ink-900 px-3 sm:gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-flame-400">
-              Lab
-            </span>
-            <span className="hidden rounded border border-ink-800 bg-ink-950/50 px-1.5 py-0.5 font-mono text-[10px] text-ink-400 sm:inline">
-              {lab.gpu}
-            </span>
-          </div>
-          <h2 className="truncate text-[13px] font-semibold tracking-tight text-ink-100" title={lab.brief}>
+    <section className="@container flex h-full min-h-0 flex-col bg-paper">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line bg-well px-3 sm:gap-2.5">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <h2 className="truncate text-[13px] font-semibold text-fg" title={lab.brief}>
             {lab.title}
           </h2>
+          {/* Tag sets its own display, so the breakpoint lives on a wrapper. */}
+          <span className="hidden shrink-0 @lg:inline-flex">
+            <Tag mono>{lab.gpu}</Tag>
+          </span>
         </div>
 
         {/* Spelling out "(not configured)" inside the closed select took 43% of
@@ -450,7 +519,7 @@ export default function LabPane({ lab, onPassed }: Props) {
         <select
           value={provider ?? ""}
           onChange={(event) => setProvider(event.target.value)}
-          className="h-9 min-w-0 max-w-28 shrink rounded-lg border border-ink-800 bg-ink-950/60 px-2 text-[11px] text-ink-200 outline-none focus:border-flame-500 sm:max-w-none"
+          className="h-8 min-w-0 max-w-28 shrink rounded-md border border-line bg-card px-2 text-[12.5px] text-fg-muted outline-none transition-colors hover:border-line-strong hover:text-fg focus-visible:border-accent @lg:max-w-none"
           aria-label="GPU provider"
         >
           {providers.map((item) => (
@@ -462,30 +531,32 @@ export default function LabPane({ lab, onPassed }: Props) {
         </select>
 
         {status === "running" ? (
-          <button
-            onClick={cancel}
-            className="flex h-9 shrink-0 items-center whitespace-nowrap rounded-lg border border-rose-450/45 bg-rose-450/10 px-3 text-[11px] font-bold text-rose-450 transition hover:bg-rose-450/20"
-          >
-            Stop · {elapsed}s
-          </button>
+          <Button variant="danger" size="sm" className="h-8 px-3" onClick={cancel}>
+            <StopIcon className="size-3.5" />
+            <span className="tabular-nums">Stop · {elapsed}s</span>
+          </Button>
         ) : (
-          <button
+          <Button
+            variant="primary"
+            size="sm"
+            className="h-8 px-3"
             onClick={run}
             disabled={!canRun}
-            className="flex h-9 shrink-0 items-center whitespace-nowrap rounded-lg bg-flame-500 px-3.5 text-[11px] font-bold text-ink-950 transition hover:bg-flame-400 disabled:cursor-not-allowed disabled:opacity-40"
+            title={`Run on the GPU (${RUN_KEYS})`}
           >
-            Run ▸
-          </button>
+            <PlayIcon className="size-3.5" />
+            Run
+          </Button>
         )}
       </header>
 
       {runnable && !runnable.available && (
-        <p className="shrink-0 border-b border-ink-800 bg-ink-950/50 px-3 py-2 text-[11px] text-ink-400">
+        <p className="shrink-0 border-b border-line bg-well px-3 py-1.5 text-[12px] text-fg-subtle">
           {runnable.reason}
         </p>
       )}
       {creditWarning && (
-        <p className="shrink-0 border-b border-ink-800 bg-flame-500/10 px-3 py-2 text-[11px] text-flame-300">
+        <p className="shrink-0 border-b border-line bg-warn/8 px-3 py-1.5 text-[12px] text-warn">
           {creditWarning}
         </p>
       )}

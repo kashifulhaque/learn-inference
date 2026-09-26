@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, type VolumeListing } from "../lib/api";
 import { formatBytes } from "../lib/format";
+import { IconButton } from "./ui";
+import { ArrowLeftIcon, FileIcon, FolderIcon } from "./icons";
 
 type Props = {
   provider: string;
@@ -40,54 +42,68 @@ export default function VolumeBrowser({ provider, volume }: Props) {
   }, [provider, volume, path]);
 
   return (
-    <div className="mt-3 overflow-hidden rounded-xl border border-ink-800 bg-ink-950">
-      <div className="flex items-center gap-3 border-b border-ink-800 bg-ink-900/60 px-3 py-2">
-        <button
+    <div className="mt-3 overflow-hidden rounded-md border border-line bg-card">
+      <div className="flex items-center gap-2 border-b border-line bg-well py-1 pl-1 pr-3">
+        <IconButton
+          size="sm"
           onClick={() => setPath(listing?.parent ?? "/")}
           disabled={!listing?.parent}
-          className="rounded-md border border-ink-700 px-2 py-0.5 text-[11px] text-ink-300 transition hover:border-flame-500/50 disabled:opacity-30"
+          aria-label="Up one directory"
+          title="Up one directory"
         >
-          ↑ up
-        </button>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-ink-400">
-          {volume}:{listing?.path ?? path}
+          <ArrowLeftIcon className="size-3.5" />
+        </IconButton>
+        <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-fg-muted">
+          <span className="text-fg-faint">{volume}:</span>
+          {listing?.path ?? path}
         </span>
         {listing && listing.bytes > 0 && (
-          <span className="text-[11px] text-ink-600">
+          <span className="flex-none font-mono text-[12px] tabular-nums text-fg-subtle">
             {formatBytes(listing.bytes)} here
           </span>
         )}
       </div>
 
-      {loading && <p className="px-4 py-4 text-[11px] text-ink-600">Listing…</p>}
+      {loading && (
+        <p className="flex items-center gap-2 px-3 py-3 text-[12.5px] text-fg-subtle" role="status">
+          <span
+            className="size-3 animate-spin rounded-full border-[1.5px] border-line-strong border-t-fg-subtle"
+            aria-hidden
+          />
+          Listing…
+        </p>
+      )}
       {error && (
-        <p className="px-4 py-4 font-mono text-[11px] leading-5 text-rose-450">{error}</p>
+        <p className="break-words px-3 py-3 font-mono text-[12px] leading-5 text-bad">{error}</p>
       )}
       {!loading && !error && listing?.entries.length === 0 && (
-        <p className="px-4 py-4 text-[11px] text-ink-600">
+        <p className="px-3 py-4 text-[12.5px] leading-5 text-fg-subtle">
           Empty. Nothing has been written here yet, so the first lab that needs
           weights will download them.
         </p>
       )}
 
       {listing && listing.entries.length > 0 && (
-        <ul className="max-h-72 divide-y divide-ink-800/70 overflow-y-auto">
+        <ul className="max-h-72 divide-y divide-line overflow-y-auto">
           {listing.entries.map((entry) => (
             <li key={entry.path}>
               <button
+                type="button"
                 onClick={() => entry.is_dir && setPath(`/${entry.path}`)}
                 disabled={!entry.is_dir}
-                className={`flex w-full items-center gap-3 px-4 py-2 text-left font-mono text-[11px] transition ${
+                className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left font-mono text-[12px] transition-colors ${
                   entry.is_dir
-                    ? "text-ink-200 hover:bg-ink-900/70 hover:text-flame-300"
-                    : "cursor-default text-ink-400"
+                    ? "text-fg hover:bg-tint"
+                    : "cursor-default text-fg-muted"
                 }`}
               >
-                <span className={entry.is_dir ? "text-flame-400/70" : "text-ink-700"}>
-                  {entry.is_dir ? "▸" : "·"}
-                </span>
+                {entry.is_dir ? (
+                  <FolderIcon className="size-3.5 text-fg-subtle" />
+                ) : (
+                  <FileIcon className="size-3.5 text-fg-faint" />
+                )}
                 <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                <span className="text-ink-600">
+                <span className="flex-none tabular-nums text-fg-faint">
                   {entry.is_dir ? "dir" : formatBytes(entry.size)}
                 </span>
               </button>

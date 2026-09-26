@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Link, Navigate, Route, Routes } from "react-router-dom";
 import { api, type ChapterMeta } from "./lib/api";
-import ComputeBadge from "./components/ComputeBadge";
+import { Mark } from "./components/Brand";
+import ComputeBadge, { useActiveCompute } from "./components/ComputeBadge";
+import { MenuIcon } from "./components/icons";
 import Login from "./components/Login";
 import Sidebar from "./components/Sidebar";
+import { IconButton, Loading } from "./components/ui";
 import ChapterPage from "./pages/ChapterPage";
 import Compute from "./pages/Compute";
 import Dashboard from "./pages/Dashboard";
@@ -26,12 +29,13 @@ function Scroller({ children }: { children: ReactNode }) {
 export default function App() {
   const [name, setName] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
-  const [chapters, setChapters] = useState<ChapterMeta[]>([]);
+  const [chapters, setChapters] = useState<ChapterMeta[] | null>(null);
   const [progress, setProgress] = useState<Record<string, string>>({});
   const [model, setModel] = useState("");
   const [gpu, setGpu] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(wasCollapsed);
+  const active = useActiveCompute(Boolean(name));
 
   useEffect(() => {
     api
@@ -86,68 +90,56 @@ export default function App() {
   async function signOut() {
     await api.logout();
     setName(null);
+    setChapters(null);
   }
 
   if (!ready) {
-    return <div className="p-10 text-sm text-ink-500">Loading…</div>;
+    return <Loading />;
   }
   if (!name) {
     return <Login onSignedIn={setName} />;
   }
 
+  const list = chapters ?? [];
+
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex h-full overflow-hidden bg-paper">
       <Sidebar
-        chapters={chapters}
+        chapters={list}
         progress={progress}
         open={menuOpen}
         collapsed={collapsed}
         onNavigate={() => setMenuOpen(false)}
         onClose={() => setMenuOpen(false)}
         onToggleCollapsed={() => setCollapsed((current) => !current)}
+        name={name}
+        active={active}
+        onSignOut={signOut}
       />
 
       {menuOpen && (
         <button
           aria-label="Close the menu"
           onClick={() => setMenuOpen(false)}
-          className="fixed inset-0 z-20 bg-ink-950/75 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-20 bg-fg/25 lg:hidden"
         />
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-ink-800 bg-ink-900/70 px-3 backdrop-blur-xl lg:gap-3 lg:px-4">
-          <button
-            onClick={() => setMenuOpen((open) => !open)}
-            aria-label="Open the course list"
-            className="flex h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-ink-800 bg-ink-850 px-2.5 text-xs font-semibold text-ink-200 transition hover:border-ink-600 lg:hidden"
-          >
-            <span className="text-sm leading-none">☰</span>
-            <span className="hidden min-[360px]:inline">Chapters</span>
-          </button>
-
-          <div className="hidden items-center gap-2 text-[11px] text-ink-500 lg:flex">
-            <span className="h-1.5 w-1.5 rounded-full bg-flame-500" />
-            Learning workspace
-            <kbd className="ml-1 rounded border border-ink-800 bg-ink-950/60 px-1.5 py-0.5 font-mono text-[10px] text-ink-600">
-              ⌘B
-            </kbd>
-          </div>
-
-          <div className="ml-auto flex min-w-0 items-center gap-2 lg:gap-2.5">
-            <ComputeBadge />
-            {/* The name is only there to say whose progress this is. On a phone
-                that is worth less than the room it takes from the two
-                controls beside it. */}
-            <span className="hidden max-w-28 truncate rounded-lg border border-ink-800 bg-ink-850 px-2.5 py-1.5 text-[11px] font-medium text-ink-200 min-[420px]:block">
-              {name}
+        {/* A wide screen has the sidebar for all of this. A narrow one needs a
+            way to open it, and keeps the GPU status in view. */}
+        <header className="flex h-12 shrink-0 items-center gap-1.5 border-b border-line bg-well px-2 lg:hidden">
+          <IconButton onClick={() => setMenuOpen(true)} aria-label="Open the course list">
+            <MenuIcon />
+          </IconButton>
+          <Link to="/" className="flex min-w-0 items-center gap-2 rounded-md px-1">
+            <Mark className="size-5" />
+            <span className="truncate text-[14px] font-semibold tracking-tight text-fg">
+              learn-inference
             </span>
-            <button
-              onClick={signOut}
-              className="flex h-10 shrink-0 items-center whitespace-nowrap px-1 text-[11px] font-medium text-ink-500 transition hover:text-flame-400"
-            >
-              Sign out
-            </button>
+          </Link>
+          <div className="ml-auto">
+            <ComputeBadge active={active} />
           </div>
         </header>
 
@@ -169,7 +161,11 @@ export default function App() {
             <Route
               path="/c/:slug"
               element={
-                <ChapterPage progress={progress} onProgress={changeProgress} />
+                <ChapterPage
+                  chapters={list}
+                  progress={progress}
+                  onProgress={changeProgress}
+                />
               }
             />
             <Route

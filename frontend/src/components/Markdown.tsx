@@ -62,8 +62,17 @@ export default function Markdown({ children }: { children: string }) {
           // Sections first, so each one wraps the source headings before KaTeX
           // and the highlighter add their own markup.
           rehypeSectionize,
-          // KaTeX mutates the macro table it is given, so hand it a copy.
-          [rehypeKatex, { macros: { ...macros } }],
+          // KaTeX mutates the macro table it is given, so hand it a copy. The
+          // colour macros expand to \htmlClass, the one HTML extension allowed,
+          // so the theme decides their colour. scripts/check_math.mjs matches.
+          [
+            rehypeKatex,
+            {
+              macros: { ...macros },
+              strict: (code: string) => (code === "htmlExtension" ? "ignore" : "warn"),
+              trust: (context: { command: string }) => context.command === "\\htmlClass",
+            },
+          ],
           [rehypeHighlight, { detect: true, ignoreMissing: true }],
         ]}
         components={{

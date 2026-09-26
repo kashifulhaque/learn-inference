@@ -58,7 +58,7 @@ about to write, write it, then say what it means.
   it.
 - **Colour the parts** of an equation that has several named pieces, and use the
   same colour when the prose refers to them. Four macros exist:
-  `\hla{}` (mint), `\hlb{}` (blue), `\hlc{}` (amber), and `\hld{}` (rose). For
+  `\hla{}` (green), `\hlb{}` (blue), `\hlc{}` (amber), and `\hld{}` (rose). For
   example, write `$\hla{\epsilon}$` in the prose that explains the
   $\epsilon$ in `$$y_i = \frac{x_i}{\sqrt{\operatorname{ms}(x) + \hla{\epsilon}}}$$`.
   Keep the colour of a symbol the same across the chapter, and colour at most

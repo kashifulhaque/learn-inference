@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
-import { monaco, THEME } from "../lib/monaco";
+import { DARK_THEME, LIGHT_THEME, monaco } from "../lib/monaco";
+import { useTheme } from "../lib/theme";
 
 type Props = {
   value: string;
@@ -32,6 +33,7 @@ function clampHeight(contentHeight: number): number {
  */
 export default function CodeEditor({ value, onChange, onRun, path, fill = false }: Props) {
   const [height, setHeight] = useState(MIN_HEIGHT);
+  const theme = useTheme();
   const runRef = useRef(onRun);
   runRef.current = onRun;
 
@@ -51,6 +53,9 @@ export default function CodeEditor({ value, onChange, onRun, path, fill = false 
         setHeight(clampHeight(event.contentHeight));
       });
     }
+    // Monaco measures glyphs once, at mount. If IBM Plex Mono arrives after
+    // that, the cursor drifts from the text until the metrics are taken again.
+    document.fonts?.ready.then(() => monaco.editor.remeasureFonts());
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       runRef.current?.();
     });
@@ -58,26 +63,26 @@ export default function CodeEditor({ value, onChange, onRun, path, fill = false 
 
   return (
     <div
-      className={fill ? "h-full min-h-0 bg-ink-950" : "bg-ink-950"}
+      className={fill ? "h-full min-h-0 bg-paper" : "bg-paper"}
       style={fill ? undefined : { height }}
     >
       <Editor
         height="100%"
         path={path}
         defaultLanguage="python"
-        theme={THEME}
+        theme={theme === "dark" ? DARK_THEME : LIGHT_THEME}
         value={value}
         onChange={(next) => onChange(next ?? "")}
         onMount={handleMount}
         loading={
-          <div className="flex h-full w-full items-center justify-center bg-ink-950 text-xs text-ink-600">
+          <div className="flex h-full w-full items-center justify-center bg-paper text-[12.5px] text-fg-faint">
             Loading the editor…
           </div>
         }
         options={{
-          fontSize: 13.5,
+          fontSize: 13,
           lineHeight: LINE_HEIGHT,
-          fontFamily: 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace',
+          fontFamily: '"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace',
           fontLigatures: false,
           padding: { top: PADDING, bottom: PADDING },
           tabSize: 4,

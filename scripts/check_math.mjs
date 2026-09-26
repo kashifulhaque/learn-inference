@@ -74,7 +74,10 @@ for (const file of files) {
       katex.renderToString(item.tex, {
         displayMode: item.display,
         throwOnError: true,
-        strict: "warn",
+        // The colour macros expand to \htmlClass, so the theme picks the
+        // colour. That is the one HTML extension allowed; the site does the same.
+        strict: (code) => (code === "htmlExtension" ? "ignore" : "warn"),
+        trust: (context) => context.command === "\\htmlClass",
         macros: { ...macros },
       });
     } catch (error) {
