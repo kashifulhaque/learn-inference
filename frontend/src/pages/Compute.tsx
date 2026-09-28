@@ -13,7 +13,7 @@ import { DatabaseIcon, ExternalIcon, RefreshIcon } from "../components/icons";
 
 const REFRESH_MS = 20_000;
 
-const PROVIDER_LABELS: Record<string, string> = { modal: "Modal", runpod: "RunPod" };
+const PROVIDER_LABELS: Record<string, string> = { runpod: "RunPod" };
 
 export default function Compute() {
   const [infra, setInfra] = useState<Infra | null>(null);

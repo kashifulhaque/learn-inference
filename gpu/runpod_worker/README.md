@@ -1,9 +1,9 @@
 # RunPod worker
 
-RunPod is the course's default GPU provider. This directory holds the serverless
+RunPod runs every lab in the course. This directory holds the serverless
 worker that executes labs: `handler.py` receives a lab id and the reader's code,
-runs it through the shared lab runner in `gpu/lab_runner.py`, and streams events
-back. Modal's function in `gpu/modal_app.py` exposes the same contract.
+runs it through the lab runner in `gpu/lab_runner.py`, and streams events
+back.
 
 ## Build and push
 
@@ -24,9 +24,8 @@ docker push REGISTRY/learn-inference-worker:latest
 and pushes the same image to GitHub Container Registry, so you only need to
 build by hand when you want to test an image before it lands on `main`.
 
-Unlike Modal, the worker carries the engine and the labs inside the image. A new
-image is the only way a code change reaches the GPU, and there is no warm mount
-to invalidate.
+The worker carries the engine and the labs inside the image. A new image is the
+only way a code change reaches the GPU.
 
 ## Create the endpoint
 
@@ -40,9 +39,6 @@ to invalidate.
    the compute panel can put always-on workers back to zero if one gets set.
 6. Copy the endpoint id into `RUNPOD_ENDPOINT_ID` in the app's `.env`, and set
    `RUNPOD_API_KEY`.
-
-`GPU_PROVIDER=runpod` is the default, so labs start here. To send a single run
-to Modal instead, use the provider picker in the lab pane.
 
 ## What the first run costs you
 

@@ -4,13 +4,12 @@ from typing import Any
 
 from ..config import get_settings
 from .base import Provider
-from .modal_provider import ModalProvider
 from .runpod_provider import RunPodProvider
 
 # Order matters: the first entry is the preferred provider, and the compute
 # panel renders the providers in this order.
 PREFERRED = "runpod"
-_BUILDERS = {"runpod": RunPodProvider, "modal": ModalProvider}
+_BUILDERS = {"runpod": RunPodProvider}
 
 
 def provider_names() -> list[str]:
@@ -28,7 +27,7 @@ def get_provider(name: str | None = None) -> Provider:
 
 
 def provider_status() -> dict[str, Any]:
-    """What each provider looks like right now, for the UI's provider picker."""
+    """Each provider's state right now, for the lab pane and the compute panel."""
     settings = get_settings()
     providers = []
     for key, builder in _BUILDERS.items():

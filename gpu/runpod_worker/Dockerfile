@@ -1,4 +1,4 @@
-# RunPod serverless worker. Mirrors the Modal image so labs behave identically.
+# RunPod serverless worker. Carries the engine and the labs, so every run gets the code it was built with.
 FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
 
 ENV PYTHONUNBUFFERED=1 \

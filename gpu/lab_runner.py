@@ -1,4 +1,4 @@
-"""Shared lab execution used by both the Modal function and the RunPod worker.
+"""Lab execution for the RunPod worker.
 
 Writes the submission to a scratch directory, runs harness.py as a subprocess,
 and yields one event per line of output.

@@ -1,7 +1,6 @@
-"""The default executor: a RunPod serverless endpoint.
+"""The lab executor: a RunPod serverless endpoint.
 
-The worker image is in gpu/runpod_worker/ and exposes the same lab contract as
-the Modal function, which is the alternative. RunPod streams generator output
+The worker image is in gpu/runpod_worker/. RunPod streams generator output
 through /stream/{job_id}, which this provider polls.
 """
 

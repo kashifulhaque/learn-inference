@@ -107,7 +107,6 @@ export type ProviderInfra = {
   volumes: InfraVolume[];
   notices: string[];
   facts: Fact[];
-  functions?: { name: string; deployed: boolean; backlog?: number; containers?: number }[];
   account?: Record<string, number>;
   jobs?: Record<string, number>;
 };

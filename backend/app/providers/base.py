@@ -11,7 +11,7 @@ class ProviderError(RuntimeError):
 class OutOfCredits(ProviderError):
     """The provider rejected the job because the account is out of credit.
 
-    The app catches this to suggest switching to the fallback provider.
+    The app catches this to tell the reader to add credit.
     """
 
 
@@ -26,7 +26,7 @@ class LabResult:
 class Instance:
     """One thing that is running, or could run, and may cost money.
 
-    A Modal container, a RunPod pod, or the worker pool behind a RunPod
+    A RunPod pod, or the worker pool behind a RunPod
     serverless endpoint. The compute panel renders these and offers `actions`
     as buttons.
     """

@@ -222,14 +222,6 @@ def providers(user: str = Depends(current_user)) -> dict[str, Any]:
     return provider_status()
 
 
-def _fallback_provider(exclude: str) -> str | None:
-    """Another configured provider to suggest when this one cannot run."""
-    for item in provider_status()["providers"]:
-        if item["name"] != exclude and item["available"]:
-            return item["name"]
-    return None
-
-
 # --- compute panel ----------------------------------------------------------
 
 
@@ -338,19 +330,11 @@ async def run_lab(body: RunBody, user: str = Depends(current_user)) -> Streaming
             db.finish_run(
                 run_id, status="out_of_credits", log="\n".join(log_lines), error=str(exc)
             )
-            alternative = _fallback_provider(provider.name)
-            hint = (
-                f"{provider.name} is out of credit. Switch the provider to "
-                f"{alternative} and run again."
-                if alternative
-                else f"{provider.name} is out of credit, and no other provider "
-                "is configured to take over."
-            )
+            hint = f"{provider.name} is out of credit. Add credit, then run again."
             yield _sse(
                 {
                     "type": "out_of_credits",
                     "provider": provider.name,
-                    "fallback": alternative,
                     "message": str(exc),
                     "hint": hint,
                 }

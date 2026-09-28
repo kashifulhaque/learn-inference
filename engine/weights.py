@@ -20,8 +20,8 @@ from safetensors import safe_open
 def local_model_path(model_id: str | None = None) -> Path:
     """Where the weights live inside a GPU container.
 
-    Labs get a warm Hugging Face cache under $HF_HOME, populated once by
-    `modal run gpu/modal_app.py::download_model`.
+    Labs get a warm Hugging Face cache under $HF_HOME, which on the RunPod
+    worker is the network volume mounted at /models.
     """
     model_id = model_id or os.environ.get("MODEL_ID", "Qwen/Qwen3.8-27B")
     override = os.environ.get("LI_MODEL_DIR")
@@ -37,8 +37,8 @@ def local_model_path(model_id: str | None = None) -> Path:
             if versions:
                 return versions[-1]
     raise FileNotFoundError(
-        f"No local copy of {model_id}. Run "
-        f"`modal run gpu/modal_app.py::download_model --model-id {model_id}` first."
+        f"No local copy of {model_id} under {hf_home}. Download it there first, "
+        f"for example with `hf download {model_id}`."
     )
 
 

@@ -325,8 +325,7 @@ Each chapter ends with a lab. When you edit code in the browser and click
 **Run**, the following happens:
 
 1. The backend packages your file together with the lab's test harness.
-2. It ships both to a GPU provider: RunPod by default, Modal as the
-   alternative. The app decides, and you can override it in the lab pane.
+2. It ships both to a RunPod serverless endpoint.
 3. The provider starts a container with an A100 80GB attached, imports your file
    as a module, and calls the harness's `run(submission)` with it.
 4. Output streams back to the browser line by line as it's printed, so a

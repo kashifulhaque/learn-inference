@@ -30,15 +30,10 @@ class Settings(BaseSettings):
 
     # GPU providers
     gpu_provider: str = "runpod"
-    # The accelerator the labs ask for, for display. Each provider spells it
-    # its own way; `modal_gpu` is Modal's spelling.
+    # The accelerator the labs ask for, for display.
     gpu_type: str = "A100-80GB"
     runpod_api_key: str = ""
     runpod_endpoint_id: str = ""
-    modal_token_id: str = ""
-    modal_token_secret: str = ""
-    modal_app_name: str = "learn-inference"
-    modal_gpu: str = "A100-80GB"
 
     # Model
     hf_token: str = ""

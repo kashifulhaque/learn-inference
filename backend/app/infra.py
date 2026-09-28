@@ -2,7 +2,7 @@
 
 Labs run on someone else's GPU, and the two failure modes that cost real money
 are a container nobody noticed and a job left queued after a browser tab
-closed. This module gathers both providers' live state into one snapshot, and
+closed. This module gathers every provider's live state into one snapshot, and
 dispatches the stop actions the panel offers.
 """
 
@@ -20,8 +20,6 @@ from .providers import ProviderError, get_provider, provider_names
 # nothing while idle, and the volumes hold a 54 GB weight cache.
 ALLOWED_ACTIONS = frozenset(
     {
-        "stop-container",
-        "stop-app",
         "stop-pod",
         "purge-queue",
         "cancel-job",
@@ -98,7 +96,7 @@ def _active_runs() -> list[dict[str, Any]]:
             {
                 **run,
                 "age": round(age),
-                "cancellable": bool(run.get("job_id")) or run["provider"] == "modal",
+                "cancellable": bool(run.get("job_id")),
                 "hint": (
                     "Cancel the job on the provider."
                     if run.get("job_id")

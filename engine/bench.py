@@ -93,7 +93,7 @@ def gpu_info() -> dict[str, Any]:
 # Published A100 numbers, used for the roofline work in chapter 10.
 #
 # The 80GB part ships in two forms and they do not have the same memory
-# bandwidth. Modal serves the PCIe card, so that is the default here. Compare
+# bandwidth. The PCIe card is the default here, because runs land on it most. Compare
 # any measurement against the card you actually got, which `gpu_info` reports.
 #
 # A plain device-to-device copy reaches about 1275 GB/s on the PCIe part, or 66%

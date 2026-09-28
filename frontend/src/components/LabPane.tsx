@@ -172,7 +172,6 @@ export default function LabPane({ lab, onPassed }: Props) {
           setStatus("error");
           setCreditWarning(event.hint);
           setMessage(event.message);
-          setProvider("runpod");
           break;
         case "error":
           setStatus("error");
@@ -515,20 +514,23 @@ export default function LabPane({ lab, onPassed }: Props) {
             a 375px header and truncated the lab's own title to four letters.
             A narrow screen gets a marker instead; either way the reason is a
             line of its own under this bar. An option's text cannot be styled
-            per breakpoint, so this branch is in JavaScript. */}
-        <select
-          value={provider ?? ""}
-          onChange={(event) => setProvider(event.target.value)}
-          className="h-8 min-w-0 max-w-28 shrink rounded-md border border-line bg-card px-2 text-[12.5px] text-fg-muted outline-none transition-colors hover:border-line-strong hover:text-fg focus-visible:border-accent @lg:max-w-none"
-          aria-label="GPU provider"
-        >
-          {providers.map((item) => (
-            <option key={item.name} value={item.name} disabled={!item.available}>
-              {item.name}
-              {item.available ? "" : wide ? " (not configured)" : " ⚠"}
-            </option>
-          ))}
-        </select>
+            per breakpoint, so this branch is in JavaScript. With one provider
+            there is nothing to pick, so the select stays hidden. */}
+        {providers.length > 1 && (
+          <select
+            value={provider ?? ""}
+            onChange={(event) => setProvider(event.target.value)}
+            className="h-8 min-w-0 max-w-28 shrink rounded-md border border-line bg-card px-2 text-[12.5px] text-fg-muted outline-none transition-colors hover:border-line-strong hover:text-fg focus-visible:border-accent @lg:max-w-none"
+            aria-label="GPU provider"
+          >
+            {providers.map((item) => (
+              <option key={item.name} value={item.name} disabled={!item.available}>
+                {item.name}
+                {item.available ? "" : wide ? " (not configured)" : " ⚠"}
+              </option>
+            ))}
+          </select>
+        )}
 
         {status === "running" ? (
           <Button variant="danger" size="sm" className="h-8 px-3" onClick={cancel}>

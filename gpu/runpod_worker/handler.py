@@ -1,4 +1,4 @@
-"""RunPod serverless handler — the fallback for when Modal credits run out.
+"""RunPod serverless handler: runs one lab and streams its events.
 
 Build and push the image in this directory, then point a RunPod serverless
 endpoint at it and set RUNPOD_ENDPOINT_ID in the app's .env.
