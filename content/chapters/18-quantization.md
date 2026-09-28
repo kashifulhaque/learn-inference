@@ -2,10 +2,11 @@
 title: Quantization on Ampere
 slug: 18-quantization
 part: "Part 6 — Scaling"
-summary: Deriving affine and symmetric quantization, why grouping fixes outliers, and why FP8 is not available to you on an A100.
-minutes: 105
+summary: What the bits of int8, bfloat16, and FP8 hold, how affine and symmetric quantization follow from them, why grouping fixes outliers, and why FP8 isn't available to you on an A100.
+minutes: 115
 gpu: true
 objectives:
+  - Say what each bit of bfloat16, FP8, int8, and int4 holds, and how a scale turns an integer into a real number.
   - Derive affine and symmetric quantization and bound the reconstruction error by the step size.
   - Explain why per-tensor scaling collapses under outliers, and derive per-channel and group-wise scaling as the fix.
   - Compute the metadata cost of a group size and the memory saved at model scale.
@@ -18,50 +19,49 @@ lab: 18-int8-quant
 # Quantization on Ampere
 
 > [!TLDR]
-> - Round-to-nearest with scale $s$ has error at most $s/2$ per weight, so every
->   design choice is a way to make $s$ smaller.
-> - One outlier stretches the scale of everything that shares it. Group-wise
->   scales with $g = 128$ contain the damage for 1.56% of metadata.
-> - Weight-only int8 halves the bytes, so memory-bound decode runs 1.97 times
->   faster. Compute-bound prefill gains nothing.
-> - Ampere's int8 tensor cores need per-tensor or per-channel scales, and Ampere
->   has no FP8 at all.
-> - In a quantized KV cache, key error is amplified by the softmax and value
->   error is averaged down, so keys need more precision.
+> - Quantization stores each weight as a small integer plus a scale shared by
+>   many weights, so int8 weights take about half the bytes of bfloat16.
+>   Rounding to the nearest step is off by at most half a step, so every design
+>   choice is a way to make the step smaller.
+> - One unusually large weight stretches the step for everything that shares its
+>   scale. Giving each group of 128 weights its own scale contains the damage for
+>   1.56% extra storage.
+> - Decode spends its time reading weights, so halving the bytes makes it 1.97
+>   times faster. Prefill spends its time computing, so it gains nothing.
+> - The A100's int8 matrix units need one scale per tensor or per output row,
+>   and the A100 has no FP8 arithmetic at all.
+> - In a quantized KV cache, the softmax magnifies errors in keys while errors
+>   in values average out, so keys need more precision.
 
-The weights are 53.8 GB and decode reads all of them for every token. At the
-A100's measured copy bandwidth of 1275 GB/s, that's a floor of 42.2 ms per
-token, or 23.7 tokens per second, before a single FLOP. Halving the bytes halves
-the floor. Quantization is the most direct throughput improvement available to
-this engine, and it's also the easiest way to wreck the model without noticing.
+Once the prompt is processed, each new token comes from a *decode* step that
+reads all 53.8 GB of weights. At the A100's measured copy bandwidth of 1275 GB/s, that's a
+floor of 42.2 ms per token, or 23.7 tokens per second, before a single FLOP.
+Halve the bytes and you halve the floor.
 
-This chapter does the numerics properly. Quantization is a rounding scheme, and
-a rounding scheme has an error bound you can derive rather than measure. Once
-you have the bound, every later choice follows from it: symmetric against
-affine, per-tensor against per-group, and weights only against weights and
-activations.
+That makes quantization, storing the weights in fewer bits, the most direct
+throughput improvement available to this engine. It's also the easiest way to
+wreck the model without noticing.
+
+This chapter does the numerics properly. You start with what the bits of each
+format hold. Quantization is a rounding scheme, and a rounding scheme has an
+error bound you can derive rather than measure. Once you have the bound, every
+later choice follows from it: symmetric against affine, per-tensor against
+per-group, and weights only against weights and activations.
 
 ## Before you start
 
-**Fixed-point representation.** An int8 value is an integer in $[-128, 127]$. To
-represent a real number with it, you need a scale (how much one integer step is
-worth) and optionally an offset (which integer means zero). That pair is the
-entire scheme.
-
-**Floating-point formats.** The
-[notation chapter](/c/00a-notation-and-prerequisites) covers the floating-point
-formats. The one fact you need here is that ==a floating-point format has
-roughly constant relative precision, while a fixed-point format has constant
-absolute precision==. That difference is what the outlier discussion is about.
-
-**The roofline.** In [the roofline chapter](/c/10-roofline), decode is memory
-bound, with an arithmetic intensity around 1 FLOP per byte against a ridge point
-of 161. Quantization changes the byte count, so it moves decode along the
+**The roofline, from [the roofline chapter](/c/10-roofline).** An operation's
+*arithmetic intensity* is the FLOPs it does per byte it moves. The *ridge point*,
+161 FLOPs per byte on the A100, separates *memory-bound* work below it from
+*compute-bound* work above it. Decode runs at about 1 FLOP per byte, so it's
+memory bound. *Prefill*, which processes the whole prompt at once, is compute
+bound. Quantization changes the byte count, so it moves decode along the
 memory-bound roof. It doesn't move prefill, which is already on the compute
 roof.
 
 **Norms.** The relative error used throughout is the Frobenius norm of the
-difference over the Frobenius norm of the original:
+difference over the Frobenius norm of the original. The Frobenius norm
+$\lVert \cdot \rVert_F$ is the square root of the sum of every squared entry:
 
 $$
 \varepsilon = \frac{\lVert \hat{W} - W \rVert_F}{\lVert W \rVert_F}
@@ -72,13 +72,74 @@ $[-s/2, s/2]$. Treating that residual as a uniform random variable is the
 standard model, and it's accurate whenever $s$ is small compared with the
 spread of the data.
 
+## What the bits hold
+
+Before you can reason about quantization error, you need a picture of what an
+8-bit number can hold. This section compares the formats the chapter uses, bit
+by bit. For more depth on floating point, see
+[the notation chapter](/c/00a-notation-and-prerequisites).
+
+A floating-point number splits its bits into three fields:
+
+- A *sign* bit.
+- An *exponent*, which picks a power of two.
+- A *mantissa*, which picks one of evenly spaced points between that power of
+  two and the next.
+
+The span from one power of two to the next, such as 1 to 2 or 4 to 8, is an
+*octave*. An integer format has no exponent: all its bits pick one of evenly
+spaced integers. The following table shows what each format holds:
+
+| Format | Bits: sign, exponent, mantissa | What it holds | Spacing of levels |
+|---|---|---|---|
+| float32 | 1, 8, 23 | About 7 significant digits | $2^{23}$ steps per octave |
+| bfloat16 | 1, 8, 7 | float32's range, about 2 to 3 significant digits | 128 steps per octave |
+| FP8 `e4m3` | 1, 4, 3 | About 1 significant digit | 8 steps per octave |
+| int8 | 8 integer bits | The integers $-128$ to $127$ | Exactly 1, everywhere |
+| int4 | 4 integer bits | The integers $-8$ to $7$ | Exactly 1, everywhere |
+
+Each float format also has an implicit leading 1 that isn't stored, so
+bfloat16 carries 8 significant bits and `e4m3` carries 4.
+
+The floats spend the same number of levels on every octave, so the gap between
+neighbors grows with the value. The integers space their levels evenly across
+the whole range. So ==a floating-point format has roughly constant relative
+precision, while a fixed-point format has constant absolute precision==. That
+difference is what the outlier discussion later in this chapter is about.
+
+An int8 on its own holds only an integer. To make it stand for a real weight,
+you pair it with a *scale* $\hla{s}$, a real number stored separately that says
+how much one integer step is worth. The stored integer $q$ then means
+$\hat{w} = \hla{s}\,q$. Many weights share one scale, which is where the saving
+comes from: 1 byte per weight, plus a small share of one scale.
+
+> [!EXAMPLE] Four weights in int8
+> Take the block $w = (0.834, -0.301, 0.027, -1.27)$. Choose the scale so the
+> largest magnitude lands on the last integer level: $\hla{s} = 1.27/127 =
+> 0.01$. Divide each weight by $\hla{s}$, round, and multiply back:
+>
+> | Weight $w$ | $w/\hla{s}$ | Stored $q$ | Dequantized $\hla{s}\,q$ | Error |
+> |---|---|---|---|---|
+> | 0.834 | 83.4 | 83 | 0.83 | 0.004 |
+> | $-0.301$ | $-30.1$ | $-30$ | $-0.30$ | 0.001 |
+> | 0.027 | 2.7 | 3 | 0.03 | 0.003 |
+> | $-1.27$ | $-127$ | $-127$ | $-1.27$ | 0 |
+>
+> Every error is at most 0.005, which is half a step. Later sections derive
+> that bound and ask what makes the step large.
+
+Next, you make this recipe precise, starting with the general map from real
+numbers to integers.
+
 ## Affine quantization, derived
 
-An affine map sends a range of real numbers onto a range of integers and back.
-You have real values $w$ in a range $[\beta_{\min}, \beta_{\max}]$, and you want
-to store them as integers in $[q_{\min}, q_{\max}]$. For int8, that's
-$[-128, 127]$. Start from the inverse map, *dequantization*, which turns an
-integer back into a real number:
+An *affine* map sends a range of real numbers onto a range of integers and
+back, with a scale and an offset. You have real values $w$ in a range
+$[\beta_{\min}, \beta_{\max}]$, and you want to store them as integers in
+$[q_{\min}, q_{\max}]$. For int8, that's $[-128, 127]$.
+
+Start from the inverse map, *dequantization*, which turns an integer back into a
+real number:
 
 $$
 \hat{w} = \hla{s}\,(q - \hlb{z})
@@ -98,6 +159,7 @@ $$
 }
 $$
 
+In words, the scale is the real range divided by the number of integer steps.
 You round $\hlb{z}$ so that $w = 0$ maps to an exact integer and dequantizes
 back to exactly zero.
 
@@ -136,11 +198,11 @@ $$
 
 ## Symmetric quantization
 
-Weights are close to symmetric around zero, so they drop the zero point: an
-offset buys little and costs an add per element on the dequantization path. Set
-$\beta_{\max} = -\beta_{\min} = \hld{\beta}$, where $\hld{\beta} = \max|w|$ is
-the largest magnitude. Then $\hlb{z} = 0$ falls out, and dequantization is one
-multiply.
+Weights sit close to symmetric around zero, so the zero point buys little. It
+also costs an add per element on the dequantization path, so weights drop it.
+Set $\beta_{\max} = -\beta_{\min} = \hld{\beta}$, where $\hld{\beta} = \max|w|$
+is the largest magnitude. Then $\hlb{z} = 0$ falls out, and dequantization is
+one multiply. This is the recipe the four-weight example used.
 
 To keep the mapping symmetric, you also give up one integer level: use
 $[-127, 127]$ rather than $[-128, 127]$, because $-128$ has no positive partner.
@@ -183,8 +245,9 @@ table shows every tensor's shape:
 
 ## The error bound
 
-The rounding error is never more than half a step. For any $w$ that doesn't
-clamp, the reconstruction error is the rounding residual scaled back up:
+How wrong can a quantized weight be? Never more than half a step. For any $w$
+that doesn't clamp, the reconstruction error is the rounding residual scaled
+back up:
 
 $$
 \hat{w} - w = \hla{s}\left(\operatorname{round}\!\left(\frac{w}{\hla{s}}\right)
@@ -205,10 +268,10 @@ The bound ==doesn't depend on the magnitude of $w$==. A fixed-point format
 spends the same absolute precision on a weight of 0.001 as on a weight of 3.0,
 which is exactly what makes outliers so damaging.
 
-For the expected error rather than the worst case, model the residual as
+The bound is the worst case. For the typical error, model the residual as
 uniform on $[-\hla{s}/2, \hla{s}/2]$. A uniform variable on an interval of width
-$\hla{s}$ has variance $\hla{s}^2/12$, so the root-mean-square error per weight
-is the following:
+$\hla{s}$ has variance $\hla{s}^2/12$, so the root-mean-square (RMS) error per
+weight is the following:
 
 $$
 \sigma_{\text{err}} = \frac{\hla{s}}{\sqrt{12}}
@@ -216,11 +279,14 @@ $$
 
 ## What the bound predicts
 
-The bound predicts the error of a Gaussian block before you run anything. Take a
-block of $\hlc{n}$ weights drawn from $\mathcal{N}(0, \sigma^2)$. That's
-what the lab uses, and it's a fair first approximation to a trained layer. The
-block's scale is set by its largest magnitude, and for $\hlc{n}$ independent
-normals the expected maximum grows as follows:
+With the RMS error in hand, you can predict the error of a block of weights
+before you run anything. Take a block of $\hlc{n}$ weights drawn from
+$\mathcal{N}(0, \sigma^2)$, a normal distribution with standard deviation
+$\sigma$. That's what the lab uses, and it's a fair first approximation to a
+trained layer.
+
+The block's scale is set by its largest magnitude. For $\hlc{n}$ independent
+normals, the expected maximum grows as follows:
 
 $$
 \mathbb{E}\left[\max_i |w_i|\right] \approx \sigma\sqrt{2\ln(2\hlc{n})}
@@ -236,8 +302,9 @@ $$
 }
 $$
 
-The following table evaluates it for the three granularities on the lab's
-`(512, 1024)` weight:
+In words: the more weights share a scale, the larger their maximum tends to be,
+and the coarser the step. The following table evaluates it for the three
+granularities on the lab's `(512, 1024)` weight:
 
 | Granularity | $n$ per scale | $\sqrt{2\ln 2n}$ | Predicted $\varepsilon$ |
 |---|---|---|---|
@@ -260,9 +327,24 @@ Three things follow:
 
 ## Why per-tensor scaling collapses
 
-A single outlier ruins every weight that shares its scale. Trained weight
-matrices contain a small number of entries far outside the bulk distribution,
-and one of them sets $\hld{\beta}$ for everything that shares its scale.
+Real weights break the Gaussian picture in one specific way: trained weight
+matrices contain a small number of entries far outside the bulk distribution.
+==A single outlier ruins every weight that shares its scale==, because it sets
+$\hld{\beta}$ for all of them.
+
+Go back to the four-weight example and make the last weight ten times larger,
+$-12.7$. The scale becomes $\hla{s} = 12.7/127 = 0.1$:
+
+| Weight $w$ | $w/\hla{s}$ | Stored $q$ | Dequantized | Error |
+|---|---|---|---|---|
+| 0.834 | 8.34 | 8 | 0.8 | 0.034 |
+| $-0.301$ | $-3.01$ | $-3$ | $-0.3$ | 0.001 |
+| 0.027 | 0.27 | 0 | 0 | 0.027 |
+| $-12.7$ | $-127$ | $-127$ | $-12.7$ | 0 |
+
+The outlier itself is exact. But the small weight 0.027 is gone entirely, and
+the error on 0.834 grew from 0.004 to 0.034. The lab's outlier case is the same
+effect at full size.
 
 > [!EXAMPLE] One outlier of 500 in the lab's matrix
 > The lab's outlier case is a `(512, 1024)` matrix of standard normals with a
@@ -280,7 +362,7 @@ and one of them sets $\hld{\beta}$ for everything that shares its scale.
 > P(|w| < 1.969) = 2\Phi(1.969) - 1 = 0.951
 > $$
 
-==95% of the matrix is replaced by zeros==. The remaining 5% is quantized to
+So 95% of the matrix is replaced by zeros. The remaining 5% is quantized to
 $\pm 1$ or $\pm 2$, which is three or four distinct levels for the entire
 distribution.
 
@@ -300,8 +382,8 @@ arithmetic is that you can predict the collapse rather than discover it.
 
 ## Per-channel and group-wise scaling
 
-The fix is to shrink the set of weights that share a scale. There are two
-standard granularities:
+If one outlier damages everything that shares its scale, the fix is to shrink
+the set of weights that share a scale. There are two standard granularities:
 
 - **Per channel.** One scale per output row. In a linear layer, each output row
   produces one output feature independently, so a row with an outlier damages
@@ -329,8 +411,8 @@ def quantize_per_group(weight, group_size=128):
 
 ### The metadata cost of a group size
 
-Storing a scale costs bytes too. With int8 weights and 2-byte scales, the bytes
-per weight are the following:
+Smaller groups mean more scales, and storing a scale costs bytes too. With int8
+weights and 2-byte scales, the bytes per weight are the following:
 
 $$
 \boxed{b(\hlc{g}) = 1 + \frac{2}{\hlc{g}}}
@@ -377,19 +459,22 @@ of the outliers:
 
 ## Weight-only against weight-and-activation
 
-Which scheme helps depends entirely on which roof you're under. There are two
-schemes:
+So far you've quantized weights. You can also quantize *activations*, the
+values flowing between layers, and which scheme helps depends entirely on which
+roof you're under. There are two schemes:
 
 - **Weight-only (W8A16).** Store weights in int8. Read them, dequantize to
   bfloat16 in registers, and do a bfloat16 matmul against bfloat16 activations.
   The arithmetic never becomes integer arithmetic.
 - **Weight-and-activation (W8A8).** Quantize activations too, and do the matmul
-  with int8 inputs and int32 accumulation on the tensor cores.
+  with int8 inputs and int32 accumulation on the tensor cores, the GPU's
+  matrix-multiply units.
 
 ### Decode time halves
 
-A decode step at batch 1 reads every weight once and does two FLOPs per weight.
-The bytes dominate, so the time is the weight bytes over the bandwidth:
+Decode is where weight-only quantization pays off. A decode step at batch 1
+reads every weight once and does two FLOPs per weight. The bytes dominate, so
+the time is the weight bytes over the bandwidth:
 
 $$
 t_{\text{decode}} \approx \frac{\text{weight bytes}}{\text{bandwidth}}
@@ -415,9 +500,9 @@ The remaining 1.6% of the gap from a clean factor of two is the scales.
 
 ### Dequantization is free
 
-The obvious objection is that you added work. Per weight, the kernel now reads 1
-byte, does 1 multiply to dequantize, and does 2 FLOPs for the multiply-add.
-That's 3 FLOPs per byte.
+You might object that you added work. Per weight, the kernel now reads 1 byte,
+does 1 multiply to dequantize, and does 2 FLOPs for the multiply-add. That's 3
+FLOPs per byte.
 
 The ridge point is 161 FLOPs per byte. At 3, the kernel is memory bound by a
 factor of 54, so the arithmetic finishes long before the next bytes arrive, and
@@ -444,10 +529,11 @@ reasons the next sections give.
 
 ## What Ampere's int8 tensor cores do
 
-Ampere's tensor cores have an integer mode. The `mma` instruction takes int8
-operands for both matrices, multiplies them, and accumulates into int32. The
-published integer rate on the A100 is higher than its bfloat16 rate, which is
-why W8A8 is attractive for prefill.
+W8A8 is attractive for prefill, so it's worth knowing exactly what the hardware
+offers. Ampere's tensor cores have an integer mode. The `mma` (matrix
+multiply-accumulate) instruction takes int8 operands for both matrices,
+multiplies them, and accumulates into int32. The published integer rate on the
+A100 is higher than its bfloat16 rate.
 
 To use it, the matmul must be expressible entirely in integers. Write the
 activation as $x_k = \hla{s_x} q_{x,k}$, with a per-tensor activation scale
@@ -489,11 +575,13 @@ the activation difficulty.
 
 ## Ampere has no FP8
 
-FP8 suits the outlier problem well, but the A100 can't compute in it. FP8
-spends bits on an exponent, so its precision is relative rather than absolute: a
-value ten times larger gets the same number of significant digits, not ten times
-worse. The `e4m3` variant has three mantissa bits, so with the implicit leading
-one it gives eight steps per octave and a worst-case relative rounding error of
+FP8 would suit the outlier problem well, but the A100 can't compute in it.
+Recall the formats table: FP8 spends bits on an exponent, so its precision is
+relative rather than absolute. A value ten times larger gets the same number of
+significant digits, not ten times worse.
+
+The `e4m3` variant has three mantissa bits. With the implicit leading one, that
+gives eight steps per octave and a worst-case relative rounding error of
 $2^{-4} = 6.25\%$ at every magnitude. An outlier costs an exponent increment,
 not the mantissa of every other value in its block.
 
@@ -519,14 +607,13 @@ useful on an H100 and not here.
 
 ## Activation outliers
 
-Weight quantization is the easy half. Transformer activations contain outliers
-up to 100 times the typical magnitude, concentrated in a small number of
-channels, and the same channels are outliers for every token. That's why
-activation quantization is much harder, and why weight-only schemes are the
-common choice.
+If W8A8 is so attractive, why is weight-only the common choice? Because
+activations are much harder to quantize than weights. Transformer activations
+contain outliers up to 100 times the typical magnitude, concentrated in a small
+number of channels, and the same channels are outliers for every token.
 
-The structure makes it tractable: ==the outliers are per channel, not
-scattered==. Two methods exploit that.
+That structure makes the problem tractable: ==the outliers are per channel, not
+scattered==. Two methods exploit it.
 
 **SmoothQuant** moves the difficulty from activations into weights. For a linear
 layer $y = xW$, insert a diagonal matrix and its inverse:
@@ -555,9 +642,10 @@ the weights alone.
 
 ## Calibration
 
-Weight-only quantization is data-free: the range of a weight tensor is a
-property of the tensor. Activation quantization isn't, because you can't know
-the range of an activation without running data through the model.
+Activation quantization needs a step that weight quantization doesn't. Weight
+quantization is data-free: the range of a weight tensor is a property of the
+tensor. You can't know the range of an activation without running data through
+the model.
 
 *Calibration* finds that range. Run a few hundred representative sequences,
 record per-channel activation statistics, and derive the scales.
@@ -585,9 +673,10 @@ the scales are wrong in a way no perplexity check on English reveals.
 
 ## Quantizing the KV cache
 
-Quantizing the cache halves it, but keys and values need different treatment.
-The cache matters at long context and large batch, where the cache read starts
-to rival the weight read.
+The *KV cache* holds each past token's attention keys and values, so decode
+doesn't recompute them. Quantizing it halves it, but keys and values need
+different treatment. The cache matters at long context and large batch, where
+the cache read starts to rival the weight read.
 
 > [!EXAMPLE] The cache at int8, per token
 > This model spends 64 KiB per token on KV cache:
@@ -611,11 +700,13 @@ to rival the weight read.
 ### Why keys tolerate it worse than values
 
 Keys and values enter attention at different places, so their errors propagate
-differently.
+differently. Keys decide *which* tokens a head attends to, and values are
+*what* it reads from them.
 
 **Keys feed a softmax, so their error is exponentiated.** The score for key $j$
-is $\ell_j = q^{\top} k_j / \sqrt{d}$. Perturb the key by $e_j$, with each
-element an independent rounding residual of variance $\hla{s_k}^2/12$:
+is $\ell_j = q^{\top} k_j / \sqrt{d}$, where $q$ is the query and $d$ the head
+dimension. Perturb the key by $e_j$, with each element an independent rounding
+residual of variance $\hla{s_k}^2/12$:
 
 $$
 \Delta \ell_j = \frac{q^{\top} e_j}{\sqrt{d}},
@@ -667,9 +758,10 @@ attends to:
 
 ## The model at three precisions
 
-At full model scale, quantization buys both time and memory. The weights are
-53.8 GB in bfloat16, which is $53.8 \times 10^9 / 2 = 26.9 \times 10^9$
-parameters. Apply $b(\hlc{g})$ with $\hlc{g} = 128$:
+Now scale everything up to the whole model: quantization buys both time and
+memory. The weights are 53.8 GB in bfloat16, which is
+$53.8 \times 10^9 / 2 = 26.9 \times 10^9$ parameters. Apply $b(\hlc{g})$ with
+$\hlc{g} = 128$:
 
 | Precision | Bytes per weight | Weight size | Decode floor at 1275 GB/s |
 |---|---|---|---|
@@ -681,8 +773,8 @@ The int4 row is $26.9 \times 10^9 \times (0.5 + 2/128) = 13.87 \times 10^9$
 bytes. The speedups against bfloat16 are 1.97 and 3.87.
 
 The memory freed matters as much as the speedup. Moving to int8 returns
-$53.8 - 27.3 = 26.5$ GB of HBM. At 64 KiB per token, that's this much more KV
-cache:
+$53.8 - 27.3 = 26.5$ GB of HBM, the GPU's main memory. At 64 KiB per token,
+that's this much more KV cache:
 
 $$
 \frac{26.5 \times 10^{9}}{65536} \approx 404{,}000 \text{ tokens}
@@ -712,17 +804,20 @@ weight error.
 
 ## Measuring the damage
 
-Weight error is a proxy. What matters is the model's output. Use three checks,
-in increasing order of cost and usefulness:
+Weight error is a proxy. What matters is the model's output, so this section
+covers how to check it. Use three checks, in increasing order of cost and
+usefulness:
 
 1. **Layer output error.** Run one layer with and without quantization on the
    same input and compare. It's fast, and it localizes the damage. This is what
    the lab checks last: `x @ dequantize(q, s, 128).T` against `x @ weight.T`,
    with a 1% threshold on the relative norm of the difference.
-2. **Logit correlation.** Run a full forward pass on a few prompts. Correlation
+2. **Logit correlation.** Run a full forward pass on a few prompts and compare
+   the *logits*, the model's raw scores for every vocabulary token. Correlation
    must stay above 0.999, and top-1 agreement above 0.98.
-3. **Perplexity on held-out text.** This is the real measure. An increase of
-   more than about 1% means the scheme is too aggressive.
+3. **Perplexity on held-out text.** *Perplexity* measures how surprised the
+   model is by real text, and it's the real measure. An increase of more than
+   about 1% means the scheme is too aggressive.
 
 ==Doing only the first check is how broken quantization schemes ship==.
 

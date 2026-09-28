@@ -2,63 +2,148 @@
 title: The roofline
 slug: 10-roofline
 part: "Part 3 — Making it fast"
-summary: Deciding whether an operation is limited by arithmetic or by memory, and deriving every number that decides it.
-minutes: 90
+summary: Deciding whether an operation is limited by arithmetic or by memory, from a picture you can sketch on a napkin to every number that decides it.
+minutes: 110
 gpu: true
 objectives:
+  - Sketch the roofline and place an operation on it.
   - Derive the ridge point from a GPU's two peak rates.
   - Derive arithmetic intensity for the MLP, attention, RMSNorm, and the embedding.
   - Say where the "intensity is roughly T" approximation holds and where it fails.
   - Predict whether prefill or decode limits a given workload.
   - Use measured bandwidth to tell a slow kernel from a memory-bound one.
-  - Quantify what kernel launch overhead and low occupancy cost a decode step.
+  - Quantify what kernel launch overhead and idle SMs cost a decode step.
 lab: 10-roofline
 ---
 
 # The roofline
 
 > [!TLDR]
-> - An operation's runtime floor is the larger of its compute time and its
->   memory time. Its *arithmetic intensity*, FLOPs per byte, against the A100's
->   ridge point of 161 says which one wins.
-> - The MLP's intensity is roughly the number of tokens in the pass, so decode at
->   batch 1 is memory bound by 161x and a 2048-token prefill is compute bound.
-> - Decode attention's intensity is the GQA group size, 6, at every context
->   length and every batch size. RMSNorm's is 1 and the embedding's is 0.
-> - Judge a memory-bound kernel against the measured 1275 GB/s copy, not the
->   1935 GB/s rating.
-> - Launch overhead and low occupancy sit outside the roofline, and at batch 1
->   they dominate decode.
+> - Every operation waits on one of two things: arithmetic or memory traffic.
+>   Whichever takes longer sets a floor under its runtime, and one ratio,
+>   FLOPs per byte moved, tells you which it is.
+> - The MLP gets more work out of each byte as more tokens share one read of its
+>   weights. Generating one token at a time leaves the GPU's arithmetic more than
+>   99% idle; a long prompt keeps it busy.
+> - Attention during decode waits on memory at every context length and every
+>   batch size. RMSNorm and the embedding lookup do even less arithmetic per
+>   byte. For all three, the only fix is to move fewer bytes.
+> - Judge a memory-bound kernel against the speed a plain copy really reaches on
+>   the card, 1275 GB/s, not the 1935 GB/s on the spec sheet.
+> - At batch 1, two costs the roofline doesn't model dominate decode: starting
+>   hundreds of small kernels, and leaving most of the GPU's processors idle.
 
 Before you optimize anything, decide what limits it. The roofline model answers
 that with one number per operation, and it's usually right.
 
 The model is worth taking seriously because of what it rules out. If an
-operation is memory bound by a factor of ten, ==no amount of better arithmetic
-helps==: not a faster algorithm, not tensor cores, not a lower-precision matmul.
-The only moves that work are moving fewer bytes, or moving them from a closer
-place. Knowing which case you're in saves weeks.
+operation is waiting on memory by a factor of ten, ==no amount of better
+arithmetic helps==: not a faster algorithm, not tensor cores, not a
+lower-precision matmul. The only moves that work are moving fewer bytes, or
+moving them from a closer place. Knowing which case you're in saves weeks.
+
+This chapter starts with the picture, then derives where each operation in the
+model sits on it, and ends with two costs the picture leaves out.
 
 ## Before you start
 
-- **The GPU vocabulary from
-  [chapter 0a](/c/00a-notation-and-prerequisites).** SM, warp, HBM, L2,
-  coalescing, and occupancy.
-- **FLOP counting for a matmul.** An $(m, k)$ by $(k, n)$ product computes $mn$
-  outputs, each a sum of $k$ products: $mkn$ multiplies and about $mkn$ adds, so
-  $2mkn$ FLOPs. That factor of 2 is the only convention here, and every number
-  in this chapter uses it.
+- **GPU vocabulary from
+  [chapter 0a](/c/00a-notation-and-prerequisites).** *HBM* is the GPU's main memory,
+  where the weights and the KV cache live. An *SM*, or streaming multiprocessor,
+  is one of the GPU's 108 independent processors. The *L2 cache* is a 40 MB
+  buffer between the SMs and HBM. A *warp* is 32 threads that execute together,
+  and *coalescing* is what happens when a warp's 32 reads fall on neighboring
+  addresses and merge into a few wide transfers.
+- **FLOP counting for a matmul.** A *FLOP* is one floating-point operation, an
+  add or a multiply, and *FLOP/s* counts them per second. An $(m, k)$ by
+  $(k, n)$ product computes $mn$ outputs, each a sum of $k$ products. That's
+  $mkn$ multiplies and about $mkn$ adds, so $2mkn$ FLOPs. That factor of 2 is
+  the only convention here, and every number in this chapter uses it.
 - **The geometry and memory arithmetic from
   [chapter 2](/c/02-memory-arithmetic).**
 - **The idea of a lower bound.** Nothing here predicts a runtime. Everything here
   produces a floor that no implementation can go below.
 
+## Picture the roofline
+
+This section gives you the picture that the rest of the chapter puts numbers on.
+Once you can sketch it, you can see why decode and prefill behave so differently.
+
+Think of a kitchen with fast cooks and one narrow delivery door. Every dish
+needs ingredients carried through the door, the bytes, and chopping, the FLOPs:
+
+- **A crate of ingredients for a little chopping.** The cooks stand at the door
+  waiting. Faster cooks change nothing; only a wider door, or fewer
+  ingredients, helps.
+- **Hours of chopping for a handful of ingredients.** The door sits idle. Now
+  faster cooks help, and a wider door doesn't.
+
+What separates the two is one ratio: work per ingredient. On a GPU, that ratio
+is FLOPs per byte moved, and it's called *arithmetic intensity*.
+
+### The plot
+
+Put arithmetic intensity on the horizontal axis and the throughput an operation
+can reach, in FLOP/s, on the vertical axis. Both axes are logarithmic. The
+following sketch isn't to scale, but the shape is exact:
+
+```text
+ attainable FLOP/s (log scale)
+
+                          ridge point: 161 FLOPs per byte
+                          |
+312 TFLOP/s - - - - - - - o==================o====   flat roof: peak arithmetic
+                         /                     prefill MLP, 1899
+                       /
+                     /
+                   /   <- slanted roof: bandwidth x intensity
+                 /
+               o   decode attention, 6
+             /
+           /
+         o   RMSNorm and decode MLP, 1
+       /
+      +-------------------------------------------->  arithmetic intensity
+                                                      (FLOPs per byte, log scale)
+```
+
+Read it from left to right:
+
+1. **The slanted part.** The cooks wait at the door. Each byte that arrives
+   unlocks a fixed amount of work, so throughput is bandwidth times intensity:
+   double the FLOPs per byte and you double the throughput.
+2. **The bend.** The bytes arrive exactly as fast as the arithmetic can use
+   them. That's the *ridge point*, 161 FLOPs per byte on this course's A100.
+3. **The flat part.** The arithmetic units are the limit. More FLOPs per byte
+   buys nothing, because throughput is already at the GPU's peak.
+
+Seen from the side, the two lines look like a roof, which is where the name
+comes from. An operation left of the ridge is *memory bound*; right of it,
+*compute bound*.
+
+The sketch places the model's operations, and the chapter derives each one:
+
+| Operation | FLOPs per byte | Side of the ridge |
+|---|---|---|
+| Embedding lookup | 0 | Memory |
+| RMSNorm | 1 | Memory |
+| MLP, one token (decode at batch 1) | 1.0 | Memory |
+| Attention during decode | 6 | Memory |
+| MLP, 2048 tokens (prefill) | 1899 | Compute |
+
+The embedding, at 0, falls off the left edge of a log axis: it has no arithmetic
+at all. Nearly everything else sits on the slanted part. Next, you turn the sketch into two
+formulas.
+
 ## The two rates and the ridge point
 
-An operation stops waiting on memory once it does enough FLOPs per byte, and two
-rates set that threshold: arithmetic, $\hla{C}$ FLOPs per second, and memory
-bandwidth, $\hlb{\beta}$ bytes per second. The A100 80GB PCIe card has the
-following figures:
+This section derives the ridge point, the intensity where an operation stops
+waiting on memory. Two rates set it: arithmetic, $\hla{C}$ FLOPs per second, and
+memory bandwidth, $\hlb{\beta}$ bytes per second.
+
+The A100 80GB PCIe card has the following figures. *Tensor cores* are the
+units inside each SM that do matrix multiplies, and they're where the peak
+arithmetic rate comes from:
 
 | Quantity | Value | Source |
 |---|---|---|
@@ -77,7 +162,19 @@ following figures:
 
 ### Two floors, one ceiling
 
-An operation does $F$ FLOPs and moves $B$ bytes. Each rate sets its own floor:
+Start with a tiny case. Suppose an operation reads 1 GB and does 1 GFLOP of
+arithmetic:
+
+- **Memory time.** $10^{9}$ bytes at $1.935 \times 10^{12}$ bytes per second is
+  0.517 ms.
+- **Compute time.** $10^{9}$ FLOPs at $312 \times 10^{12}$ FLOP/s is 3.2 µs.
+
+The operation can't finish before its bytes arrive, so it takes at least
+0.517 ms, with the arithmetic idle over 99% of that time. Balancing the two
+would take 161 times as many FLOPs for the same bytes.
+
+Now the general case. An operation does $F$ FLOPs and moves $B$ bytes, and each
+rate sets its own floor:
 
 $$
 t_{\text{compute}} = \frac{F}{\hla{C}}, \qquad t_{\text{memory}} = \frac{B}{\hlb{\beta}}
@@ -97,9 +194,9 @@ $$
 P = \frac{F}{t} = \min\!\left(\hla{C},\; \hlb{\beta}\,\hlc{I}\right)
 $$
 
-That's the roofline: a flat ceiling at $\hla{C}$, and a slanted ceiling of slope
-$\hlb{\beta}$ that the operation climbs as its intensity rises. The two meet where
-$\hlb{\beta}\hlc{I} = \hla{C}$:
+That's the plot as a formula: a flat ceiling at $\hla{C}$, and a slanted
+ceiling $\hlb{\beta}\hlc{I}$ that rises with intensity. The ridge point is
+where they meet, $\hlb{\beta}\hlc{I} = \hla{C}$:
 
 $$
 \boxed{I^{\ast} = \frac{\hla{C}}{\hlb{\beta}} = \frac{312 \times 10^{12}}{1.935 \times 10^{12}} = 161.2\ \text{FLOPs/byte}}
@@ -112,7 +209,7 @@ $$
 
 ### The ridge point moves with the rates
 
-The ridge point is a property of the pair of rates, not of the hardware alone.
+The ridge point belongs to the pair of rates, not to the hardware alone.
 Change either rate and it moves:
 
 | Compute | Bandwidth | Ridge point |
@@ -123,8 +220,8 @@ Change either rate and it moves:
 
 The measured row is the honest one for judging a real kernel, and it makes the
 problem worse. Against achievable bandwidth, ==an operation needs 245 FLOPs per
-byte== before compute is the limit, so even more of the model sits on the memory
-side than the headline 161 suggests.
+byte== before compute is the limit. So even more of the model sits on the
+memory side than the headline 161 suggests.
 
 The following function computes the floor in milliseconds:
 
@@ -140,7 +237,8 @@ prediction; it's the direction it points and the moment it tells you to stop.
 
 ## Why measured bandwidth is 66% of rated
 
-Even a perfect copy reaches only two thirds of the rating. A device-to-device
+Which bandwidth you divide by decides whether a kernel looks finished or
+broken, so this section explains the gap. Even a perfect copy reaches only two thirds of the rating. A device-to-device
 copy is the simplest bandwidth-bound kernel there is: read a word, write it, no
 arithmetic, perfectly coalesced, no reuse. On this card it measures 1275 GB/s
 against a rating of 1935, which is 66%. The first reason is pure accounting.
@@ -153,19 +251,25 @@ against a rating of 1935, which is 66%. The first reason is pure accounting.
 
 This rule applies to every roofline in this chapter, and getting it wrong is the
 most common way to misjudge a kernel. The repository's hand-written CUDA vector
-add measures 1304 GB/s on the same card, which looks identical to the copy. It's
-only identical because both numbers count total traffic: the vector add reads
-two arrays and writes one, so its byte count is $3N$, not $N$. Under the same
-accounting the two kernels agree, which is the correct conclusion: a vector add
-has nothing for a hand-written kernel to beat.
+add measures 1304 GB/s on the same card, which looks identical to the copy.
+
+It's only identical because both numbers count total traffic. The vector add
+reads two arrays and writes one, so its byte count is $3N$, not $N$. Under the
+same accounting the two kernels agree, which is the correct conclusion: a vector
+add has nothing for a hand-written kernel to beat.
 
 The second reason is that **the rating is a pin rate**: memory clock times bus
-width, assuming the bus never idles. A real access stream pays for DRAM refresh,
-for row activation and precharge whenever an access misses the open row, and for
-turning the bus around between reads and writes. A copy alternates reads and
-writes continuously, close to the worst case for turnaround, with no arithmetic
-to hide any of it. So 1275 GB/s is the ceiling a bandwidth-bound kernel can reach
-on this card, and it's the number to measure against:
+width, assuming the bus never idles. A real access stream pays for several
+things the rating ignores:
+
+- DRAM refresh.
+- Row activation and precharge, whenever an access misses the open row.
+- Turning the bus around between reads and writes.
+
+A copy alternates reads and writes continuously, close to the worst case for
+turnaround, with no arithmetic to hide any of it. So 1275 GB/s is the ceiling a
+bandwidth-bound kernel can reach on this card, and it's the number to measure
+against:
 
 ```python
 achieved_gbs = bytes_moved / (elapsed_s * 1e9)
@@ -185,14 +289,27 @@ the rating. Quoting the second number makes a good kernel look broken.
 
 ## The MLP
 
-The MLP's intensity tracks the number of tokens in the pass. Take one SwiGLU
-block with hidden size $h = 5120$ and intermediate size $i = 17408$, processing
-$T$ tokens in one forward pass. Write $e = 2$ for bytes per element in bfloat16.
+This section shows why the MLP's intensity tracks the number of tokens in the
+pass, which is the single fact that explains batching.
+
+The MLP here is a *SwiGLU* block: two matmuls side by side, *gate* and *up*,
+combined elementwise, then a third, *down*. Take one block with the following
+sizes:
+
+- Hidden size $h = 5120$, the width of each token's vector.
+- Intermediate size $i = 17408$, the width inside the block.
+- $T$ tokens processed together in one forward pass.
+- $e = 2$ bytes per element, for bfloat16, the 16-bit floating-point format
+  the weights are stored in.
+
+In *prefill*, the engine processes a whole prompt in one pass, so $T$ is the
+prompt length. In *decode*, it generates one token per sequence per pass, so at
+batch 1, $T = 1$.
 
 ### FLOPs and bytes
 
 The block runs three matmuls. Gate and up are each $(T, h) \times (h, i)$, and
-down is $(T, i) \times (i, h)$:
+down is $(T, i) \times (i, h)$. Add their FLOPs:
 
 $$
 F = \underbrace{2Thi}_{\text{gate}} + \underbrace{2Thi}_{\text{up}} + \underbrace{2Tih}_{\text{down}} = 6Thi
@@ -244,7 +361,13 @@ $$
 > grow to rival the weights at $T \approx \hld{26112}$.
 
 The approximation is good exactly when $T \ll \hld{26112}$. Its relative error
-is $T / 26112$: 0.004% at $T = 1$, 0.06% at $T = 16$, and 7.8% at $T = 2048$.
+is $T / 26112$:
+
+| Tokens $T$ | Relative error |
+|---|---|
+| 1 | 0.004% |
+| 16 | 0.06% |
+| 2048 | 7.8% |
 
 ### Where the approximation fails
 
@@ -265,19 +388,21 @@ below" rather than "intensity is $T$."
 
 **The intermediate tensor.** The derivation assumes the $(T, i)$ gate and up
 outputs never reach HBM. At small $T$ that's nearly true: they fit in the 40 MB
-L2, and a fused kernel keeps them in registers or shared memory. At $T = 4096$
-each one is $4096 \times 17408 \times 2 = 143$ MB, 3.6 times the L2 on its own,
-and SwiGLU holds two at once, so they spill. Counting them honestly adds $4Tie$
-bytes, two written and two read:
+L2, and a fused kernel keeps them in registers or shared memory, the on-chip
+storage inside each SM.
+
+At $T = 4096$ each one is $4096 \times 17408 \times 2 = 143$ MB, 3.6 times the
+L2 on its own, and SwiGLU holds two at once, so they spill. Counting them
+honestly adds $4Tie$ bytes, two written and two read:
 
 $$
 \hlc{I}_{\text{spilled}}(T) = \frac{6Thi}{3hi\,e + 2The + 4Tie}
 $$
 
-At $T = 4096$ that's 1842 instead of 3540, a little over half. The operation is still
-compute bound, so the verdict doesn't change, but the *floor* does. Chapter 13
-measures this effect: fusing SwiGLU gives a 1.52x speedup, and the byte count
-predicts it only once the intermediate stops fitting in L2.
+At $T = 4096$ that's 1842 instead of 3540, a little over half. The operation is
+still compute bound, so the verdict doesn't change, but the *floor* does.
+Chapter 13 measures this effect: fusing SwiGLU gives a 1.52x speedup, and the
+byte count predicts it only once the intermediate stops fitting in L2.
 
 ### The table that explains the engine
 
@@ -300,16 +425,28 @@ The following table uses the exact $\hlc{I}(T)$ and a ridge point of 161.2:
 Continuous batching ([chapter 16](/c/16-continuous-batching)) and chunked
 prefill exist to do exactly that, and this table is why.
 
+The MLP gains from batching because the batch shares its weights. Next, you see
+an operation where nothing is shared.
+
 ## Attention during decode
 
-Decode attention's intensity is a constant that neither context length nor
-batching can move. The MLP reads weights that the whole batch shares; attention
-reads a KV cache that is *per sequence*, so batching doesn't raise its intensity
-at all.
+This section shows that decode attention's intensity is a constant that neither
+context length nor batching can move.
 
-Take one decode step, one full-attention layer, and one sequence at context
-length $L$. The model has query heads $H = 24$, KV heads $H_{kv} = 4$, and head
-dimension $d = 256$.
+Each new token's query attends to the keys and values of every earlier token,
+which the engine stores in the *KV cache*. The MLP reads weights that the whole
+batch shares; attention reads a cache that is *per sequence*, so batching
+doesn't raise its intensity at all.
+
+The model uses *grouped-query attention* (GQA), where several query heads share
+one key-value head. Take one decode step, one full-attention layer, and one
+sequence at context length $L$:
+
+- Query heads $H = 24$.
+- KV heads $H_{kv} = 4$, so each KV head serves a group of $24 / 4 = 6$ query
+  heads.
+- Head dimension $d = 256$, the width of one head's query, key, or value
+  vector.
 
 **FLOPs.** The query is a single token. Per query head, the scores are a
 $(1, d)$ by $(d, L)$ matmul, and applying the weights to the values is a
@@ -348,7 +485,8 @@ cancellation:
   and $B$ scale with the batch and the ratio doesn't move. This is the sharpest
   contrast with the MLP, whose whole improvement with batch size came from
   sharing one weight read.
-- **The dtype matters, and it's the only lever in the formula.** Quantizing the
+- **The dtype, the cache's number format, matters, and it's the only lever in
+  the formula.** Quantizing the
   cache to int8 sets $e = 1$ and doubles intensity to 12. Raising $H_{kv}$ to
   24, which is plain multi-head attention, drops it to 1, six times worse. That's
   the whole argument for grouped queries.
@@ -378,20 +516,26 @@ fewer bytes: grouped queries, paged storage, and quantized caches.
 
 ## RMSNorm
 
-RMSNorm sits at an intensity of 1 at every size. Every layer runs two of these,
-and the final norm makes 129 in the model. They look free and aren't:
+This section shows that RMSNorm sits at an intensity of 1 at every size, so its
+cost is pure memory traffic.
+
+*RMSNorm* rescales each token's vector so that its root-mean-square is 1, then
+multiplies by a learned gain $g$. Every layer runs two of these, and the final
+norm makes 129 in the model. They look free and aren't:
 
 $$
 y = \frac{x}{\sqrt{\frac{1}{h}\sum_{j=1}^{h} x_j^{2} + \epsilon}} \odot g
 $$
 
+Count the work and the traffic for one row, one token's $h$ values:
+
 - **FLOPs per row.** The sum of squares is $h$ multiplies and $h$ adds. Then
   one reciprocal square root, $h$ multiplies to scale, and $h$ multiplies by the
-  weight $g$. That's $4h + O(1)$ FLOPs per row, so $4Th$ for $T$ rows. Running
+  gain $g$. That's $4h + O(1)$ FLOPs per row, so $4Th$ for $T$ rows. Running
   the reduction in float32 while $x$ is bfloat16, which
   [chapter 4](/c/04-rmsnorm-and-residuals) requires for accuracy, changes none of
   this: the same operations happen in a wider accumulator.
-- **Bytes per row.** Read $x$, $he$ bytes, and write $y$, $he$ bytes. The weight
+- **Bytes per row.** Read $x$, $he$ bytes, and write $y$, $he$ bytes. The gain
   $g$ is $he$ bytes read once for the whole launch, amortized to nothing over $T$
   rows. That's $2The$, or $4Th$ in bfloat16.
 
@@ -418,14 +562,16 @@ repository measures:
 
 The compute floor is 160 times below the memory floor, so nothing about the
 arithmetic is worth touching. The only lever is the 83.9 MB, and the only way to
-shrink it is to ==stop writing the output to HBM at all==. Fusing the norm with the
-residual add and with the next matmul does that. Chapter 13 does it and measures
-1.10x past L2 and 0.92x within it.
+shrink it is to ==stop writing the output to HBM at all==.
+
+Fusing the norm with the residual add that precedes it, and with the next
+matmul, does that.
+Chapter 13 does it and measures 1.10x past L2 and 0.92x within it.
 
 ## The embedding lookup
 
-The first operation in the forward pass is a gather, the degenerate case of an
-operation with no arithmetic:
+This section covers the first operation in the forward pass, a gather: the
+degenerate case of an operation with no arithmetic at all.
 
 - **FLOPs: zero.** An embedding lookup is `table[input_ids]`. It computes
   nothing.
@@ -447,11 +593,11 @@ The embedding is noise, but the reasons it's noise tell you when it stops being
 noise:
 
 - **The gather coalesces well here.** Each row of the table is
-  $5120 \times 2 = 10{,}240$ contiguous bytes, 80 whole cache lines. A warp
-  reading one row reads sequentially and wastes nothing, however scattered the
-  token IDs are: the gather is random at row granularity and sequential within a
-  row. At a hidden size of 128, each row would be 256 bytes, and the random
-  component would start to dominate.
+  $5120 \times 2 = 10{,}240$ contiguous bytes, 80 whole 128-byte cache lines. A
+  warp reading one row reads sequentially and wastes nothing, however scattered
+  the token IDs are: the gather is random at row granularity and sequential
+  within a row. At a hidden size of 128, each row would be 256 bytes, and the
+  random component would start to dominate.
 - **There's no reuse to exploit.** The table is
   $248{,}320 \times 5120 \times 2 = 2.54$ GB, sixty-three times the 40 MB L2, so
   nothing stays resident between forward passes. The one exception is
@@ -462,16 +608,22 @@ noise:
 ## Kernel launch overhead
 
 The roofline assumes the GPU is busy, and at batch 1 it often isn't. This
-section and the next cover the two ways. Launching a kernel costs 5 to 10 microseconds end to end. A forward pass is a
-single stream of data-dependent kernels, so those costs serialize: kernel $j+1$
-can't start before kernel $j$ finishes and the launch for $j+1$ is processed.
+section and the next cover the two ways it goes idle.
+
+A *kernel* is one function the GPU runs, and *launching* it means the CPU
+handing it to the GPU to start. Each launch costs 5 to 10 microseconds end to
+end. A forward pass is a single stream of data-dependent kernels, so those costs
+serialize: kernel $j+1$ can't start before kernel $j$ finishes and the launch for
+$j+1$ is processed.
 
 Put numbers on a decode step at batch 1, with $N = 26.9$ billion parameters and
 2 FLOPs each. The two floors are as follows:
 
 $$
-t_{\text{compute}} = \frac{2N}{\hla{C}} = \frac{53.8 \times 10^{9}}{312 \times 10^{12}} = 0.172\ \text{ms}, \qquad
-t_{\text{memory}} = \frac{53.8\ \text{GB}}{1935\ \text{GB/s}} = 27.8\ \text{ms}
+\begin{aligned}
+t_{\text{compute}} &= \frac{2N}{\hla{C}} = \frac{53.8 \times 10^{9}}{312 \times 10^{12}} = 0.172\ \text{ms} \\[4pt]
+t_{\text{memory}} &= \frac{53.8\ \text{GB}}{1935\ \text{GB/s}} = 27.8\ \text{ms}
+\end{aligned}
 $$
 
 A decode step runs several hundred kernels; take 400. The following table prices
@@ -500,12 +652,19 @@ model's 129 norms, that's 0.65 ms of launching to do 1.4 µs of normalizing.
 > production engine uses graphs for decode. None of them use graphs for prefill,
 > where shapes change every step and the arithmetic is large enough not to care.
 
-## Occupancy
+## Idle SMs and occupancy
 
-This section asks whether a kernel has enough parallel work to fill 108 SMs.
+This section asks whether a kernel has enough parallel work to fill 108 SMs,
+because a kernel that leaves most of them idle runs far below its roofline.
 
-A kernel that launches $b$ blocks runs them in waves of at most 108, so the
-fraction of the machine it keeps busy is the following:
+A kernel's threads come in *blocks*, and the GPU assigns each block to one SM.
+*Occupancy*, strictly, is how much of each SM's room for resident threads a
+kernel fills. The coarsest form of the question comes first: does every SM get
+a block at all?
+
+Picture 108 checkout lanes. A kernel that launches $b$ blocks runs them in
+waves of at most 108, and while a partly full last wave finishes, the other
+lanes stand empty. The fraction of the machine kept busy is the following:
 
 $$
 u(b) = \frac{b}{108 \cdot \lceil b / 108 \rceil}
@@ -528,15 +687,16 @@ The table carries two lessons:
   quantization*, and it's why a kernel can get slower when the problem grows by
   one.
 
-Decode at batch 1 loses badly here. Take RMSNorm with one block per row. A
-4096-token prefill launches 4096 blocks: 38 waves at 99.8% utilization. Decode
-at batch 1 launches one block, $1/108 = 0.93\%$ of the GPU, and the other 107 SMs
-sit idle. You need batch 108 before every SM has a row, and batch 216 before the
-waves come out even.
+Decode at batch 1 loses badly here. Take RMSNorm with one block per row:
 
-No kernel-level fix exists for that. ==The fix is more work==, which is what
-batching is for. This is the second half of the argument that the MLP table
-started.
+- **A 4096-token prefill** launches 4096 blocks: 38 waves at 99.8% utilization.
+- **Decode at batch 1** launches one block, $1/108 = 0.93\%$ of the GPU, and the
+  other 107 SMs sit idle.
+
+You need batch 108 before every SM has a row, and batch 216 before the waves
+come out even. No kernel-level fix exists for that. ==The fix is more work==,
+which is what batching is for. This is the second half of the argument that the
+MLP table started.
 
 ## What goes wrong
 
@@ -612,6 +772,8 @@ Implement the following functions:
   harness checks that intensity at 1k context equals intensity at 64k, that it
   equals the GQA group size of 6, that the operation is memory bound, and that a
   model with 24 KV heads instead of 4 has exactly one sixth the intensity.
+- `arithmetic_intensity(flops, bytes)` returns FLOPs per byte. The harness uses
+  it for every intensity check.
 - `ridge_point()` must come out near 161.2.
 - `roofline(flops, bytes)` must return `compute_ms`, `memory_ms`, `floor_ms`,
   `intensity`, and `bound_by`, with the floor equal to the larger of the two

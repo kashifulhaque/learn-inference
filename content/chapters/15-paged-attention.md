@@ -2,7 +2,7 @@
 title: Paged attention
 slug: 15-paged-attention
 part: "Part 4 — Kernels"
-summary: Deriving the fragmentation numbers, building a block allocator, and writing a decode kernel that follows a block table.
+summary: "Borrowing virtual memory's pages for the KV cache: deriving the fragmentation numbers, building a block allocator, and writing a decode kernel that follows a block table."
 minutes: 130
 gpu: true
 objectives:
@@ -10,53 +10,64 @@ objectives:
   - Derive the page size trade-off between internal fragmentation and indirection.
   - Implement a block allocator with a per-sequence block table and a free list.
   - Write a decode attention kernel that reads through the block table.
-  - Explain what prefix sharing saves, and what the recurrent layers cost that paging cannot fix.
+  - Explain what prefix sharing saves, and what the recurrent layers cost that paging can't fix.
 lab: 15-paged-attention
 ---
 
 # Paged attention
 
 > [!TLDR]
-> - A contiguous cache reserves `max_seq_len` slots per sequence. Ten chat
->   requests at a 32k maximum need 20 GiB, more than the 18,120 MiB pool; paged
->   in 16-token blocks, the same ten need 322 MiB.
-> - Fixed-size blocks and a per-sequence block table remove external
->   fragmentation entirely and bound internal fragmentation at `block_size - 1`
->   tokens per sequence.
-> - On this model a 16-token block costs 1 MiB across the 16 full-attention
->   layers. The page size barely matters for memory, and the indirection costs
->   latency, not bandwidth.
-> - Prefix sharing saves both memory and prefill. The 48 recurrent layers' 147.8
->   MiB per sequence doesn't page, and it caps the batch at 122.
+> - A contiguous cache reserves room for the longest sequence you allow, for
+>   every request. At a 32k-token maximum, that caps this card at 11 ordinary
+>   chat requests. Stored in 16-token blocks, ten of the same requests need
+>   322 MiB of KV instead of 20 GiB, and the card holds about 135 of them.
+> - Fixed-size blocks, plus a per-sequence table that records where each block
+>   lives, let any free block serve any sequence. The only waste left is the
+>   unused tail of each sequence's last block, at most `block_size - 1` tokens.
+> - On this model, one 16-token block costs 1 MiB. The block size barely matters
+>   for memory, and following the table costs a little latency, not bandwidth.
+> - Sharing a common prompt prefix saves both memory and prefill time. The 48
+>   recurrent layers' 147.8 MiB of state per sequence can't be paged, and it caps
+>   the batch at 165 sequences.
 
-The cache from [chapter 9](/c/09-the-kv-cache) works and wastes most of your
-memory. It reserves `max_seq_len` slots per sequence at admission, because
-attention wants to read a contiguous range, and a contiguous range must be
-reserved before you know how long the sequence will be.
+The KV cache from [chapter 9](/c/09-the-kv-cache) works, and it wastes most of
+your memory. It reserves `max_seq_len` slots per sequence at admission. It has
+to, because attention wants to read a contiguous range, and a contiguous range
+must be reserved before you know how long the sequence will be.
 
-Operating systems solved this problem in the 1960s. A process gets an address
-space that looks contiguous, backed by physical pages that aren't, with a page
-table translating between them. Paged attention applies the same idea to the KV
-cache: fixed-size blocks, a per-sequence block table, and a kernel that follows
-the table instead of a pointer. Paging isn't obviously worth an indirection on
-the hottest read in the engine, so this chapter makes the case with arithmetic.
+Operating systems solved this problem in the 1960s with *virtual memory*. A
+process gets an address space that looks contiguous, backed by physical pages
+that aren't, with a page table translating between them. Paged attention
+applies the same idea to the KV cache: fixed-size blocks, a per-sequence block
+table, and a kernel that follows the table instead of a pointer.
+
+An extra lookup on the hottest read in the engine might not be worth it, so
+this chapter makes the case with arithmetic. You price the waste first, then
+build the allocator and the kernel, and finish with what paging can't fix.
 
 ## Before you start
 
-**The KV cache from chapter 9.** Sixteen of this model's 64 layers use full
-attention, and each one stores a key and a value vector per KV head per token.
-Across those 16 layers the cost is 64 KiB per token, derived in chapter 2 and
-again in this chapter. The other 48 layers keep a fixed-size recurrent state and
-add nothing to cache growth.
+**The KV cache from chapter 9.** During *decode*, the phase that generates one
+token at a time, each attention layer needs the key and value vectors of every
+earlier token. The *KV cache* stores them so they're computed once. Sixteen of
+this model's 64 layers use full attention, and each one stores a key and a value
+vector per KV head per token. Across those 16 layers, the cost is 64 KiB per
+token, derived in chapter 2 and again in this chapter.
 
-**The memory budget from [chapter 2](/c/02-memory-arithmetic).** Weights take
-53.8 GB of the A100's 80 GB. After the CUDA context, an activation workspace, and
-fragmentation headroom, about 19 GB is left for the cache. That's 18,120 MiB,
-and every number in this chapter is measured against it.
+**The recurrent layers.** The other 48 layers are linear-attention layers. They
+keep a fixed-size recurrent state per sequence instead of a cache, and add
+nothing to cache growth.
+
+**The memory budget from [chapter 2](/c/02-memory-arithmetic).** The card holds
+80 GiB. Weights take 53.8 GB, and chapter 2 sets aside 6 GiB of overhead for the
+CUDA context, an activation workspace, and fragmentation headroom. That leaves
+23.9 GiB, or 24,468 MiB, for per-sequence memory: the KV cache plus each
+sequence's recurrent state. Every number in this chapter is measured against
+that pool.
 
 **Paging vocabulary.** A *page*, here a *block*, is the allocation unit. A *page
 table*, here a *block table*, maps logical positions to physical ones. *Internal
-fragmentation* is space wasted inside an allocated page; *external
+fragmentation* is space wasted inside an allocated page, and *external
 fragmentation* is free space in pieces of the wrong size. *Copy-on-write* means
 two owners share one physical page until one writes and gets a private copy.
 
@@ -66,7 +77,9 @@ accumulator. If that derivation isn't solid, go back; this chapter assumes it.
 
 ## What a contiguous cache wastes
 
-A contiguous cache wastes memory in three ways, largest first:
+This section puts a number on the problem, because the size of the waste is what
+justifies the indirection. A contiguous cache wastes memory in three ways,
+largest first:
 
 1. **Reserved but unused.** A request that might reach 32,768 tokens reserves
    for 32,768 tokens. At 64 KiB per token, that's
@@ -78,9 +91,9 @@ A contiguous cache wastes memory in three ways, largest first:
    holes. A new request that needs a contiguous run of 2 GiB can fail while 6 GiB
    is free in pieces.
 
-Put numbers on the first one with the length mix that the lab measures, a
-plausible chat trace of prompts and completions: 37, 5, 64, 200, 1200, 18, 450,
-12, 3000, and 90 tokens.
+To put numbers on the first one, use the length mix that the lab measures. It's
+a plausible chat trace of prompts and completions: 37, 5, 64, 200, 1200, 18,
+450, 12, 3000, and 90 tokens.
 
 | Layout | Tokens reserved | Memory | Waste |
 |---|---|---|---|
@@ -88,24 +101,67 @@ plausible chat trace of prompts and completions: 37, 5, 64, 200, 1200, 18, 450,
 | Paged, 16-token blocks | 5,152 | 322 MiB | 1.48% |
 | Actually used | 5,076 | 317 MiB | — |
 
-The contiguous row is $10 \times 32768$ slots. The paged row rounds each length up
-to a multiple of 16 and sums: 48, 16, 64, 208, 1200, 32, 464, 16, 3008, and 96.
-The waste figures are $1 - 5076/327680$ and $1 - 5076/5152$.
+Each row comes from a short calculation:
 
-> [!KEY] Ten requests don't fit without paging
-> Ten concurrent requests under a contiguous cache need 20 GiB, which is more
-> than the 18,120 MiB the card has left after the weights. The same ten under
-> paging need 322 MiB, and the card holds hundreds of them. This isn't an
-> optimization; it's ==the difference between a serving engine and a demo==.
+- **Contiguous** reserves $10 \times 32768$ slots.
+- **Paged** rounds each length up to a multiple of 16 and sums: 48, 16, 64, 208,
+  1200, 32, 464, 16, 3008, and 96.
+- **The waste figures** are $1 - 5076/327680$ and $1 - 5076/5152$.
+
+> [!KEY] A contiguous cache caps this card at 11 chat requests
+> Each contiguous 32k reservation costs 2 GiB of KV plus 147.8 MiB of recurrent
+> state, and the pool is 23.9 GiB:
+>
+> - Ten requests take 21.4 GiB, and eleven take 23.6 GiB. Both fit.
+> - A twelfth brings the total to 25.7 GiB, which doesn't fit.
+> - Under paging, the same ten need 322 MiB of KV plus their state, about
+>   180 MiB per request, so the card holds about 135 requests like them.
+>
+> That twelvefold gap isn't an optimization; it's ==the difference between a
+> serving engine and a demo==.
 
 The cache sets the batch size, and the batch size sets throughput, so that waste
-converts directly into throughput you don't get.
+converts directly into throughput you don't get. Next, you see how operating
+systems avoid the same waste.
+
+## The virtual memory analogy
+
+This section maps paging onto something you already know, so the rest of the
+chapter has a frame. An operating system faces the KV cache's problem exactly:
+many programs, each wanting memory that looks contiguous, none knowing in
+advance how much it needs. Its answer is to hand out memory in fixed-size pages,
+scattered anywhere, and keep a table per program that says where each page
+really is.
+
+Each piece of virtual memory has a counterpart in the paged cache:
+
+| Operating system | Paged KV cache | Role |
+|---|---|---|
+| Process | Sequence | Owns an address space that looks contiguous |
+| Virtual page number | Logical block, $\lfloor p / B \rfloor$ | A position in that contiguous view |
+| Physical page frame | Physical block in the pool | Where the bytes really live |
+| Page table | Block table | Maps logical to physical |
+| Page size, often 4 KiB | Block size, 16 tokens here | The allocation unit |
+| Shared pages, copy-on-write after `fork` | Prefix sharing | Two owners read one copy |
+| Swapping pages to disk | Swapping blocks to host memory | Frees fast memory under pressure |
+
+The analogy is accurate in structure, and it differs in two places that matter
+for the code you write:
+
+- **No hardware does the translation.** A CPU's memory management unit
+  translates every address automatically. Here, the attention kernel reads the
+  block table itself and computes each address in software.
+- **There are no page faults.** An operating system can allocate a page lazily,
+  the first time a program touches it. Here, the allocator hands out blocks
+  explicitly before the write, and the scheduler decides what happens when the
+  pool runs out.
 
 ## Blocks and the block table
 
-Paging divides the pool into fixed-size blocks and gives each sequence an ordered
-list of the physical blocks that hold its tokens. The blocks needn't be adjacent
-and needn't be in order:
+This section builds the data structure: a pool of blocks and a table per
+sequence. Paging divides the pool into fixed-size blocks and gives each sequence
+an ordered list of the physical blocks that hold its tokens. The blocks needn't
+be adjacent, and they needn't be in order:
 
 ```python
 shape = (num_blocks, block_size, num_kv_heads, head_dim)
@@ -115,20 +171,22 @@ self.free = list(range(num_blocks))
 self.tables: dict[str, BlockTable] = {}
 ```
 
-The pool is allocated once, at startup, at the full size you intend to use. From
-then on nothing is allocated or freed on the device: allocation is a list pop,
-release is a list extend, and the CUDA allocator never sees another request.
-That alone removes a class of latency spikes.
+The pool is allocated once, at startup, at the full size you intend to use.
+From then on, nothing is allocated or freed on the device. Allocation is a list
+pop, release is a list extend, and the CUDA allocator never sees another
+request. That alone removes a class of latency spikes.
 
 ==External fragmentation disappears completely==, because every block is
-interchangeable: any free block can serve any sequence. Internal fragmentation is
-bounded by `block_size - 1` tokens in the tail block, and nothing else.
+interchangeable: any free block can serve any sequence. Internal fragmentation
+is bounded by `block_size - 1` tokens in the tail block, and nothing else.
 
 ## What a page costs on this model
 
-A 16-token page costs exactly 1 MiB across the layers. Derive it rather than
-quoting it. For one full-attention layer, one token stores a key and a value for
-each of the 4 KV heads, each of dimension 256, in bfloat16:
+This section works out how much memory one block holds, which is the unit
+every later budget uses. A 16-token page costs exactly 1 MiB across the layers.
+Derive it rather than quoting it. For one full-attention layer, one token stores
+a key and a value for each of the 4 KV heads, each of dimension 256, in
+bfloat16:
 
 $$
 2 \times 4 \times 256 \times 2\ \text{bytes} = 4096\ \text{bytes} = 4\ \text{KiB}
@@ -136,30 +194,34 @@ $$
 
 Across the 16 full-attention layers, that's $16 \times 4\ \text{KiB} = 64$ KiB
 per token. A block of 16 tokens therefore costs 64 KiB per layer, and across all
-16 layers:
+16 layers, it costs the following:
 
 $$
 \boxed{16 \times 64\ \text{KiB} = 1\ \text{MiB per page}}
 $$
 
-To count the pages the card affords, start from the whole 80 GB, subtract the
-53.8 GB of weights to get 26.2 GB, then subtract the overheads that chapter 2
-budgets: roughly 1 GB of CUDA context, 3 GB of activation workspace, and 2 GB of
-fragmentation headroom. That leaves about 19 GB, which in binary units is
-18,120 MiB:
+To count the pages the card affords, take the pool from chapter 2. The card's
+80 GiB, minus 53.8 GB of weights and 6 GiB of overhead, leaves 25,656,894,976
+bytes, or 24,468 MiB. If all of it held KV, it would give the following:
 
 $$
-18{,}120 \text{ pages of } 1\ \text{MiB} = 289{,}920 \text{ tokens}
+24{,}468 \text{ pages of } 1\ \text{MiB} = 391{,}488 \text{ tokens}
 $$
 
-> [!EXAMPLE] Spending 290,000 tokens
-> Call the pool 290,000 tokens, or 18,000 pages. Spend them however you like:
-> 70 sequences at 4k context, 8 sequences at 32k, or one at 262k with room to
-> spare. The pool is a single global budget, and the scheduler in
-> [chapter 16](/c/16-continuous-batching) decides who gets it.
+In practice, each sequence's recurrent state comes out of the same pool, and
+the "The 48 layers that don't page" section prices it.
+
+> [!EXAMPLE] Spending about 390,000 tokens
+> The pool holds about 390,000 tokens of KV, and each sequence also pays its
+> 147.8 MiB of recurrent state from it. Spend it however you like: 60 sequences
+> at 4k context, 11 at 32k, or one at 262k, which costs 16.1 GiB and leaves room
+> to spare. The first two match chapter 2's batch sizes. The pool is a single
+> global budget, and the scheduler in [chapter 16](/c/16-continuous-batching)
+> decides who gets it.
 
 ## Mapping positions to slots
 
+This section answers how the engine finds a token's key and value in the pool.
 A logical position becomes a flat pool index through one table lookup. Position
 $p$ lives in the sequence's block $\lfloor p / B \rfloor$ at offset $p \bmod B$,
 where $B$ is the block size. Compose that with the block table:
@@ -169,8 +231,12 @@ $$
 $$
 
 The $\hla{\text{table entry}}$ names the physical block, multiplying by $B$
-jumps to its first slot, and the $\hlb{\text{offset}}$ steps to the token. The
-following code vectorizes the map over a tensor of positions:
+jumps to its first slot, and the $\hlb{\text{offset}}$ steps to the token. For
+example, with $B = 16$, position 37 sits in logical block 2 at offset 5. If the
+table says logical block 2 is physical block 9, the slot is
+$9 \times 16 + 5 = 149$.
+
+The following code vectorizes the map over a tensor of positions:
 
 ```python
 def slot_indices(self, seq_id, positions):
@@ -189,17 +255,18 @@ kb = self.k_blocks[layer].view(-1, num_kv_heads, head_dim)   # (num_blocks * B, 
 kb[slots] = k                                                # k: (tokens, kv_heads, dim)
 ```
 
-The `view` flattens the block and offset dimensions into one, which is what makes
-a single flat index work. `gather` runs the same map in reverse to reconstruct a
-contiguous prefix. The lab uses it to check the kernel, and a real decode never
-calls it, because gathering defeats the point.
+The `view` flattens the block and offset dimensions into one, which is what
+makes a single flat index work. `gather` runs the same map in reverse to
+reconstruct a contiguous prefix. The lab uses it to check the kernel. A real
+decode never calls it, because gathering defeats the point.
 
 ## Choosing the page size
 
-The page size is the one free parameter, and it trades two costs:
+This section settles the one free parameter, the block size, which trades two
+costs:
 
-- **Smaller pages waste less.** Average internal fragmentation is $(B-1)/2$ tokens
-  per sequence, assuming lengths fall anywhere within a block with equal
+- **Smaller pages waste less.** Average internal fragmentation is $(B-1)/2$
+  tokens per sequence, assuming lengths fall anywhere within a block with equal
   probability.
 - **Larger pages cost less indirection.** The block table holds
   $\lceil L/B \rceil$ entries, and the kernel does one dependent load per block.
@@ -220,24 +287,28 @@ The following table gives both costs at 32k context, in this model's units:
 > sequence.
 
 The indirection isn't a bandwidth problem either. At $B = 16$, the kernel reads
-4 bytes of block table to locate 1 MiB of KV, a ratio of one to 262,144. It's a
-==latency problem==: the address of the next load depends on the value of the
-previous one, so the memory system can't run ahead. Larger blocks amortize that
-dependency over more useful bytes, and they let the compiler unroll the inner
-loop.
+4 bytes of block table to locate 1 MiB of KV, a ratio of one to 262,144.
 
-Sixteen is the conventional choice and the one the lab uses. It keeps waste under
-half a percent for any sequence past a few thousand tokens, and 16 tokens of one
-head is 8 KiB of contiguous bytes, enough for the load to coalesce cleanly.
+It's a ==latency problem==. Each table read is a *dependent load*: the address
+of the next load depends on the value the previous one returned, so the memory
+system can't run ahead. Larger blocks amortize that dependency over more useful
+bytes, and they let the compiler unroll the inner loop.
+
+Sixteen is the conventional choice and the one the lab uses. It keeps waste
+under half a percent for any sequence past a few thousand tokens. Within a
+block, one head's slice is 16 separate rows, one per token, because the layout
+is `(block, token, head, dim)`. Each row is $256 \times 2 = 512$ contiguous
+bytes, and that row is what a warp's load coalesces on.
 
 > [!NOTE] The block table's own memory
 > The table is negligible, and it's worth confirming once. At the model's 262k
 > maximum context, a table is $262144/16 = 16{,}384$ entries of 4 bytes, or
-> 64 KiB per sequence. A batch of 64 holds 4 MiB of tables against 18,120 MiB of
+> 64 KiB per sequence. A batch of 64 holds 4 MiB of tables against 24,468 MiB of
 > pool: 0.02%.
 
 ## The free list
 
+This section builds the allocator, which hands blocks out and takes them back.
 Allocation is a stack:
 
 ```python
@@ -261,16 +332,22 @@ def allocate(self, seq_id, extra_tokens):
     return table
 ```
 
-`blocks_needed` is the piece worth reading twice. `have` is the capacity the
-sequence already holds, `current + extra_tokens - have` is the shortfall in
-tokens, and `-(-x // B)` is an integer ceiling division. When a sequence grows by one token inside its tail block, the shortfall is
+`blocks_needed` is the piece worth reading twice. It works in three steps:
+
+1. `have` is the capacity the sequence already holds, in tokens.
+2. `current + extra_tokens - have` is the shortfall in tokens.
+3. `-(-x // B)` is an integer ceiling division, which turns the shortfall into
+   whole blocks.
+
+When a sequence grows by one token inside its tail block, the shortfall is
 negative, the ceiling is negative, and `max(0, ...)` returns zero: no new block.
 That's the common case during decode, where ==fifteen steps out of sixteen
 allocate nothing==.
 
-`self.free.pop()` takes from the end, so the free list is last-in, first-out. A
-block released a moment ago is the next one handed out, which is the friendliest
-order for L2 and the TLB. It also means a sequence's blocks are scattered and
+`self.free.pop()` takes from the end, so the free list is last-in, first-out
+(LIFO). A block released a moment ago is the next one handed out, which is the
+friendliest order for the L2 cache and for the TLB, which caches recent address
+translations. It also means a sequence's blocks are scattered and
 descending, which is fine: the block table doesn't care.
 
 ### When allocation fails mid-decode
@@ -283,11 +360,13 @@ catches the failure and preempts someone, which chapter 16 covers in detail.
 Two design decisions follow, and neither is an accident:
 
 - **Failure must be detectable before the write.** `blocks_needed` is a pure
-  query, so the scheduler can ask before it commits. A design that discovered the
-  shortage halfway through writing K and V would leave the cache inconsistent.
+  query, so the scheduler can ask before it commits. A design that discovered
+  the shortage halfway through writing K and V would leave the cache
+  inconsistent.
 - **Failure must be rare, because the recovery is expensive.** The scheduler
-  keeps a watermark, 2% of the pool or about 362 pages here, unallocated. It then
-  hits the wall with room to make a decision instead of with nothing left to move.
+  keeps a watermark, 2% of the pool or about 489 pages here, unallocated. It
+  then hits the wall with room to make a decision, instead of with nothing left
+  to move.
 
 Releasing is the reverse, and it must return every block:
 
@@ -305,11 +384,13 @@ def release(self, seq_id):
 
 ## The kernel
 
-Decode attends one query token against the whole cached prefix. There's no score
-matrix worth tiling and no reuse of $Q$ across query rows, so the kernel is
-==bound entirely by how fast it reads the keys and values==. One program handles one
-(sequence, head) pair, and it starts by loading the query and setting up the
-running state:
+This section writes the decode kernel that reads keys and values through the
+block table. Decode attends one query token against the whole cached prefix.
+There's no score matrix worth tiling and no reuse of $Q$ across query rows, so
+the kernel is ==bound entirely by how fast it reads the keys and values==.
+
+One program handles one (sequence, head) pair, and it starts by loading the
+query and setting up the running state:
 
 ```python
 seq = tl.program_id(0)
@@ -326,9 +407,10 @@ l_i = 0.0                                                # scalar
 acc = tl.zeros([HEAD_DIM], dtype=tl.float32)             # (HEAD_DIM,)
 ```
 
-The running state is two scalars and a $d$-vector, not the $(B_r,)$ vectors of
-chapter 14, because there's exactly one query row. The scale is folded into $q$
-once instead of into the scores on every iteration.
+The running state is two scalars and a $d$-vector, where $d$ is the head
+dimension. It isn't the $(B_r,)$ vectors of chapter 14, because there's exactly
+one query row. The scale is folded into $q$ once, instead of into the scores on
+every iteration.
 
 The loop over blocks is where the indirection happens:
 
@@ -344,11 +426,13 @@ for b in range(0, MAX_BLOCKS):
 ```
 
 This is the indirection, in one line. `physical` is the block ID from the table,
-and every address that follows is computed from it. The loop runs to
-`MAX_BLOCKS`, a compile-time constant, with a runtime guard, because Triton needs
-a static trip count. Sequences shorter than the maximum skip their extra
-iterations cheaply: the guard is uniform across the program, so there's no warp
-divergence, only a predicated branch over an empty body.
+and every address that follows is computed from it: it's the software
+translation step from the analogy.
+
+The loop runs to `MAX_BLOCKS`, a compile-time constant, with a runtime guard,
+because Triton needs a static trip count. Sequences shorter than the maximum
+skip their extra iterations cheaply. The guard is uniform across the program,
+so there's no warp divergence, only a predicated branch over an empty body.
 
 Each iteration then loads one block of keys and values:
 
@@ -379,12 +463,12 @@ update follow:
         m_i = m_new
 ```
 
-The score computation is a broadcast multiply and a reduction, not `tl.dot`: with
-one query row, there's no matmul shape for the tensor cores to exploit. Past that
-line, this is chapter 14's online softmax verbatim: the same running maximum, the
-same correction factor $e^{m_{\text{old}} - m_{\text{new}}}$, and the same two
-corrected accumulators. ==The only thing that changed is where the keys came
-from.==
+The score computation is a broadcast multiply and a reduction, not `tl.dot`:
+with one query row, there's no matmul shape for the tensor cores to exploit.
+Past that line, this is chapter 14's online softmax verbatim: the same running
+maximum, the same correction factor $e^{m_{\text{old}} - m_{\text{new}}}$, and
+the same two corrected accumulators. ==The only thing that changed is where the
+keys came from.==
 
 The kernel ends with one division and one store of $d$ elements:
 
@@ -402,11 +486,17 @@ tl.store(out_ptr + seq * stride_os + head * stride_oh + offs_d * stride_od,
 
 ## Prefix sharing and copy-on-write
 
-Once addressing is indirect, two sequences can point at the same physical block.
-Add a reference count per block, free a block only when its count reaches zero,
-and copy a block before writing to it if its count is above one. That's
-copy-on-write, and it buys ==the single largest saving available to a chat
-stack==.
+This section shows the saving that indirect addressing makes possible almost
+for free. Once addressing is indirect, two sequences can point at the same
+physical block, exactly as two processes share a page after `fork`. It takes
+three rules:
+
+- Keep a reference count per block.
+- Free a block only when its count reaches zero.
+- Copy a block before writing to it if its count is above one.
+
+That's copy-on-write, and it buys ==the single largest saving available to a
+chat stack==.
 
 Take the common case: a service where every request carries the same 500-token
 system prompt. Sharing it saves on two fronts.
@@ -419,18 +509,18 @@ $$
 63 \times 31.25\ \text{MiB} = 1.92\ \text{GiB}
 $$
 
-That's about 11% of the 18,120 MiB pool, recovered for free.
+That's about 8% of the 24,468 MiB pool, recovered for free.
 
-**Compute.** The shared prefix also doesn't need prefilling again. Prefill costs
-roughly $2NT$ FLOPs for $N$ parameters and $T$ tokens, and this model has 26.9
-billion parameters:
+**Compute.** The shared prefix also doesn't need prefilling again. *Prefill*,
+the pass that processes a prompt, costs roughly $2NT$ FLOPs for $N$ parameters
+and $T$ tokens, and this model has 26.9 billion parameters:
 
 $$
 2 \times 26.9 \times 10^9 \times 500 = 26.9\ \text{TFLOP}
 $$
 
-That's per request, and it's 86 ms of tensor-core time at the A100's 312
-TFLOP/s, more in wall-clock time, because no real kernel hits peak. Every request
+That's per request. It's 86 ms of tensor-core time at the A100's 312 TFLOP/s,
+and more in wall-clock time, because no real kernel hits peak. Every request
 after the first skips it. That's a direct cut to time-to-first-token, and it's
 why prefix caching shows up in benchmarks as a latency win rather than only a
 memory win.
@@ -453,9 +543,10 @@ Two details bite in practice:
 
 ## The 48 layers that don't page
 
+This section covers the part of each sequence's memory that paging can't touch.
 Everything so far applies to 16 of this model's 64 layers. The other 48 are
-linear-attention layers, and each sequence holds a fixed-size recurrent state for
-them: 147.8 MiB, derived in chapter 2, constant whatever the context length.
+linear-attention layers, and each sequence holds a fixed-size recurrent state
+for them: 147.8 MiB, derived in chapter 2, constant whatever the context length.
 
 That state doesn't page, and the reason is structural, not an implementation
 gap:
@@ -482,12 +573,13 @@ Admitting a sequence costs as much as 2365 tokens of KV before it has a single
 token of context, and paging shrinks only the $\hld{\text{per-token term}}$.
 That fixed cost has three consequences:
 
-- **Batch size has a hard ceiling from the fixed term alone.** With 18,120 MiB in
-  the pool, $18{,}120 / 147.8 = 122$ sequences fit with zero context each. No
+- **Batch size has a hard ceiling from the fixed term alone.** With 24,468 MiB in
+  the pool, $24{,}468 / 147.8 = 165$ sequences fit with zero context each. No
   amount of paging raises that.
-- **At realistic batch sizes, the fixed term is half the budget.** Sixty-four
-  sequences hold $64 \times 147.8\ \text{MiB} = 9.24\ \text{GiB}$ of recurrent
-  state, 52% of the pool, leaving the other half for all their KV.
+- **At realistic batch sizes, the fixed term is over a third of the budget.**
+  Sixty-four sequences hold
+  $64 \times 147.8\ \text{MiB} = 9.24\ \text{GiB}$ of recurrent state, 39% of
+  the pool, leaving the rest for all their KV.
 - **Short requests are the expensive ones, per token.** A 100-token conversation
   pays 147.8 MiB of state to store 6.25 MiB of KV. A 32k conversation pays the
   same 147.8 MiB against 2 GiB. This is the flip side of chapter 2's break-even
@@ -502,14 +594,14 @@ That fixed cost has three consequences:
 
 ## Preemption: recompute or swap
 
-When the pool is empty and a running sequence needs a block, something has to
-give. There are two options, and the arithmetic is more interesting than the
-usual advice suggests:
+This section answers what to do when the pool is empty and a running sequence
+needs a block: something has to give. There are two options, and the arithmetic
+is more interesting than the usual advice suggests:
 
 - **Swap.** Copy the victim's blocks to host memory, free them, and copy them
-  back on readmission. Swapping preserves the work and costs PCIe bandwidth,
-  roughly 60 times slower than HBM: call it 21 GB/s against the measured 1275
-  GB/s.
+  back on readmission. It's the analogy's swap to disk. Swapping preserves the
+  work and costs PCIe bandwidth, roughly 60 times slower than HBM: call it
+  21 GB/s against the measured 1275 GB/s.
 - **Recompute.** Drop the blocks, and prefill the sequence again when it's
   readmitted. Recomputing wastes the work and costs no transfer.
 
@@ -530,7 +622,7 @@ usual advice suggests:
 > That's 345 ms at 312 TFLOP/s, and considerably more in practice.
 
 By that arithmetic, ==swapping wins by an order of magnitude==, and the textbook
-answer, recompute always, isn't obviously right on this hardware and this model.
+answer, recompute always, isn't clearly right on this hardware and this model.
 The arithmetic leaves out why the reference still recomputes:
 
 - The blocks are scattered. A swap is a gather plus a transfer, and many small
@@ -543,11 +635,12 @@ The arithmetic leaves out why the reference still recomputes:
 - Recompute is a few lines. Swap is a subsystem.
 
 `Scheduler._preempt` recomputes, and it evicts the most recently admitted
-sequence so that the sequences closest to finishing get to finish. One honest
-caveat: the reference also clears the victim's generated tokens, so the sequence
-restarts from the prompt. A production engine keeps those token IDs and
-recomputes their KV as part of the prefill; otherwise a user watching a stream
-sees their output rewind.
+sequence so that the sequences closest to finishing get to finish.
+
+One honest caveat: the reference also clears the victim's generated tokens, so
+the sequence restarts from the prompt. A production engine keeps those token IDs
+and recomputes their KV as part of the prefill. Otherwise, a user watching a
+stream sees their output rewind.
 
 ## What goes wrong
 
@@ -575,7 +668,7 @@ released and its blocks are reused.
 
 **A stale `context_len`.** The kernel reads `context_len` to bound the loop and
 build the mask. Passing the length from before this step's token was written
-drops the newest key; passing the new length before the write happens reads
+drops the newest key. Passing the new length before the write happens reads
 uninitialized memory. The symptom is a model that generates fluently and ignores
 its most recent token.
 
@@ -584,12 +677,12 @@ its most recent token.
 >   16-token pages waste 1.48%.
 > - Every block is interchangeable, so external fragmentation is gone and
 >   internal fragmentation is at most `block_size - 1` tokens per sequence.
-> - One 16-token page is 1 MiB on this model, and the 18,120 MiB pool holds
->   289,920 tokens. Indirection costs latency, not bandwidth.
+> - One 16-token page is 1 MiB on this model, and the 24,468 MiB pool holds
+>   391,488 tokens of KV. Indirection costs latency, not bandwidth.
 > - The kernel is chapter 14's online softmax plus one block-table load per
 >   block.
 > - Prefix sharing recovers memory and skips prefill, but the 147.8 MiB recurrent
->   state per sequence doesn't page and caps the batch at 122.
+>   state per sequence doesn't page and caps the batch at 165.
 
 ## Check your understanding
 
@@ -602,7 +695,7 @@ its most recent token.
 
 > [!QUESTION] If a 16-token block costs 1 MiB across the layers, why is the block table only 4 bytes per entry?
 > The table stores a block *ID*, not a block. The ID indexes a pool of at most
-> 18,120 blocks here, which fits in far fewer than 32 bits. The 1 MiB is the data
+> 24,468 blocks here, which fits in far fewer than 32 bits. The 1 MiB is the data
 > the ID points at, and the ratio between them is exactly the leverage the
 > indirection buys.
 
@@ -628,17 +721,26 @@ its most recent token.
 > matches attention over the gathered prefix to $10^{-4}$, and the waste on the
 > ten-length mix is over 95% contiguous and under 5% paged.
 
-Implement `PagedCache` with `blocks_needed`, `allocate`, `release`,
-`slot_indices`, `write`, and `gather`; a `paged_decode_attention(cache, seq_ids,
-q)` that attends each sequence's query against its own paged prefix; and a
-`memory_waste(lengths, max_seq_len, block_size)` that returns the contiguous and
-paged waste fractions.
+Implement the following:
 
-The harness checks that a fresh pool has every block free, that 20 tokens need
-2 blocks of 16 and exactly 16 need 1, that growing inside the tail block takes
-no new block while crossing a boundary does, that a write-then-gather round trip
-is bit-exact, that a second sequence leaves the first intact, that release
-returns precisely the blocks taken, and that exhausting a small pool raises.
+- `PagedCache`, with `blocks_needed`, `allocate`, `release`, `slot_indices`,
+  `write`, and `gather`.
+- `paged_decode_attention(cache, seq_ids, q)`, which attends each sequence's
+  query against its own paged prefix.
+- `memory_waste(lengths, max_seq_len, block_size)`, which returns the contiguous
+  and paged waste fractions.
+
+The harness checks the allocator first:
+
+- A fresh pool has every block free.
+- 20 tokens need 2 blocks of 16, and exactly 16 need 1.
+- Growing inside the tail block takes no new block, while crossing a boundary
+  does.
+- A write-then-gather round trip is bit-exact.
+- A second sequence leaves the first intact.
+- Release returns precisely the blocks taken.
+- Exhausting a small pool raises.
+
 Then it compares paged decode attention against attention over the gathered
 prefix for three sequences of 37, 5, and 64 tokens, requiring agreement to
 $10^{-4}$ and an output of shape `(3, heads, head_dim)`. Finally, it checks that

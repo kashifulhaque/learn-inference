@@ -2,7 +2,7 @@
 title: The KV cache
 slug: 09-the-kv-cache
 part: "Part 3 — Making it fast"
-summary: Deriving the quadratic-to-linear change, and paying for it in two different data structures.
+summary: Stop recomputing the past. Derive the quadratic-to-linear change, then pay for it in two very different data structures.
 minutes: 90
 gpu: true
 objectives:
@@ -18,32 +18,51 @@ lab: 09-kv-cache
 # The KV cache
 
 > [!TLDR]
-> - Without a cache, generation does quadratic work; with one, it's linear. The
->   saving approaches a factor of $n/2$, though the wall-clock gain is far
->   smaller.
-> - Cache post-RoPE keys and values for the 16 full-attention layers, and the
->   recurrent state and convolution window for the 48 linear ones.
-> - The two behave nothing alike: KV grows and can rewind; state is fixed-size,
+> - Without a cache, every new token reruns the model over the whole sequence so
+>   far, so total work grows with the square of the output length. With a cache,
+>   each new token costs one token's worth of work. For a 512-token prompt and
+>   128 new tokens, that's 639 units of work instead of 73,664.
+> - The wall-clock gain is smaller than the work saving: about 3.5 times in that
+>   example, not 115, because each cached step waits on memory rather than
+>   arithmetic. The gain grows with the length of the output.
+> - Cache each token's position-rotated keys and its values for the 16
+>   full-attention layers, and the recurrent state and convolution window for the
+>   48 linear ones.
+> - The two behave nothing alike. Keys and values cost 64 KiB per token, grow,
+>   and can rewind. The state is a fixed 147.8 MiB per sequence, stays in
 >   float32, and can't rewind.
-> - Lay the KV cache out as `(batch, heads, seq, dim)`, preallocate it, and
->   write into slices. Never `torch.cat`.
-> - KV costs 64 KiB per token; state costs a fixed 147.8 MiB per sequence.
+> - Allocate the cache once, laid out `(batch, heads, seq, dim)`, and write into
+>   slices. Never grow it with `torch.cat`, which quietly brings the quadratic
+>   cost back.
 
-A transformer is a function of the whole sequence. Nothing in its definition
-says that generating token $n+1$ must be cheaper than generating token $n$.
-Run the definition literally and it isn't: each new token means another forward
-pass over everything written so far.
+Picture the model producing the 128th token of a reply to a 512-token prompt.
+Run the transformer's definition literally, and it pushes all 639 tokens so far
+through all 64 layers to get that one token. Nearly all of that work computes
+keys, values, and states that are identical to the ones it computed a step ago.
+Nothing in the definition says generating token $n+1$ must be cheaper than
+generating token $n$, and without help it isn't.
 
-The cache is the observation that ==almost all of that work recomputes something
-that can't have changed==. It's the single largest speedup in the engine and the
-first one to implement.
+The *KV cache* is the observation that ==almost all of that work recomputes
+something that can't have changed==. Store each token's keys and values the
+first time you compute them, read them back on every later step, and each new
+token costs one token's worth of work. It's the single largest speedup in the
+engine and the first one to implement. This is where the model you validated in
+chapter 8 starts getting fast.
+
+The chapter runs in three stages. First you count the saving, in work and in
+time. Then you decide exactly what to store. Finally you build the data
+structures and count their memory.
 
 ## Before you start
 
 This chapter assumes the following:
 
-- **Chapter 0a's GPU vocabulary**, particularly HBM, L2, and what a coalesced
-  read is. The layout section turns on coalescing.
+- **Prefill and decode.** *Prefill* runs the whole prompt through the model in
+  one forward pass. *Decode* then generates one token per forward pass.
+- **Chapter 0a's GPU vocabulary**, particularly HBM, the GPU's main memory; L2,
+  the on-chip cache in front of it; and a coalesced read, where neighboring
+  threads read neighboring addresses so the hardware can serve them in a few
+  wide transactions. The layout section turns on coalescing.
 - **Chapter 2's memory arithmetic**: 64 KiB of KV per token, 147.8 MiB of
   recurrent state per sequence, and the break-even derivation. This chapter
   re-derives the break-even point, so you don't need it memorized.
@@ -60,10 +79,11 @@ generated, and $L$ is the total context at some point in time.
 
 ## From quadratic to linear
 
-This section counts how much work generation does with and without a cache.
-Measure work in *token-forward-passes*: one token passing through all 64 layers
-once. It's a crude unit, but it's proportional to FLOPs for everything except
-attention itself, and it's exactly what the cache changes.
+How much work does generation do with and without a cache? To count it, you
+need a unit. Measure work in *token-forward-passes*: one token passing through
+all 64 layers once. It's a crude unit, but it's proportional to FLOPs
+(floating-point operations) for everything except attention itself, and it's
+exactly what the cache changes.
 
 ### Without a cache
 
@@ -77,7 +97,11 @@ Each new token needs a forward pass over everything before it:
 Add up the passes, then split the sum into a prompt part and a growth part:
 
 $$
-W_{\text{none}}(p, n) = \sum_{j=0}^{n-1} (p + j) = \sum_{j=0}^{n-1} p + \sum_{j=0}^{n-1} j = \boxed{\hla{np} + \hlb{\frac{n(n-1)}{2}}}
+\begin{aligned}
+W_{\text{none}}(p, n) &= \sum_{j=0}^{n-1} (p + j)
+= \sum_{j=0}^{n-1} p + \sum_{j=0}^{n-1} j \\
+&= \boxed{\hla{np} + \hlb{\frac{n(n-1)}{2}}}
+\end{aligned}
 $$
 
 > [!INTUITION] Two ways to waste work
@@ -88,9 +112,9 @@ $$
 
 ### With a cache
 
-The prefill pass processes all $p$ prompt tokens at once and produces the first
-generated token. Each subsequent step processes exactly one token, and there are
-$n - 1$ of them:
+With a cache, no token is ever processed twice. The prefill pass processes all
+$p$ prompt tokens at once and produces the first generated token. Each
+subsequent step processes exactly one token, and there are $n - 1$ of them:
 
 $$
 W_{\text{cache}}(p, n) = p + (n - 1) = O(p + n)
@@ -110,17 +134,15 @@ whole result; the rest of the chapter is about what it costs.
 > Plug in $p = 512$ and $n = 128$:
 >
 > $$
-> W_{\text{none}} = 128 \cdot 512 + \frac{128 \cdot 127}{2} = 65{,}536 + 8{,}128 = 73{,}664
+> \begin{aligned}
+> W_{\text{none}} &= 128 \cdot 512 + \frac{128 \cdot 127}{2} \\
+> &= 65{,}536 + 8{,}128 = 73{,}664
+> \end{aligned}
 > $$
 >
 > $$
 > W_{\text{cache}} = 512 + 127 = 639
 > $$
->
-> | | Forward passes | Token-forward-passes |
-> |---|---|---|
-> | No cache | 128 | 73,664 |
-> | With cache | 1 prefill + 127 decode | 639 |
 >
 > That's a ratio of $73{,}664 / 639 = 115.3$.
 >
@@ -135,15 +157,35 @@ whole result; the rest of the chapter is about what it costs.
 >
 > against $639 \times 53.8\ \text{GFLOP} = 34.4$ TFLOP with the cache.
 
+Put side by side, the same 128-token reply looks like this:
+
+| | Without a cache | With a cache |
+|---|---|---|
+| Forward passes | 128 | 1 prefill + 127 decode |
+| Token-forward-passes | 73,664 | 639 |
+| Arithmetic | 3.96 PFLOP | 34.4 TFLOP |
+| Roofline time floor, from the next section | 12.7 s | about 3.6 s |
+
+The arithmetic drops by a factor of 115. The time drops by far less, and the
+next section explains why.
+
 ## Why the wall-clock gain is smaller
 
-Work isn't time. The uncached passes each cover several hundred tokens, which
-puts them well above the ridge point from chapter 10, so they run near the
-tensor cores' peak. Cached decode steps cover one token each, which puts them
-far below it, so they run at memory bandwidth.
+Work isn't time, and this section shows how much of the 115 times survives on a
+real GPU. Two numbers from chapter 10 decide it:
 
-The following table compares the roofline floors for the preceding example, at
-the A100's rated 1935 GB/s and 312 TFLOP/s:
+- The A100's tensor cores, its matrix-multiply units, peak at 312 TFLOP/s,
+  trillions of FLOPs per second. Its HBM delivers a rated 1935 GB/s.
+- The *ridge point* is the ratio of the two: the FLOPs an operation must do per
+  byte it reads to keep the arithmetic busy.
+
+The uncached passes each cover several hundred tokens. That puts them well above
+the ridge point, so they run near the tensor cores' peak. Cached decode steps
+cover one token each, which puts them far below it: each step reads all the
+weights to do one token's arithmetic, so it runs at memory bandwidth.
+
+The following table compares the roofline floors, the best-case times from
+those peak rates, for the preceding example:
 
 | | Bound by | Floor |
 |---|---|---|
@@ -156,23 +198,29 @@ the A100's rated 1935 GB/s and 312 TFLOP/s:
 > not $115\times$. The gap closes as $n$ grows, because uncached time scales as
 > $n^{2}$ while cached time scales as $n$.
 
-Dividing the two time expressions gives a ratio that grows linearly in $n$:
+To see how fast it closes, compare the two times for long outputs:
+
+- **Uncached** time is about $n^{2}/2$ token-forward-passes at 0.172 ms each.
+  That's one token-forward-pass of arithmetic at peak.
+- **Cached** time is about $n$ decode steps at 27.8 ms each. That's one step of
+  weight reading.
+
+Dividing the two gives a ratio that grows linearly in $n$:
 
 $$
 \frac{n}{2} \cdot \frac{0.172\ \text{ms}}{27.8\ \text{ms}} \approx 0.0031\,n
 $$
 
-Here 0.172 ms is one token-forward-pass of arithmetic at peak, and 27.8 ms is
-one decode step of weight reading. A $20\times$ speedup needs roughly 6500
-generated tokens.
+A $20\times$ speedup needs roughly 6500 generated tokens.
 
 Every figure in this section is arithmetic from the roofline, not a
-measurement. The lab has you measure the work ratio, which is the part that
-doesn't depend on how good your kernels are.
+measurement. The work ratio is the part that doesn't depend on how good your
+kernels are.
 
 ## What to cache
 
-This section answers which tensors can be stored once and reused, and why.
+The saving only holds if the stored tensors really can't change. This section
+answers which tensors meet that bar, and why.
 
 ### Keys and values, for full-attention layers only
 
@@ -183,9 +231,10 @@ $$
 s_{mn} = \frac{q_m^{\top} k_n}{\sqrt{d}} .
 $$
 
-The key $k_n$ depends only on the residual stream at position $n$. Causal
-masking guarantees that the residual stream at position $n$ is a function of
-tokens $0$ through $n$ only.
+Here $d$ is the head width, 256 in this model. The key $k_n$ depends only on the
+residual stream at position $n$, the running vector that every layer reads and
+adds to. Causal masking guarantees that the residual stream at position $n$ is a
+function of tokens $0$ through $n$ only.
 
 > [!KEY] A key never changes after it's written
 > Once token $n$ has been processed, $k_n$ and $v_n$ are fixed forever: the key
@@ -205,8 +254,10 @@ The other tensors in the layer aren't worth caching:
 
 ### The cache holds post-RoPE keys
 
-RoPE rotates each key by a block-diagonal rotation $R_n$ whose angles depend on
-the absolute position $n$. The engine applies it before the cache write:
+RoPE, the rotary position embedding from chapter 5, marks each key's position
+by rotating it. The rotation is a block-diagonal matrix $R_n$ whose angles
+depend on the absolute position $n$. The engine applies it before the cache
+write:
 
 ```python
 k = apply_rotary_partial(k, cos, sin, self.rotary_dim)
@@ -227,13 +278,14 @@ moment token $n$ is written. Whatever query arrives later applies its own $R_m$
 to itself; ==the stored $\hlb{R_n k_n}$ never needs to change==.
 
 Store pre-RoPE keys instead, and every decode step has to rotate the entire
-prefix before using it: $O(L)$ extra arithmetic, an extra $O(L)$ read, and an
-extra buffer to hold the result. You get nothing for it. Values are never
-rotated, so the question doesn't arise for them.
+prefix before using it. That's $O(L)$ extra arithmetic, an extra $O(L)$ read,
+and an extra buffer to hold the result, and you get nothing for it. Values are
+never rotated, so the question doesn't arise for them.
 
 ### Recurrent state and the convolution window, for linear layers
 
-The 48 linear-attention layers keep two things per sequence:
+The 48 linear-attention layers from chapter 6 don't keep keys and values.
+They keep two things per sequence:
 
 - The delta-rule state $S$, shape `(batch, 48, 128, 128)`, in float32.
 - The causal convolution window, shape `(batch, 10240, 3)`, in bfloat16: the
@@ -245,6 +297,8 @@ this chapter.
 
 ## Two data structures, not one
 
+Calling everything "the cache" hides a split you have to design around. This
+section shows what `HybridCache` holds and how the two halves differ.
 `HybridCache` holds four dictionaries, keyed by layer index:
 
 ```python
@@ -259,7 +313,8 @@ dictionary makes the hybrid structure visible in a debugger: `sorted(k_cache)`
 prints `[3, 7, 11, ..., 63]`, and you can see at a glance that you built the
 right thing.
 
-Calling all four "the cache" hides that they behave nothing alike:
+The two halves behave nothing alike. In the following table, the *cursor* is the
+number of positions the KV cache has filled so far:
 
 | | KV cache | Recurrent state |
 |---|---|---|
@@ -271,7 +326,8 @@ Calling all four "the cache" hides that they behave nothing alike:
 | Dtype | bfloat16 | float32 |
 | Reset | Move the cursor to 0 | Zero the tensor |
 
-The last two rows are where the engineering consequences live.
+The rows on recovering a position and on dtype are where the engineering
+consequences live.
 
 **Float32 for the state.** The recurrence multiplies the state by a decay
 $\alpha \in (0,1)$ thousands of times. In bfloat16, with 8 significand bits, the
@@ -279,10 +335,10 @@ repeated rounding of that product accumulates into visible drift over a long
 sequence. The KV cache has no such problem, because nothing is ever multiplied
 into an entry after it's written.
 
-**No rewind.** You can drop the last $r$ KV entries by moving the cursor back
-$r$ places; the earlier entries are untouched. You can't do that to the
-recurrent state, because position $j$'s contribution was added into $S$, and the
-addition isn't invertible in floating point.
+**No rewind.** You can drop the last $r$ KV entries by moving the cursor back $r$ places;
+the earlier entries are untouched. You can't do that to the recurrent state,
+because position $j$'s contribution was added into $S$, and the addition isn't
+invertible in floating point.
 
 > [!WARNING] The state can't rewind, and that costs you three times later
 > - Prefix sharing across requests ([chapter 15](/c/15-paged-attention)) works
@@ -293,8 +349,9 @@ addition isn't invertible in floating point.
 
 ## Layout
 
-This section picks the order of the KV cache's four axes. `HybridCache` uses
-`(batch, heads, seq, dim)`, or BHSD:
+This section picks the order of the KV cache's four axes. It matters because
+every decode step reads the whole cache, so the order decides how that read
+streams from memory. `HybridCache` uses `(batch, heads, seq, dim)`, or BHSD:
 
 ```python
 shape = (batch_size, config.num_key_value_heads, max_seq_len, config.head_dim)
@@ -309,10 +366,11 @@ everything after it. The two layouts trade reads against writes:
 | BHSD | One contiguous $L \times 256$ block: an unbroken sequential stream, and a dense GEMM operand you can hand to cuBLAS with a leading dimension of 256 and no copy | Four small writes of 256 contiguous elements (512 bytes), one per KV head, at addresses `max_seq_len * head_dim` elements apart |
 | BSHD | $L$ separate 512-byte runs with 1536-byte gaps, because each head strides by 1024 elements | One coalesced store of $4 \times 256 = 1024$ elements, 2048 bytes, in one run |
 
-BHSD's sequential read is what the DRAM row buffer and the L2 prefetcher reward.
-At this geometry, ==BSHD doesn't waste bytes==; it loses the length of the
-sequential run, which costs DRAM page locality and prefetch efficiency rather
-than raw bandwidth.
+BHSD's sequential read is what the DRAM row buffer and the L2 prefetcher reward:
+memory hardware serves long unbroken runs faster than scattered ones. At this
+geometry, ==BSHD doesn't waste bytes==. It loses the length of the sequential
+run, which costs DRAM page locality and prefetch efficiency rather than raw
+bandwidth.
 
 > [!DEEPDIVE] Why the strided read wastes no bandwidth at head_dim 256
 > 256 bfloat16 values is 512 bytes, exactly four 128-byte cache lines. An
@@ -348,7 +406,8 @@ layout. BHSD it is.
 
 ## Preallocate, don't concatenate
 
-The obvious implementation appends:
+With the layout chosen, the next question is how the cache grows. The obvious
+implementation appends:
 
 ```python
 self.k = torch.cat([self.k, new_k], dim=2)   # don't
@@ -362,10 +421,15 @@ $$
 \sum_{j=0}^{n-1} (p + j) = \hla{np} + \hlb{\frac{n(n-1)}{2}}
 $$
 
-For $p = 512$ and $n = 128$, that's 73,664 tokens at 64 KiB each, or 4.5 GiB
-read and 4.5 GiB written: about 8 ms of pure memcpy at the measured 1275 GB/s,
-to accomplish nothing. ==You reintroduced the quadratic you had removed==, in
-the data movement instead of the arithmetic.
+Plug in the running example, $p = 512$ and $n = 128$:
+
+- That's 73,664 tokens copied at 64 KiB each.
+- That's 4.5 GiB read and 4.5 GiB written.
+- At the measured 1275 GB/s, it's about 8 ms of pure memcpy, to accomplish
+  nothing.
+
+==You reintroduced the quadratic you had removed==, in the data movement instead
+of the arithmetic.
 
 > [!WARNING] The allocator damage is worse than the copying
 > Each `cat` requests a block one token larger than the last and frees the
@@ -414,9 +478,10 @@ reference the paged version gets checked against.
 
 ## The memory arithmetic
 
-The cache's footprint has two independent terms, both per sequence. The
-$\hlc{\text{KV cache}}$ costs 64 KiB per token of context, and the
-$\hld{\text{recurrent state}}$ costs a fixed 147.8 MiB, independent of $L$:
+How much memory does the cache take at a given context and batch? The footprint
+has two independent terms, both per sequence. The $\hlc{\text{KV cache}}$ costs
+64 KiB per token of context, and the $\hld{\text{recurrent state}}$ costs a
+fixed 147.8 MiB, independent of $L$. For a batch of $B$ sequences:
 
 $$
 \text{bytes} = \hlc{B \cdot L \cdot 65{,}536} + \hld{B \cdot 154{,}927{,}104}
@@ -441,8 +506,10 @@ Multiply by batch size for the total, since both terms are per sequence:
 
 Chapter 2's budget leaves roughly 19 GiB for cache after the weights, the CUDA
 context, and an activation workspace. Read the table against that number:
-batch 8 at 32k fits with nothing to spare, batch 32 at 4k fits comfortably, and
-batch 64 at 4k doesn't.
+
+- Batch 8 at 32k fits with nothing to spare.
+- Batch 32 at 4k fits comfortably.
+- Batch 64 at 4k doesn't.
 
 > [!KEY] The fixed cost is fixed per sequence, not per GPU
 > Chapter 2 quotes 19 GiB as "304k tokens", which counts only the KV term. At
@@ -453,31 +520,35 @@ batch 64 at 4k doesn't.
 
 ### Break-even against an all-full-attention model
 
-An all-full-attention version of this geometry would pay $256$ KiB per token
+Is the hybrid design worth its fixed state? Compare it with an
+all-full-attention version of this geometry, which would pay $256$ KiB per token
 across all 64 layers and carry no fixed state. The hybrid pays
 $\hlc{64\text{ KiB per token}}$ plus $\hld{147.8\text{ MiB}}$. Set the two
 equal and solve for $L$:
 
 $$
-262{,}144\,L = \hlc{65{,}536\,L} + \hld{154{,}927{,}104}
-\;\Longrightarrow\;
-196{,}608\,L = 154{,}927{,}104
-\;\Longrightarrow\;
-\boxed{L = 788\ \text{tokens}}
+\begin{aligned}
+262{,}144\,L &= \hlc{65{,}536\,L} + \hld{154{,}927{,}104} \\
+196{,}608\,L &= 154{,}927{,}104 \\
+L &= \boxed{788\ \text{tokens}}
+\end{aligned}
 $$
 
 Below 788 tokens of context, the fixed state costs more than the KV entries it
 replaces. Above it, the hybrid wins, and the margin grows by 192 KiB per further
-token without limit. At 32k context, the hybrid needs 2.14 GiB per sequence
-against 8.0 GiB; at 128k, 8.14 GiB against 32 GiB.
+token without limit:
+
+- At 32k context, the hybrid needs 2.14 GiB per sequence against 8.0 GiB.
+- At 128k, it needs 8.14 GiB against 32 GiB.
 
 `ModelConfig.hybrid_breakeven_tokens` computes this for any config, and chapter
 2's lab has you derive it.
 
 ### What decode actually reads
 
-Memory footprint and memory traffic are different questions. Per decode step,
-per sequence, the engine reads the following:
+Memory footprint and memory traffic are different questions: one is what the
+cache occupies, the other is what each step moves. Per decode step, per
+sequence, the engine reads the following:
 
 - The weights: 53.8 GB, once, shared across the whole batch.
 - The KV cache: $\hlc{65{,}536 \cdot L}$ bytes, read in full.
@@ -499,8 +570,9 @@ headline suggests.
 
 ## The state carry
 
-The KV path is append-only and hard to get subtly wrong: either the prefix is
-there or it isn't. The linear path is the opposite.
+The last piece is wiring the linear layers' state through each step. The KV path
+is append-only and hard to get subtly wrong: either the prefix is there or it
+isn't. The linear path is the opposite.
 
 `delta_rule_chunked` takes a `state` argument and returns the final state. Each
 phase uses it differently:
@@ -509,6 +581,8 @@ phase uses it differently:
   the result.
 - **Each decode step** passes the stored state back in, runs one
   `delta_rule_step`, and stores the new one.
+
+The following code shows the read and the write around the recurrence:
 
 ```python
 prev_state = cache.recurrent_state(layer_idx) if cache is not None else None

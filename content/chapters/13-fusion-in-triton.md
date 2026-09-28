@@ -2,7 +2,7 @@
 title: Fusion in Triton
 slug: 13-fusion-in-triton
 part: "Part 4 — Kernels"
-summary: Writing kernels at block granularity, fusing away the memory traffic between operations, and finding out why the byte count over-promises inside a 40 MB cache.
+summary: Writing kernels one block at a time, fusing away the memory traffic between operations, and finding out why the byte count over-promises when the data fits in a 40 MB cache.
 minutes: 130
 gpu: true
 objectives:
@@ -11,65 +11,88 @@ objectives:
   - Derive the byte saving a fusion predicts, and the speedup that implies.
   - Explain why the prediction fails inside a 40 MB L2, and where the crossover is.
   - Explain why the SwiGLU fusion pays 1.52x where the RMSNorm fusion pays 1.10x.
-  - Decide when fusion is worth it and when it is not.
+  - Decide when fusion is worth it and when it isn't.
 lab: 13-fused-rmsnorm
 ---
 
 # Fusion in Triton
 
 > [!TLDR]
-> - Triton has you write what one *block* does. The compiler handles lanes,
->   shared memory, and barriers, and you handle masks.
-> - Fusing a memory-bound pair removes the intermediate's trips to memory. For
->   the RMSNorm residual fusion, the byte count predicts 1.25x.
-> - The A100 delivers 0.92x at 4096 rows and 1.10x at 16384 rows, because a
->   40 MB L2 already absorbs the round trip that fusion removes.
-> - SwiGLU pays 1.52x because its intermediate is dead: fusion removes both of
->   its trips, and its tensors are far past L2.
-> - Count the bytes that reach HBM, not the bytes a kernel touches, and measure
->   across sizes.
+> - In Triton you write what one *block* of threads does. The compiler handles
+>   the individual threads, and you handle the ragged edges of the data with
+>   masks.
+> - Fusing two memory-bound kernels into one saves the trip their intermediate
+>   result makes out to main memory and back. For RMSNorm with its residual add,
+>   counting bytes predicts a 1.25x speedup.
+> - The A100 disagrees. The fused kernel is slightly slower on a 42 MB tensor
+>   and only 1.10x faster on a 168 MB one, because the GPU's 40 MB cache was
+>   already absorbing the trip that fusion removes.
+> - The SwiGLU fusion pays 1.52x. Nothing else needs its intermediate, so both
+>   trips go away, and its tensors are far too big for the cache.
+> - Count the bytes that reach main memory, not the bytes a kernel touches, and
+>   measure at several sizes.
 
-[Chapter 12](/c/12-your-first-cuda-kernel) established the ceiling: a memory-bound
-kernel that reaches the bus's rate is finished, and the only way past it is to
-move fewer bytes. This chapter does that.
+[Chapter 12](/c/12-your-first-cuda-kernel) ended at a ceiling: once a
+memory-bound kernel moves data as fast as the memory bus allows, the only way to
+make it faster is to move fewer bytes. This chapter moves fewer bytes by
+*fusion*, which merges two kernels into one so that the result passed between
+them never leaves the chip.
 
-It also contains the course's most interesting measurement. The obvious byte
-count predicts a 1.25x speedup, and the hardware delivers 1.10x on one shape and
-0.92x on another.
+It also holds the course's most interesting measurement. Counting bytes says
+that fusing RMSNorm with its residual add runs 1.25x faster at every size. On
+the A100, it runs at 0.92x on one tensor size and 1.10x on another: slower
+first, then faster.
 
-That disagreement isn't an experimental error. It's the roofline model's
-assumption, that every byte a kernel touches comes from HBM, failing on a chip
-with 40 MB of last-level cache. Working out exactly where it fails is worth more
-than the fusion is.
+That gap isn't an experimental error. The byte count assumes that every byte a
+kernel touches travels to and from HBM, the GPU's main memory, and on a chip
+with 40 MB of cache that assumption fails. You first learn Triton, the language
+the fused kernel is written in. Then you follow the gap to its cause and turn it
+into a small model that explains every measurement.
 
 ## Before you start
 
-**Chapter 12's execution model.** Grid, block, warp, SM, coalescing, the memory
-hierarchy, and the fact that a warp's request becomes 32-byte sectors. Triton
-hides the thread level but not the hardware, so all of it still applies.
+**The execution model from chapter 12.** A kernel launches as a *grid* of
+*blocks*. Each block runs on one *SM* (streaming multiprocessor, one of the
+A100's 108 processor cores) in groups of 32 threads called *warps*, and each
+thread in a warp is a *lane*. Coalescing, the memory hierarchy, and the fact
+that a warp's request becomes 32-byte sectors all still apply: Triton hides the
+thread level but not the hardware.
 
-**Chapter 10's roofline.** Arithmetic intensity, the ridge point at 161 FLOPs per
-byte against rated bandwidth, and the measured copy ceiling of 1275 GB/s.
+**The roofline from chapter 10.** A kernel is *memory bound* when it does so
+little arithmetic per byte that it spends its time waiting for data. The ridge
+point, where a kernel stops being memory bound, is 161 FLOPs per byte against
+rated bandwidth. A plain copy reaches 1275 GB/s, which is the measured ceiling.
 
-**Chapter 4's RMSNorm.** The operation, and why the sum of squares accumulates in
-float32 whatever the input dtype is.
+**RMSNorm from chapter 4.** It divides each row by its root mean square and
+multiplies by a learned gain. The sum of squares accumulates in float32
+whatever the input dtype is.
 
-**The A100's cache.** 40 MB of L2, shared by all 108 SMs, write-back. That number
-is the pivot of the whole chapter.
+**The residual connection.** Each layer adds its output to a running sum, the
+*residual stream*, and passes the sum on to the next layer. That's why the sum
+has to be written to memory even when a kernel also normalizes it.
+
+**The A100's cache.** 40 MB of L2, shared by all 108 SMs, and write-back: a
+write lands in L2 and reaches HBM only when the cache evicts it. That number is
+the pivot of the whole chapter.
 
 **Python decorators and keyword-only arguments.** That's how you declare and
 launch a Triton kernel.
 
 ## The Triton programming model
 
-The two languages differ in the unit you write. CUDA makes you describe what one
-thread does. The block exists only in your index arithmetic, and you're
-responsible for the mapping, the vectorization, the shared-memory staging, and
-the barriers.
+This section answers one question: what do you write in Triton, and what does
+the compiler write for you?
 
-Triton makes you describe what ==one *block* does==. You write code that operates
-on vectors of a compile-time size, and the compiler assigns lanes, picks vector
-widths, allocates registers, stages through shared memory, and inserts barriers.
+The two languages differ in the unit you describe. CUDA makes you describe what
+one thread does. The block exists only in your
+index arithmetic, and you're responsible for the mapping, the vectorization,
+the shared-memory staging, and the barriers.
+
+Triton makes you describe what ==one *block* does==. You write code that
+operates on vectors of a compile-time size. The compiler assigns lanes, picks
+vector widths, allocates registers, stages data through shared memory (the
+small on-chip scratchpad a block's threads share), and inserts barriers (the
+points where every thread in a block waits for the others).
 
 The following is a complete softmax kernel, the one in
 `engine/kernels/softmax_triton.py`:
@@ -93,7 +116,7 @@ def _softmax_fwd(x_ptr, out_ptr, stride_row, n_cols, BLOCK: tl.constexpr):
 
 It's twelve lines with no `threadIdx`, no `__shared__`, and no
 `__syncthreads()`, and it handles any row width. The following subsections take
-it apart.
+it apart one line at a time.
 
 ### `tl.program_id`
 
@@ -109,11 +132,11 @@ grid at launch:
 _softmax_fwd[(n_rows,)](x, out, x.stride(0), n_cols, BLOCK=block, num_warps=w)
 ```
 
-The square brackets are the grid. `(n_rows,)` launches one program per row, so
+The square brackets hold the grid. `(n_rows,)` launches one program per row, so
 `tl.program_id(0)` runs from 0 to `n_rows - 1`.
 
-The grid can also be a callable of the kernel's compile-time parameters. That's
-how a kernel whose block size is being autotuned sizes its own grid:
+The grid can also be a function of the kernel's compile-time parameters. That's
+how a kernel whose block size is autotuned sizes its own grid:
 
 ```python
 grid = lambda meta: (triton.cdiv(n, meta["BLOCK"]),)
@@ -127,18 +150,18 @@ cols = tl.arange(0, BLOCK)
 ```
 
 This is a vector of `BLOCK` int32 values, `[0, 1, ..., BLOCK-1]`, and it's the
-central object in every Triton kernel. `BLOCK` must be a power of two and must be
-known at compile time.
+central object in every Triton kernel. `BLOCK` must be a power of two, and it
+must be known at compile time.
 
 Adding a vector to a pointer gives a vector of pointers, so
-`x_ptr + row * stride_row + cols` addresses the whole row at once. That's why you
-pass strides in explicitly: the kernel does its own address arithmetic, and
+`x_ptr + row * stride_row + cols` addresses the whole row at once. That's why
+you pass strides in explicitly: the kernel does its own address arithmetic.
 `x.stride(0)` is the number of elements between the start of one row and the
-next.
+start of the next.
 
 Every value inside a Triton kernel is either a scalar or a vector of length
-`BLOCK`. Reductions like `tl.max` and `tl.sum` turn the second into the first,
-and arithmetic between them broadcasts.
+`BLOCK`. Reductions like `tl.max` and `tl.sum` turn a vector into a scalar, and
+arithmetic between a scalar and a vector broadcasts the scalar.
 
 ### Masks, and why every load needs one
 
@@ -148,23 +171,25 @@ x = tl.load(ptr + cols, mask=mask, other=float("-inf"))
 ```
 
 `BLOCK` is a power of two, and row widths aren't. This model's hidden size is
-5120, so `triton.next_power_of_2(5120)` gives `BLOCK = 8192`, and the last 3072
-lanes address memory that belongs to the next row, or past the end of the tensor
-entirely.
+5120, so `triton.next_power_of_2(5120)` gives `BLOCK = 8192`. The last 3072
+lanes then address memory that belongs to the next row, or lies past the end of
+the tensor.
 
-The mask prevents that. Masked-off lanes of a `tl.load` don't access memory at
-all, and take the value of `other`. Masked-off lanes of a `tl.store` don't write.
+The mask stops that. Masked-off lanes of a `tl.load` don't access memory at all,
+and they take the value of `other` instead. Masked-off lanes of a `tl.store`
+don't write.
 
 > [!WARNING] A missing mask never faults
-> Without a mask on the load, you read whatever is next in memory, which is
+> Without a mask on the load, you read whatever is next in memory. That's
 > usually the next row and never an error, so the kernel is silently wrong.
 > Without a mask on the store, you *corrupt* the next row. Neither faults,
 > neither raises, and both survive a test whose row width happens to be a power
 > of two. Mask every load and every store unless you can prove the whole block
 > is in bounds.
 
-The choice of `other` matters too, and it depends on the reduction. ==Pick
-`other` to be the identity element of whatever reduction follows==:
+The choice of `other` matters too, and it depends on the reduction that
+follows. ==Pick `other` to be the identity element of that reduction==, the
+value that leaves the result unchanged:
 
 | Kernel | Reduction | `other` | If you swap them |
 |---|---|---|---|
@@ -180,17 +205,18 @@ tl.store(ptr_vector, value, mask=mask)
 
 These are the only memory operations. There's no shared-memory declaration and
 no explicit staging. If the compiler decides a value belongs in shared memory
-rather than registers, it puts it there.
+rather than registers, the fastest storage, private to each thread, it puts it
+there.
 
-`tl.load` returns the pointee's dtype. The idiom everywhere in `engine/` is to
-cast immediately:
+`tl.load` returns the dtype of the data it points at. The idiom everywhere in
+`engine/` is to cast immediately:
 
 ```python
 x = tl.load(x_ptr + cols, mask=mask, other=0.0).to(tl.float32)
 ```
 
-On the way out, cast back to the output pointer's own element type, so the
-kernel works for float32 and bfloat16 without being written twice:
+On the way out, cast back to the output pointer's own element type. The kernel
+then works for float32 and bfloat16 without being written twice:
 
 ```python
 tl.store(out_ptr + cols, value.to(out_ptr.dtype.element_ty), mask=mask)
@@ -203,21 +229,23 @@ def _softmax_fwd(..., BLOCK: tl.constexpr):
 ```
 
 `tl.constexpr` marks a parameter as known at compile time. Triton compiles a
-separate kernel for every distinct value it sees, caching by the tuple of
-constexpr arguments and a few properties of the runtime ones. Inside that
-compilation the compiler knows `BLOCK` exactly, so it can unroll loops, choose
-vector widths, size the register allocation, and lay out the reduction tree.
+separate kernel for every distinct value it sees, and it caches them by the
+tuple of constexpr arguments plus a few properties of the runtime ones. Inside
+one compilation the compiler knows `BLOCK` exactly, so it can unroll loops,
+choose vector widths, size the register allocation, and lay out the reduction
+tree.
 
 The cost is that a new `BLOCK` value triggers a compile, which takes a fraction
 of a second. A kernel called with a hundred different row widths compiles a
 hundred times. That's why the engine uses `triton.next_power_of_2` rather than
-the exact width: it collapses the whole range 4097 to 8192 onto one compilation.
+the exact width: it collapses the whole range 4097 to 8192 onto one
+compilation.
 
 ### `num_warps`
 
 `num_warps` isn't a `tl.constexpr` parameter you declare. It's a launch argument
-the compiler consumes, and it says how many warps the block's work is spread
-across. Divide the block by the number of lanes to get each lane's share:
+the compiler consumes, and it says how many warps share the block's work. Divide
+the block by the number of lanes to get each lane's share:
 
 $$
 \text{elements per lane} = \frac{\texttt{BLOCK}}{32 \times \texttt{num\_warps}}.
@@ -231,10 +259,10 @@ With `BLOCK = 8192`, the share works out as follows:
 | 16 | 512 | 16 |
 | 32 | 1024 | 8 |
 
-More warps means less register pressure per lane and more parallelism inside one
-row, at the cost of fewer rows resident on an SM at once. The measurement in
-the "Tuning `num_warps`" section later in this chapter settles it for 5120-wide
-rows.
+More warps means fewer registers per lane and more parallelism inside one row.
+The price is *occupancy*: a block with more warps leaves room for fewer blocks,
+and so fewer rows, resident on an SM at once. The measurement in the "Tuning
+`num_warps`" section later in this chapter settles it for 5120-wide rows.
 
 ### Autotuning
 
@@ -260,14 +288,14 @@ configuration and caches the winner for that key. Later calls with the same
 
 The trade is startup cost against generality. `engine/kernels/rmsnorm_triton.py`
 doesn't autotune. It hardcodes `num_warps=8` from a measurement, because the
-engine runs one hidden size, and paying a benchmarking pass on the first token of
-every server start is worse than measuring once. ==Autotune when the shapes
+engine runs one hidden size, and paying a benchmarking pass on the first token
+of every server start is worse than measuring once. ==Autotune when the shapes
 vary==; measure and hardcode when they don't.
 
 ### What Triton gives up
 
-The chapter's argument depends on Triton not being magic, so the following table
-states the comparison plainly:
+The chapter's argument depends on Triton not being magic, so the following
+table states the comparison plainly:
 
 | | CUDA | Triton |
 |---|---|---|
@@ -280,27 +308,39 @@ states the comparison plainly:
 | Warp-level primitives | Shuffles, ballots, `__syncwarp` | Not exposed |
 | Inspecting output | `cuobjdump -sass` | `kernel.asm["ptx"]`, `kernel.asm["sass"]` |
 
-The RMSNorm in chapter 12's lab is about 35 lines of CUDA with a hand-written
-tree reduction, a shared-memory allocation, and a power-of-two block size
-assumption. The Triton version in this chapter is twelve lines, handles any
-width, and works for float32 and bfloat16 without a second code path. For the
-kernels an inference engine needs, that trade is almost always worth taking.
+The RMSNorm in chapter 12's lab is about 35 lines of CUDA, with a hand-written
+tree reduction, a shared-memory allocation, and an assumption that the block
+size is a power of two. The Triton version in this chapter is twelve lines,
+handles any width, and works for float32 and bfloat16 without a second code
+path. For the kernels an inference engine needs, that trade is almost always
+worth taking.
 
 What you lose is the last 10% and the ability to diagnose it. When a Triton
 kernel is slower than it ought to be, your levers are `BLOCK`, `num_warps`,
 `num_stages`, and restructuring the algorithm. You can't fix the register
 allocation by hand.
 
-## Why fusion pays
+With the tool in hand, you can return to the question from the opening: how
+much should fusion save, and does it?
 
-[Chapter 10](/c/10-roofline) established that most non-GEMM operations are
-memory bound. For those, runtime is proportional to bytes moved, so the way to
-make them faster is to move fewer bytes. ==The easiest bytes to remove== are the
-ones a kernel writes only so that the next kernel can read them back.
+## The prediction: fusion saves a fifth of the bytes
 
-Take RMSNorm applied to a residual sum, which each of this model's 64 layers
-does twice. Write $N$ for the number of rows, $H = 5120$ for the hidden size, and
-$b = 2$ bytes for bfloat16. One activation tensor is then this many bytes:
+This section counts the bytes that fusion removes, which gives the speedup you
+expect to see. [Chapter 10](/c/10-roofline) established that most operations
+other than matrix multiplies are memory bound. For those, runtime is
+proportional to bytes moved, so the way to make them faster is to move fewer
+bytes.
+
+==The easiest bytes to remove== are the ones a kernel writes only so that the
+next kernel can read them back. Picture two kernels in sequence: the first
+computes a tensor and writes it to memory, and the second immediately reads the
+same tensor back. Fuse them, and the tensor stays in registers, so neither trip
+happens.
+
+The example is RMSNorm applied to a residual sum, which each of this model's 64
+layers does twice. Write $N$ for the number of rows, $H = 5120$ for the hidden
+size, and $b = 2$ bytes for bfloat16. One activation tensor is then this many
+bytes:
 
 $$
 S = N H b
@@ -323,13 +363,13 @@ Fused, one kernel does the same work:
 | `x`, `residual` | `new_residual`, `out` | $\mathbf{4S}$ |
 
 The sum still has to be written, because the next layer's residual connection
-needs it. What the fusion removes is the *read back*: the kernel writes `total`
-once, and then `total` stays in registers for the normalization instead of making
-a second trip.
+needs it. What the fusion removes is the *read back*. The kernel writes `total`
+once, and then `total` stays in registers for the normalization instead of
+making a second trip.
 
-The weight vector is $H b = 10.2$ KB, read by every program. It's three orders of
-magnitude below $S$ and lives in L2 after the first few rows, so drop it from the
-count.
+The weight vector is $H b = 10.2$ KB, and every program reads it. It's three
+orders of magnitude smaller than $S$ and lives in L2 after the first few rows,
+so leave it out of the count.
 
 Divide the unfused traffic by the fused traffic to get the prediction:
 
@@ -338,12 +378,15 @@ $$
 $$
 
 That's a 20% saving in bytes, and a predicted speedup of 1.25x at every size.
+Next, you see the kernel that achieves it, and then what the hardware makes of
+the prediction.
 
 ## The fused kernel, line by line
 
-The following code is `_rms_norm_residual_fwd` from
-`engine/kernels/rmsnorm_triton.py`, with the shape of every value. `BLOCK = 8192`
-and `n_cols = 5120`.
+This section shows how the fusion looks in code, and which line does the
+saving. The following code is `_rms_norm_residual_fwd` from
+`engine/kernels/rmsnorm_triton.py`, with the shape of every value.
+`BLOCK = 8192` and `n_cols = 5120`.
 
 ```python
 @triton.jit
@@ -374,15 +417,16 @@ The kernel breaks down as follows:
   one row. `stride_row` is `x.stride(0)`, which for a contiguous 2-D tensor is
   `n_cols`. The wrapper calls `.contiguous()` before launching, so that identity
   holds.
-- **`cols` and `mask`.** 8192 lanes, of which 5120 are live. The 3072 dead lanes
-  exist because `BLOCK` must be a power of two, and they cost register space and
-  issue slots but no memory traffic.
+- **`cols` and `mask`.** There are 8192 lanes, and 5120 of them are live. The
+  3072 dead lanes exist because `BLOCK` must be a power of two. They cost
+  register space and issue slots, but no memory traffic.
 - **The two loads.** `other=0.0` is the identity for the sum of squares that
-  follows. The `.to(tl.float32)` is chapter 4's point: summing 5120 squared
-  bfloat16 values in bfloat16 loses the tail of the reduction, because a running
-  sum in an 8-bit significand can't represent its next addend once it's grown
-  past about 256 times that addend. The cast costs no bandwidth: the data crosses
-  the bus in bfloat16 either way, and float32 registers are free of traffic.
+  follows. The `.to(tl.float32)` is chapter 4's point. Summing 5120 squared
+  bfloat16 values in bfloat16 loses the tail of the reduction: once a running
+  sum with an 8-bit significand grows past about 256 times the next addend, it
+  can't represent the addition. The cast costs no bandwidth, because the data
+  crosses the bus in bfloat16 either way and float32 registers generate no
+  traffic.
 - **`total = x + res`.** A vector of 8192 float32 values in the block's
   registers. ==This line is the fusion==: everything after it uses `total`
   without touching memory again.
@@ -394,7 +438,7 @@ The kernel breaks down as follows:
   is over exactly `n_cols` terms. That's why the divisor is `n_cols` and not
   `BLOCK`.
 - **`w`.** Loaded with `cols` but not `offset`, because the weight is one vector
-  shared by every row.
+  that every row shares.
 - **The second store.** `out_ptr.dtype.element_ty` makes the kernel
   dtype-agnostic: bfloat16 in, bfloat16 out; float32 in, float32 out. The lab
   checks exactly this.
@@ -429,19 +473,20 @@ def rms_norm_residual(x, residual, weight, eps=1e-6, out=None, new_residual=None
 The `out` and `new_residual` arguments matter for a reason that the "Preallocate
 the output" section gives.
 
-## The measurement
+## The measurement: fusion loses on small tensors
 
-On an A100 80GB PCIe
-with 5120-wide rows in bfloat16, reusing output buffers so the allocator isn't in
-the way, the lab reports two points:
+This section tests the 1.25x prediction on real hardware, and the result is the
+surprise the chapter is built around. On an A100 80GB PCIe with 5120-wide rows
+in bfloat16, reusing output buffers so the allocator isn't in the way, the lab
+reports two points:
 
 | Rows | Tensor size | Against L2 | Speedup |
 |---|---|---|---|
 | 4096 | 41.9 MB | about 1x | **0.92x** |
 | 16384 | 167.8 MB | 4x | **1.10x** |
 
-==Fusion *loses* at the smaller size.== A finer sweep across sizes, from the same
-card, shows the shape of it:
+==Fusion *loses* at the smaller size.== It moves a fifth fewer bytes and takes
+longer. A finer sweep across sizes, from the same card, shows the shape of it:
 
 | Rows | Tensor size | Fused | Unfused | Speedup |
 |---|---|---|---|---|
@@ -453,8 +498,8 @@ card, shows the shape of it:
 | 16384 | 167.8 MB | 0.444 ms | 0.495 ms | 1.12x |
 | 32768 | 335.5 MB | 0.823 ms | 0.958 ms | 1.16x |
 
-The trend isn't noise: the speedup rises monotonically from 2048 rows onward and
-crosses 1.0 between 4096 and 8192.
+The trend isn't noise. From 2048 rows onward, the speedup rises with every step,
+and it crosses 1.0 between 4096 and 8192 rows.
 
 > [!NOTE] Why the two runs disagree slightly
 > The runs differ at the few-percent level: 0.95x against 0.92x at 4096 rows, and
@@ -462,36 +507,49 @@ crosses 1.0 between 4096 and 8192.
 > whichever 80GB A100 is free, and the SXM4 module and the PCIe card don't have
 > the same bandwidth. Treat differences under 5% as noise.
 
-The byte count predicted 1.25x at every size. Something is missing.
+The byte count predicted 1.25x at every size. The measurement is below that
+everywhere, and below 1.0 for mid-sized tensors, so something is missing from
+the count. Look at the "Tensor size" column: the speedup climbs as the tensor
+grows toward and past about 40 MB, which is the size of the A100's L2.
 
-## What the byte count misses: L2
+## What the byte count misses: the L2 cache
 
-The prediction fails because of the cache. The A100 has 40 MB of L2, shared by
-all 108 SMs and write-back. When the unfused pair writes its intermediate and
-the next kernel immediately reads it back, that read hits L2 as long as the
-intermediate is still resident. The traffic the fusion was supposed to save was
-never going to HBM in the first place.
+This section explains the gap, and the explanation is the cache. The A100 has
+40 MB of L2, shared by all 108 SMs, and it's write-back. Follow the
+intermediate `total` through the unfused pair:
+
+1. The add kernel writes `total`. The write lands in L2 first, not in HBM.
+2. The norm kernel starts straight afterward and reads `total` back.
+3. If those bytes are still in L2, the read is served from the cache and never
+   reaches HBM.
+
+So the traffic the fusion was supposed to save was, for a small enough tensor,
+never going to HBM in the first place. A producer and a consumer that run back
+to back on data smaller than L2 are already fused, in effect, by the cache.
 
 > [!KEY] Count the bytes that reach HBM
 > The fusion's benefit isn't the bytes it stops touching. It's the bytes it stops
 > sending to HBM, and those are two different quantities whenever the working set
 > is near the size of the cache.
 
-### Put a number on it
+### A model with two numbers
 
-Two parameters explain every measurement in the sweep:
+To turn that picture into predictions, you need two parameters, and together
+they explain every measurement in the sweep:
 
 - **The HBM fraction $\hla{\varphi} \in [0, 1]$** is the fraction of the
-  intermediate that genuinely round-trips through HBM in the unfused path.
-  $\hla{\varphi} = 0$ means the cache absorbed all of it, and
-  $\hla{\varphi} = 1$ means none of it.
-- **The efficiency $\hlb{e}$** is the fused kernel's efficiency per byte relative
-  to the pair it replaces. The fused kernel isn't the same kernel: it does two
-  stores from one pass, holds a whole 5120-wide row in float32 registers, and so
-  fits fewer rows on an SM than the trivial elementwise `add` it replaces.
+  intermediate that genuinely makes the round trip through HBM in the unfused
+  path. $\hla{\varphi} = 0$ means the cache absorbed all of it, and
+  $\hla{\varphi} = 1$ means it absorbed none of it.
+- **The efficiency $\hlb{e}$** is the fused kernel's efficiency per byte,
+  relative to the pair it replaces. The fused kernel isn't the same kernel. It
+  does two stores from one pass and holds a whole 5120-wide row in float32
+  registers, so it fits fewer rows on an SM than the trivial elementwise `add`
+  it replaces.
 
-The unfused path's HBM traffic is $4S + \hla{\varphi} S$ rather than $5S$. Scale
-the traffic ratio by the efficiency:
+With a fraction $\hla{\varphi}$ of the intermediate reaching HBM, the unfused
+path's HBM traffic is $4S + \hla{\varphi} S$ rather than $5S$. Divide by the
+fused kernel's $4S$, and scale by the efficiency:
 
 $$
 \text{speedup} = \hlb{e} \cdot \frac{4 + \hla{\varphi}}{4} .
@@ -502,7 +560,8 @@ $$
 > when L2 absorbs the round trip, 1.25 when none of it does. The factor
 > $\hlb{e}$ is the tax the fused kernel pays for being a heavier kernel.
 
-Now invert the measurements to find $\hlb{e}$ at each size.
+Now run the model backward. Take each measurement, estimate $\hla{\varphi}$ from
+the tensor's size against L2, and solve for $\hlb{e}$.
 
 > [!EXAMPLE] Three sizes, one efficiency
 > | Rows | Intermediate | $\hla{\varphi}$ | Traffic term | Measured | $\hlb{e}$ |
@@ -514,9 +573,9 @@ Now invert the measurements to find $\hlb{e}$ at each size.
 > At 4096 rows, the unfused path's first kernel streams $3S = 126$ MB through
 > the cache, and the cache absorbs essentially all of the round trip.
 
-Three independent measurements give three values of $\hlb{e}$ between 0.88 and
-0.93. The model fits with a per-byte efficiency of about 0.90 in every case,
-which is a real and stable property of the fused kernel rather than a free
+Three independent measurements give three values of $\hlb{e}$, all between 0.88
+and 0.93. So the model fits with a per-byte efficiency of about 0.90 in every
+case. That's a real and stable property of the fused kernel, not a free
 parameter doing the work. The honest statement of what fusion buys here is the
 following:
 
@@ -529,26 +588,29 @@ The measured 0.92x and 1.10x sit on either side of those.
 
 ### Where the crossover is
 
-Break-even needs the traffic term to cover the 10% efficiency loss:
+The model also tells you how big the tensor has to be before fusion is worth
+running. Break-even needs the traffic term to cover the 10% efficiency loss:
 
 $$
 \frac{4 + \hla{\varphi}}{4} \ge \frac{1}{0.90} = 1.111 \implies \hla{\varphi} \ge 0.44 .
 $$
 
-Nearly half the intermediate has to reach HBM before the fusion is worth running
-at all. From the sweep, that happens ==between one and two times L2==: between
-41.9 MB and 83.9 MB, or between about 4000 and 8000 rows of 5120.
+Nearly half the intermediate has to reach HBM before the fusion pays at all.
+From the sweep, that happens ==between one and two times L2==: between 41.9 MB
+and 83.9 MB, or between about 4000 and 8000 rows of 5120.
 
-It's one to two times rather than exactly one because the intermediate doesn't
-get the cache to itself. During the unfused pair's first kernel, L2 also holds
-`x` and `residual`, and during the second, it holds `out`. A byte of the
+Why one to two times, and not exactly one? Because the intermediate doesn't get
+the cache to itself.
+
+During the unfused pair's first kernel, L2 also holds `x`
+and `residual`, and during the second, it holds `out`. A byte of the
 intermediate survives from its write to its read only if less than 40 MB of
-*all* traffic passes in between, and at $S = 42$ MB the first kernel alone pushes
-126 MB through.
+*all* traffic passes through in between. At $S = 42$ MB, the first kernel alone
+pushes 126 MB through.
 
-Residency is partial and position-dependent: bytes written late in the first
-kernel survive, and bytes written early don't. That's why the curve in the sweep
-is a smooth ramp rather than a step.
+Residency is also partial and depends on position: bytes written late in the
+first kernel survive, and bytes written early don't. That's why the curve in the
+sweep is a smooth ramp rather than a step.
 
 Two lessons follow, and both generalize well past this kernel:
 
@@ -562,8 +624,10 @@ Two lessons follow, and both generalize well past this kernel:
 
 ## Why the SwiGLU fusion pays more
 
-The same lab fuses the MLP's activation and measures **1.52x**, far better than
-the RMSNorm fusion's 1.10x. There are three reasons, and the first is the big one.
+This section applies the same model to a second fusion, and it predicts a much
+bigger win. The lab also fuses the MLP's activation, SwiGLU, and measures
+**1.52x**, far better than the RMSNorm fusion's 1.10x. There are three reasons,
+and the first is the big one.
 
 **It removes two trips out of five, not one out of five.** Unfused,
 `F.silu(gate) * up` is two PyTorch kernels:
@@ -574,8 +638,8 @@ the RMSNorm fusion's 1.10x. There are three reasons, and the first is the big on
 | `t * up` | `t`, `up` | `out` | $3S$ |
 | | | | $\mathbf{5S}$ |
 
-Fused, the kernel reads `gate`, reads `up`, and writes `out`, which is $3S$. The
-prediction is the following:
+Fused, the kernel reads `gate`, reads `up`, and writes `out`, which is $3S$.
+The prediction is the following:
 
 $$
 \frac{5S}{3S} = 1.667 .
@@ -583,7 +647,8 @@ $$
 
 The intermediate `t` is written *and* read purely for the benefit of the second
 kernel, so both trips disappear. The RMSNorm fusion could only ever remove one,
-because the next layer's residual connection genuinely needs the sum written out.
+because the next layer's residual connection genuinely needs the sum written
+out.
 
 Check the efficiency factor: $1.52 / 1.667 = 0.91$, the same 0.90 that the
 RMSNorm fusion showed. The model holds across two different kernels.
@@ -599,9 +664,9 @@ That's 3.6 times the 40 MB L2. No cache absorbs the round trip, so
 $\hla{\varphi} \approx 1$ and the full $5/3$ is available.
 
 **It's a flat elementwise kernel.** There's no reduction, so there's no
-cross-lane communication and no wide row held in registers. `BLOCK = 1024` with
-`num_warps = 4` gives eight elements per lane. Occupancy is high, and the kernel
-is about as close to a pure stream as a Triton kernel gets:
+communication between lanes and no wide row held in registers. `BLOCK = 1024`
+with `num_warps = 4` gives eight elements per lane. Occupancy is high, and the
+kernel is about as close to a pure stream as a Triton kernel gets:
 
 ```python
 @triton.jit
@@ -620,7 +685,7 @@ def _swiglu_fwd(gate_ptr, up_ptr, out_ptr, n_elements, BLOCK: tl.constexpr):
 Compare it with the RMSNorm kernel. The grid is over *elements*, not rows, so
 the kernel treats the tensor as one flat array and the leading shape is
 irrelevant. `pid * BLOCK + tl.arange(0, BLOCK)` is chapter 12's global index,
-written at block granularity. At 4096 by 17408 that's 71.3M elements and
+written at block granularity. At 4096 by 17408, that's 71.3M elements and
 $\lceil 71.3\text{M} / 1024 \rceil = 69{,}632$ programs, or 645 per SM.
 
 > [!KEY] Fuse where the intermediate is dead
@@ -630,10 +695,14 @@ $\lceil 71.3\text{M} / 1024 \rceil = 69{,}632$ programs, or 645 per SM.
 
 ## One block per row
 
-Both RMSNorm kernels assign one program to one row and load the whole row at
-once. That keeps the row in registers between the reduction and the scaling, and
-it caps the row width at what a block's registers hold. The engine sets the cap
-at `MAX_SINGLE_BLOCK = 16384` and falls back to a tiled kernel above it:
+This section covers the design choice both RMSNorm kernels share, and a second
+place where the cache changes the answer. Both kernels assign one program to one
+row and load the whole row at once. That keeps the row in registers between the
+reduction and the scaling, and it caps the row width at what a block's
+registers hold.
+
+The engine sets the cap at `MAX_SINGLE_BLOCK = 16384` and falls back to a tiled
+kernel above it:
 
 ```python
 def _config(n_cols):
@@ -643,7 +712,7 @@ def _config(n_cols):
 ```
 
 The tiled kernel walks the row in 2048-element chunks to accumulate the sum of
-squares, and then walks it again to scale. That reads the row twice, $3S$
+squares, and then walks it again to scale. That reads the row twice: $3S$
 instead of $2S$ for a plain RMSNorm. The following was measured at 4096 rows of
 5120 columns in bfloat16:
 
@@ -653,16 +722,16 @@ instead of $2S$ for a plain RMSNorm. The following was measured at 4096 rows of
 | Single block, `num_warps=8` | 0.089 ms | 945 GB/s |
 | Tiled, `BLOCK=2048` | 0.090 ms | 929 GB/s |
 
-The two are ==within 1%, not the 50%== the extra read suggests. The reason is the
-chapter's own argument turned around: the re-read is a 10 KB per-row working set
-that the block touched moments earlier, so it's still in cache. The second
+The two are ==within 1%, not the 50%== the extra read suggests. The reason is
+the chapter's own argument turned around. The re-read is a 10 KB working set per
+row that the block touched moments earlier, so it's still in cache. The second
 pass costs real traffic only when rows are wide enough that the blocks in flight
 together exceed L2.
 
 So `rms_norm` keeps the tiled fallback for correctness on wide rows, while
-`rms_norm_residual` refuses them outright and raises. The fusion's entire value is
-holding the sum in registers, and a tiled version would have to read the sum back
-and give the saving away.
+`rms_norm_residual` refuses them outright and raises. The fusion's entire value
+is holding the sum in registers, and a tiled version would have to read the sum
+back and give the saving away.
 
 ### Tuning `num_warps`
 
@@ -675,22 +744,24 @@ On 5120-wide rows, 8 warps beat both 16 and 32:
 | 32 | 8 | 0.0955 ms | 878 GB/s |
 
 More warps per row buys parallelism inside the row and costs occupancy across
-rows, and for a row this narrow the trade lands early. Two effects push the same
+rows, and for a row this narrow, the trade tips early. Two effects push the same
 way:
 
 - With 32 warps, the reduction tree is two levels deeper.
 - A block that claims 1024 lanes leaves room for fewer blocks per SM, so fewer
-  rows are in flight to hide latency with.
+  rows are in flight to hide memory latency with.
 
 Don't guess `num_warps`. Either autotune it or measure it once and hardcode the
 answer, as the engine does.
 
 ## Preallocate the output
 
-Even where fusion wins, a kernel that allocates its own output can give the
-saving back. At 4096 rows, the fused kernel writes two 41.9 MB tensors, and
-allocating them on every call costs about as much as the kernels do. The lab's
-harness says so in a comment, and it reuses buffers for exactly that reason.
+This section covers a cost that can hide a fusion's win entirely: memory
+allocation. Even where fusion wins, a kernel that allocates its own output can
+give the saving back. At 4096 rows, the fused kernel writes two 41.9 MB tensors,
+and allocating them on every call costs about as much as the kernels do. The
+lab's harness says so in a comment, and it reuses buffers for exactly that
+reason.
 
 Both engine entry points take output buffers:
 
@@ -711,10 +782,11 @@ The decode loop hands in buffers it already owns.
 
 ## Measure against what is reachable
 
-Judge a kernel against the copy, not the rated peak. A plain
-device-to-device copy on this A100 moves 42 MB in and 42 MB out in 0.066 ms,
-which is 1275 GB/s. The card is rated at 1935. No kernel beats the copy, so ==the
-copy is the ceiling worth comparing against==:
+This section answers how to tell whether a memory-bound kernel is good: judge it
+against the copy, not the rated peak. A plain device-to-device copy on this A100
+moves 42 MB in and 42 MB out in 0.066 ms, which is 1275 GB/s. The card is rated
+at 1935 GB/s. No kernel beats the copy, so ==the copy is the ceiling worth
+comparing against==:
 
 $$
 \frac{945}{1275} = 74\%, \qquad \frac{945}{1935} = 49\% .
@@ -725,38 +797,41 @@ check is against the copy ceiling, and it requires 60%.
 
 ## When not to fuse
 
-Fusion isn't free, and it loses in the following cases:
+This section lists the cases where fusion doesn't pay, so you can skip them
+before you write the kernel. Fusion isn't free, and it loses in the following
+cases:
 
 - **Compute-bound operations don't benefit.** Fusing an activation into a large
-  GEMM saves a small fraction of a kernel limited by arithmetic. Chapter 10's
-  table says which side of the ridge point an operation is on, so check before
-  you start.
+  GEMM, a matrix multiply, saves a small fraction of a kernel limited by
+  arithmetic. Chapter 10's table says which side of the ridge point an operation
+  is on, so check before you start.
 - **The intermediate might not be dead.** If something outside the fused region
   reads it, you still have to write it, and the saving halves. That's the entire
   difference between 1.52x and 1.10x in this chapter.
 - **Fused kernels are harder to check.** Every fusion is a new kernel with its
   own bugs, and it replaces two kernels that were each tested on their own.
   Always keep the unfused path and test against it.
-- **Register pressure.** A kernel holding too much per lane spills to local
-  memory, which lives in HBM, and the fused version becomes slower than the
-  unfused one. The symptom is a fusion that is inexplicably slow and gets
-  *faster* when you reduce `BLOCK`. The fix is a smaller block size or more
-  warps.
+- **Register pressure.** A kernel that holds too much per lane *spills*
+  registers to local memory, which lives in HBM, and the fused version becomes
+  slower than the unfused one. The symptom is a fusion that's inexplicably slow
+  and gets *faster* when you reduce `BLOCK`. The fix is a smaller block size or
+  more warps.
 - **The launch geometries might not match.** Fusing a row-wise reduction with a
   column-wise one means one of them ends up with the wrong access pattern, and
   chapter 12 priced that at up to 6.9x.
-- **The working set might fit in L2.** That's this chapter's whole point. Decode
-  at small batch is under L2 for everything, and there fusion buys nothing,
-  though decode at small batch is bound by reading the 53.8 GB of weights anyway,
-  so nothing else helps either.
+- **The working set might fit in L2.** That's this chapter's whole point.
+  Decode, the token-by-token generation phase, touches working sets under L2 for
+  everything at small batch, and there fusion buys nothing. Decode at small batch
+  is bound by reading the 53.8 GB of weights anyway, so nothing else helps
+  either.
 
 ## Correctness first
 
-Every lab from here on checks
-correctness before speed, and you ought to as well. A kernel that's twice as fast
-and slightly wrong is worse than no kernel, because the error compounds over 64
-layers and hundreds of tokens and surfaces as "the model got dumber," which is
-nearly impossible to trace.
+This section explains why every lab from here on checks correctness before
+speed, and which shapes catch the bugs. You ought to do the same. A kernel
+that's twice as fast and slightly wrong is worse than no kernel, because the
+error compounds over 64 layers and hundreds of tokens. It surfaces as "the model
+got dumber," which is nearly impossible to trace.
 
 Compare in float32 against the PyTorch reference, on shapes that exercise the
 tails. The lab picks four for the RMSNorm, and each one tests something:
@@ -768,8 +843,8 @@ tails. The lab picks four for the RMSNorm, and each one tests something:
 | `(4096, 5120)` | Enough rows to fill 108 SMs several times over |
 | `(13, 4097)` | A width that is not a power of two, and fewer rows than SMs |
 
-==`(13, 4097)` is the important one.== `triton.next_power_of_2(4097)` is 8192, so
-4095 of the 8192 lanes are masked off, nearly half the block. A kernel with a
+==`(13, 4097)` is the important one.== `triton.next_power_of_2(4097)` is 8192,
+so 4095 of the 8192 lanes are masked off, nearly half the block. A kernel with a
 missing or wrong mask passes the first three shapes and fails this one.
 
 ## What goes wrong
@@ -791,8 +866,9 @@ missing or wrong mask passes the first three shapes and fails this one.
 - **A fusion whose byte count dropped measures slower.** Allocation inside the
   call, or a working set inside L2, or register spilling, in that order.
 - **The first call takes a second and later ones are instant.** That's the JIT
-  compiling for a new set of `tl.constexpr` values. If it happens on *every*
-  call, your `BLOCK` is varying, so round it with `triton.next_power_of_2`.
+  compiler building a kernel for a new set of `tl.constexpr` values. If it
+  happens on *every* call, your `BLOCK` is varying, so round it with
+  `triton.next_power_of_2`.
 
 > [!RECAP]
 > - A Triton kernel describes one block. Mask every load and store, and set

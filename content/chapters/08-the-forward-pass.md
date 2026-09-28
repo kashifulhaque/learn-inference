@@ -2,8 +2,8 @@
 title: The forward pass
 slug: 08-the-forward-pass
 part: "Part 2 — A forward pass"
-summary: Assembling 64 layers, deriving the SwiGLU block, and checking your logits against the reference.
-minutes: 110
+summary: Assembling every layer you've built into one 64-layer model, deriving the SwiGLU block, and proving your logits match the reference.
+minutes: 115
 gpu: true
 objectives:
   - Assemble a hybrid decoder stack from the layers you have written.
@@ -19,42 +19,51 @@ lab: 08-forward-pass
 # The forward pass
 
 > [!TLDR]
-> - Every layer is `x + mixer(norm(x))` then `x + MLP(norm(x))`. Only the
->   mixer changes: full attention at layers 3, 7, …, 63, linear attention
->   everywhere else.
-> - The MLP is SwiGLU with an intermediate size of 17408. It holds 17.1 billion
->   parameters, 64% of the model.
-> - Normalize, slice to the last position, and only then project to the
->   248,320-wide vocabulary.
-> - Validate against `transformers` with logits, not text: correlation, top-1
->   agreement, and KL, all in float32. Bit-exact agreement is impossible.
-> - When the logits disagree, bisect to the first divergent layer, then check
->   that prefill and token-by-token decode give the same numbers.
+> - Every layer does the same two steps: mix information between positions,
+>   then transform each position on its own. Each step adds its result back to
+>   the running per-token vector. Only the mixer changes: full attention at every
+>   fourth layer (3, 7, …, 63), linear attention everywhere else.
+> - The MLP, a gated block called SwiGLU, holds 17.1 billion parameters, 64% of
+>   the model.
+> - To predict the next token, normalize, keep only the last position, and only
+>   then project onto the 248,320-token vocabulary.
+> - Check your model against Hugging Face `transformers` by comparing its raw
+>   output scores, not its generated text. Use correlation, top-1 agreement, and
+>   KL divergence, all in float32. Bit-exact agreement is impossible.
+> - When the scores disagree, find the first layer that diverges. Then check
+>   that processing the prompt all at once and one token at a time gives the
+>   same numbers.
 
-You have RMSNorm, RoPE, both token mixers, and now the MLP. This chapter puts
-them in order, loads real weights, and proves the result is right.
+Five chapters of parts come together here. You have embeddings, RMSNorm, RoPE,
+both token mixers, and, by the end of this chapter, the MLP. This chapter puts
+them in order, loads real weights, and proves the result is right. It's the
+first time the whole model runs.
 
 Be thorough here for a reason that has nothing to do with this chapter. From
 chapter 10 onwards, every optimization you write is checked against the
-implementation you finish today: a fused kernel against your unfused one, a
-paged attention kernel against your contiguous one, a quantized matmul against
-your bfloat16 one. All of those tests compare you against you. ==If this model
-is wrong, every later test still passes==, and nothing in the course tells you.
+implementation you finish today:
 
-Hugging Face `transformers` is the last independent implementation you get. Use
-it properly once, now.
+- A fused kernel against your unfused one.
+- A paged attention kernel against your contiguous one.
+- A quantized matmul against your bfloat16 one.
+
+All of those tests compare you against you. ==If this model is wrong, every
+later test still passes==, and nothing in the course tells you. Hugging Face
+`transformers` is the last independent implementation you get. Use it properly
+once, now.
 
 ## Before you start
 
 This chapter assumes the following:
 
 - **Chapter 0a's notation.** Tensor shapes are written `(batch, seq, hidden)`.
-  Einstein summation, softmax, bfloat16, and the GPU vocabulary (SM, HBM, L2)
-  are all defined there.
+  Einstein summation, softmax, bfloat16, and the GPU vocabulary are all defined
+  there: SMs, the streaming multiprocessors that do the arithmetic; HBM, the
+  GPU's main memory; and L2, the on-chip cache between them.
 - **The five components from chapters 3 to 7.** Token embeddings, RMSNorm,
   rotary position embeddings, the gated delta rule, and grouped-query
   attention. You don't need their internals, but you do need their signatures
-  and the shapes they accept.
+  and the shapes they accept. The next section recaps what each one does.
 - **PyTorch module composition.** `nn.Module`, `nn.ModuleList`, `nn.Linear`,
   `nn.Embedding`, and the fact that `nn.Linear(in_features, out_features)`
   stores a `weight` of shape `(out_features, in_features)` and computes
@@ -62,14 +71,44 @@ This chapter assumes the following:
 - **The model geometry from chapter 2.** Hidden size 5120, 64 layers, 24 query
   heads and 4 KV heads of width 256, intermediate size 17408, vocabulary
   248,320, every fourth layer full attention.
+- **Prefill and decode.** *Prefill* runs the whole prompt through the model in
+  one forward pass. *Decode* then generates one token per forward pass, reading
+  back what earlier steps stored in a cache.
 
 Two symbols recur. The hidden size $h = 5120$ is the width of the residual
 stream. The intermediate size $i = 17408$ is the width inside the MLP.
 
+## The whole model, in order
+
+Before the details, here's the whole journey of one prompt through the model.
+Every step is something you've built, apart from the MLP and the output head,
+which this chapter adds:
+
+1. **Token ids become vectors.** The embedding table from chapter 3 looks up a
+   5120-wide vector for each token. That vector starts the token's *residual
+   stream*, the running vector every layer reads from and adds to.
+2. **Sixty-four decoder layers each add two updates.** Each layer normalizes
+   the stream with RMSNorm (chapter 4), which rescales a vector to a steady
+   size. It runs a *mixer* that moves information between positions, and adds
+   the result back. Then it normalizes again, runs the MLP, and adds that
+   result back too.
+3. **The mixer is one of two kinds.** Every fourth layer uses grouped-query
+   attention (chapter 7), which looks back at every earlier token's keys and
+   values, with RoPE (chapter 5) marking each token's position. The other
+   layers use the gated delta rule (chapter 6), which folds the past into a
+   fixed-size state.
+4. **The output head turns the last vector into scores.** A final RMSNorm, then
+   one large matrix multiply, gives a score for every token in the vocabulary.
+   Chapter 11 turns those scores into a chosen token.
+
+The rest of the chapter walks that path in order: the layer skeleton, which
+mixer runs where, the MLP, and the output head. Then it loads real weights and
+checks the numbers.
+
 ## The decoder block
 
-Every one of the 64 layers has the same skeleton: two pre-norm sublayers, each
-wrapped in a residual connection. First the mixer, then the MLP:
+Every one of the 64 layers has the same skeleton: two pre-norm sublayers, each wrapped in a residual connection.
+First the mixer, then the MLP:
 
 $$
 x \leftarrow x + \operatorname{mixer}\big(\operatorname{norm}_1(x)\big)
@@ -102,50 +141,72 @@ a layer gets:
 self.is_full_attention = config.layer_types[layer_idx] == "full_attention"
 ```
 
+The next two tables open up each kind of mixer. The last column names the
+chapter that covers each step, so you can go back if a shape surprises you.
+
 ### A full-attention layer, with shapes
 
 Sixteen layers take this path. In the following table, $B$ is the batch, $T$ is
 the number of tokens in this forward pass, and $L$ is the number of context
-tokens, including the ones just written to the cache.
+tokens, including the ones this pass writes to the cache.
 
-| Step | Tensor | Shape |
-|---|---|---|
-| Input | `x` | `(B, T, 5120)` |
-| `input_layernorm` | `hidden` | `(B, T, 5120)` |
-| `q_proj` | `q` | `(B, T, 12288)` |
-| `chunk(2)` | `q`, `gate` | `(B, T, 6144)` each |
-| view and transpose | `q` | `(B, 24, T, 256)` |
-| `k_proj`, `v_proj` | `k`, `v` | `(B, 4, T, 256)` |
-| `q_norm`, `k_norm` | unchanged | `(B, 24, T, 256)`, `(B, 4, T, 256)` |
-| RoPE on the first `rotary_dim` channels | unchanged | as above |
-| `cache.append` | `k`, `v` | `(B, 4, L, 256)` |
-| attention | `out` | `(B, 24, T, 256)` |
-| transpose and reshape | `out` | `(B, T, 6144)` |
-| multiply by `sigmoid(gate)` | `out` | `(B, T, 6144)` |
-| `o_proj` | `out` | `(B, T, 5120)` |
+| Step | Tensor | Shape | Chapter |
+|---|---|---|---|
+| Input | `x` | `(B, T, 5120)` | |
+| `input_layernorm` | `hidden` | `(B, T, 5120)` | 4 |
+| `q_proj` | `q` | `(B, T, 12288)` | 7 |
+| `chunk(2)` | `q`, `gate` | `(B, T, 6144)` each | 7 |
+| view and transpose | `q` | `(B, 24, T, 256)` | 7 |
+| `k_proj`, `v_proj` | `k`, `v` | `(B, 4, T, 256)` | 7 |
+| `q_norm`, `k_norm` | unchanged | `(B, 24, T, 256)`, `(B, 4, T, 256)` | 7 |
+| RoPE on the first `rotary_dim` channels | unchanged | as in the preceding row | 5 |
+| `cache.append` | `k`, `v` | `(B, 4, L, 256)` | 9 |
+| attention | `out` | `(B, 24, T, 256)` | 7 |
+| transpose and reshape | `out` | `(B, T, 6144)` | 7 |
+| multiply by `sigmoid(gate)` | `out` | `(B, T, 6144)` | 7 |
+| `o_proj` | `out` | `(B, T, 5120)` | 7 |
 
-The query projection is 12288 wide, not 6144, because the second half is the
-output gate from chapter 7. The keys and values are 1024 wide because there are
-only 4 KV heads.
+A few reminders as these pieces plug in:
+
+- **The query projection is 12288 wide, not 6144**, because the second half is
+  the output gate from chapter 7, which lets a head switch its output off.
+- **The keys and values are 1024 wide** because there are only 4 KV heads, each
+  shared by six query heads.
+- **`q_norm` and `k_norm`** are per-head RMSNorms that bound the scale of the
+  attention scores.
+- **RoPE rotates channels by an angle that depends on position**, so a score
+  depends on how far apart two tokens are.
 
 ### A linear-attention layer, with shapes
 
-The other forty-eight layers take this path:
+The other forty-eight layers take this path. Here the past lives in a
+fixed-size state instead of a growing list of keys and values:
 
-| Step | Tensor | Shape |
-|---|---|---|
-| Input | `x` | `(B, T, 5120)` |
-| `in_proj_qkvz` | `qkvz` | `(B, T, 16384)` |
-| split into `q`, `k`, `v`, `z` | | `2048`, `2048`, `6144`, `6144` |
-| causal depthwise conv over `q,k,v` | `mixed` | `(B, T, 10240)` |
-| view into heads | `q`, `k` | `(B, 16, T, 128)` |
-| | `v` | `(B, 48, T, 128)` |
-| `repeat_interleave` q and k 3 times | `q`, `k` | `(B, 48, T, 128)` |
-| `in_proj_ba`, then gates | `alpha`, `beta` | `(B, 48, T)` |
-| delta rule | `out` | `(B, 48, T, 128)` |
-| | `state` | `(B, 48, 128, 128)` |
-| gated RMSNorm with `silu(z)` | `out` | `(B, T, 48, 128)` |
-| `out_proj` | `out` | `(B, T, 5120)` |
+| Step | Tensor | Shape | Chapter |
+|---|---|---|---|
+| Input | `x` | `(B, T, 5120)` | |
+| `in_proj_qkvz` | `qkvz` | `(B, T, 16384)` | 6 |
+| split into `q`, `k`, `v`, `z` | | `2048`, `2048`, `6144`, `6144` | 6 |
+| causal depthwise conv over `q,k,v` | `mixed` | `(B, T, 10240)` | 6 |
+| view into heads | `q`, `k` | `(B, 16, T, 128)` | 6 |
+| | `v` | `(B, 48, T, 128)` | |
+| `repeat_interleave` q and k 3 times | `q`, `k` | `(B, 48, T, 128)` | 6 |
+| `in_proj_ba`, then gates | `alpha`, `beta` | `(B, 48, T)` | 6 |
+| delta rule | `out` | `(B, 48, T, 128)` | 6 |
+| | `state` | `(B, 48, 128, 128)` | |
+| gated RMSNorm with `silu(z)` | `out` | `(B, T, 48, 128)` | 6 |
+| `out_proj` | `out` | `(B, T, 5120)` | 6 |
+
+As a reminder of what the chapter 6 pieces do:
+
+- **The causal convolution** mixes each channel with its previous three steps,
+  a short local window before the long-range recurrence.
+- **The gates `alpha` and `beta`** set, per head and per token, how fast the
+  state forgets and how strongly the new token writes into it.
+- **The delta rule** updates the $128 \times 128$ state per head, and the output
+  reads from it.
+- **`z`** gates the output through the RMSNorm, the same off-switch idea as the
+  attention output gate.
 
 > [!KEY] Both mixers have the same contract
 > Both mixers consume `(B, T, 5120)` and return `(B, T, 5120)`. The residual
@@ -165,15 +226,15 @@ So the full-attention layers are $\ell \in \{3, 7, 11, \ldots, 63\}$, which is
 16 of them, and the other 48 are linear attention. The pattern repeats every
 four layers:
 
-| Layers | Mixer |
-|---|---|
-| 0, 1, 2 | Gated delta linear attention |
-| 3 | Grouped-query attention, with a KV cache |
-| 4, 5, 6 | Gated delta linear attention |
-| 7 | Grouped-query attention, with a KV cache |
-| … | … |
-| 60, 61, 62 | Gated delta linear attention |
-| 63 | Grouped-query attention, with a KV cache |
+| Layers | Mixer | Keeps |
+|---|---|---|
+| 0, 1, 2 | Gated delta linear attention | A fixed-size state |
+| 3 | Grouped-query attention | A KV cache |
+| 4, 5, 6 | Gated delta linear attention | A fixed-size state |
+| 7 | Grouped-query attention | A KV cache |
+| … | … | … |
+| 60, 61, 62 | Gated delta linear attention | A fixed-size state |
+| 63 | Grouped-query attention | A KV cache |
 
 Two details fall out of this, and both matter later:
 
@@ -193,11 +254,14 @@ config.full_attention_layers    # [3, 7, 11, ..., 63]
 config.linear_attention_layers  # [0, 1, 2, 4, 5, 6, 8, ...]
 ```
 
+With the mixers placed, the one piece you haven't built yet is the MLP.
+
 ## The SwiGLU MLP
 
-The mixer moves information between positions. The MLP moves information
-between channels, at each position independently. It's also where most of the
-model's parameters live, so it's worth deriving rather than copying.
+The MLP is the second sublayer in every layer. The mixer moves
+information between positions. The MLP moves information between channels, at
+each position independently. It's also where most of the model's parameters
+live, so it's worth deriving rather than copying.
 
 ### From a feed-forward network to a gate
 
@@ -208,10 +272,14 @@ $$
 \operatorname{FFN}(x) = W_{\text{down}}\,\phi\big(W_{\text{up}}\,x\big)
 $$
 
-Here $x \in \mathbb{R}^{h}$ is one position's residual vector,
-$W_{\text{up}} \in \mathbb{R}^{i \times h}$, $W_{\text{down}} \in
-\mathbb{R}^{h \times i}$, and $\phi$ is applied elementwise. The intermediate
-width $i$ is conventionally $4h$.
+Read it right to left:
+
+- $x \in \mathbb{R}^{h}$ is one position's residual vector.
+- $W_{\text{up}} \in \mathbb{R}^{i \times h}$ widens it to $i$ channels.
+- $\phi$ is a nonlinearity, applied to each channel on its own.
+- $W_{\text{down}} \in \mathbb{R}^{h \times i}$ narrows it back to $h$.
+
+The intermediate width $i$ is conventionally $4h$.
 
 A *gated linear unit* replaces the single nonlinearity with a product of two
 projections. The $\hla{\text{gate}}$ projection passes through the
@@ -271,7 +339,11 @@ Three properties earn it the slot:
 Put the pieces together, with the $\hlc{\text{down}}$ projection applied last:
 
 $$
-\operatorname{SwiGLU}(x) = \hlc{W_{\text{down}}}\Big(\hla{\operatorname{SiLU}\big(W_{\text{gate}}\,x\big)} \odot \hlb{\big(W_{\text{up}}\,x\big)}\Big)
+\begin{aligned}
+\operatorname{SwiGLU}(x) = \hlc{W_{\text{down}}}\Big(
+&\hla{\operatorname{SiLU}\big(W_{\text{gate}}\,x\big)} \\
+&\odot \hlb{\big(W_{\text{up}}\,x\big)}\Big)
+\end{aligned}
 $$
 
 That's one line of PyTorch, and `engine/layers/mlp.py` is barely longer:
@@ -297,7 +369,7 @@ immediately upstream, the bias adds parameters and buys nothing measurable.
 ### Why 17408
 
 The conventional intermediate size is $4h = 20480$. This model uses 17408, and
-two forces set that number.
+two forces set that number: the parameter budget and hardware alignment.
 
 **Parameters.** A GLU has three matrices where an ungated FFN has two. An
 ungated block at $4h$ holds this many parameters:
@@ -328,15 +400,21 @@ makes that statement precise.
 > matrices came from.
 
 **Alignment.** $17408 = 17 \times 1024$. It's divisible by 1024, so it's
-divisible by 128 and by 256, the tile widths a bfloat16 tensor-core GEMM wants.
-It also splits evenly for tensor parallelism: across 8 GPUs each shard is
-$17408 / 8 = 2176$, still a multiple of 128; across 16 GPUs each shard is 1088,
-a multiple of 64. The two-thirds answer of 13,653 has none of those properties, and the nearest
+divisible by 128 and by 256. Those are the tile widths that tensor cores, the
+GPU's dedicated matrix-multiply units, want for a bfloat16 GEMM (general matrix
+multiply). It also splits evenly for tensor parallelism, which divides each
+matrix across GPUs:
+
+- Across 8 GPUs, each shard is $17408 / 8 = 2176$, still a multiple of 128.
+- Across 16 GPUs, each shard is 1088, a multiple of 64.
+
+The two-thirds answer of 13,653 has none of those properties, and the nearest
 aligned value would have to be chosen by hand anyway.
 
 ## The output head
 
-After layer 63, the residual stream gets one more normalization and one matrix
+The output head turns the last residual vector into a prediction. After layer
+63, the residual stream gets one more normalization and one matrix
 multiply:
 
 ```python
@@ -365,24 +443,26 @@ parameters, 9.5% of the model, before a single layer runs.
 ### Slice before you project
 
 The `last_token_only` slice isn't a micro-optimization. During prefill of 2048
-tokens, you need one row of the logits: the last position's, which predicts the
+tokens, you need one row of the output: the last position's, which predicts the
 first generated token. The following table compares projecting every position
 with projecting only that one:
 
 | Quantity | All 2048 positions | Last position only |
 |---|---|---|
 | FLOPs | $2 \cdot 2048 \cdot 5120 \cdot 248{,}320 \approx 5.21 \times 10^{12}$ | $2 \cdot 5120 \cdot 248{,}320 = 2.54$ GFLOPs |
-| Logits tensor | $2048 \times 248{,}320 \times 2 = 1.02$ GB | 497 KB |
+| Output tensor | $2048 \times 248{,}320 \times 2 = 1.02$ GB | 497 KB |
 
-At the A100's 312 TFLOP/s, the full projection has a floor of 16.7 ms. These
-figures are roofline bounds, not measurements; chapter 10 explains how to
-compute one.
+The A100's tensor cores peak at 312 TFLOP/s, trillions of floating-point
+operations per second. At that rate, the full projection takes at least 16.7
+ms. These figures are roofline bounds, best-case floors from the peak rate, not
+measurements; chapter 10 explains how to compute one.
 
 ### What a logit is
 
 The output is a vector $z \in \mathbb{R}^{V}$ per position, with
-$V = 248{,}320$. Each entry is an unnormalized log-probability. Exponentiate
-and normalize to get the distribution over the next token:
+$V = 248{,}320$. Each entry is a *logit*: an unnormalized log-probability, one
+raw score per vocabulary token. Exponentiate and normalize to get the
+distribution over the next token:
 
 $$
 p_j = \frac{e^{z_j}}{\sum_{m=1}^{V} e^{z_m}} .
@@ -399,27 +479,33 @@ Two consequences are worth holding on to:
   between the top logits rather than their values. In this model, trained
   logits typically land between about 10 and 30 in magnitude.
 
+The model is now complete on paper. The rest of the chapter makes it real:
+loading the weights, then proving the numbers are right.
+
 ## Loading weights
 
-The tensor names in the checkpoint don't match your module names. Write an
-explicit mapping rather than trying to make your class hierarchy mirror the
-file. An explicit map is easier to read, and ==it fails loudly when a name is
-missing== instead of silently leaving a tensor at its initialized value.
+The tensor names in the checkpoint don't match your module names, so the
+first job is getting each tensor to the right module. Write an explicit mapping
+rather than trying to make your class hierarchy mirror the file. An explicit map
+is easier to read, and ==it fails loudly when a name is missing== instead of
+silently leaving a tensor at its initialized value.
 
 `engine/weights.py` reads `model.safetensors.index.json`, which maps each tensor
-name to the shard holding it, and serves tensors by name from a memory-mapped
-file. Opening a shard costs nothing; you pay only for the tensors you read.
-That's what lets you load one layer at a time, move it to the GPU, and never
-hold more than one layer's worth of weights in host memory.
+name to the shard holding it. It serves tensors by name from a memory-mapped
+file, which the operating system reads from disk only when you touch it.
+
+Opening a shard costs nothing; you pay only for the tensors you read. That's
+what lets you load one layer at a time, move it to the GPU, and never hold more
+than one layer's worth of weights in host memory.
 
 Three checks catch nearly every loading bug:
 
 1. **Every checkpoint tensor is consumed.** Track which names you read and
    assert the set is complete at the end. An unconsumed tensor means you skipped
    a component: a norm, a gate, a convolution weight.
-2. **Every parameter is written.** Build the model on the `meta` device, or fill
-   every parameter with NaN before loading. A parameter still NaN afterwards
-   tells you immediately.
+2. **Every parameter is written.** Build the model on the `meta` device, which
+   allocates no storage, or fill every parameter with NaN before loading. A
+   parameter still NaN afterwards tells you immediately.
 3. **Shapes match exactly.** `nn.Linear(in_features, out_features).weight` has
    shape `(out_features, in_features)`, the transpose of the mathematical
    convention. Checkpoints usually follow the same convention, so a direct
@@ -433,8 +519,9 @@ Three checks catch nearly every loading bug:
 
 ## Validating against the reference
 
-To validate, load the same weights into `transformers`, run both models on the
-same token ids, and compare the outputs.
+How do you know your model is right? Load the same weights into
+`transformers`, run both models on the same token ids, and
+compare the outputs.
 
 Compare ==logits, not generated text==. Greedy decoding takes an argmax, which
 discards everything except the ranking of the top element. Two implementations
@@ -451,7 +538,8 @@ correlation  = torch.corrcoef(
 top1_match   = (mine.argmax(-1) == reference.argmax(-1)).float().mean()
 ```
 
-The lab adds a fourth: the mean KL divergence from the
+The lab adds a fourth, KL divergence, which asks how different two probability
+distributions are where it counts. It's the mean KL divergence from the
 $\hlc{\text{reference}}$ distribution $\hlc{p}$ to $\hld{\text{yours}}$,
 $\hld{q}$, averaged over positions:
 
@@ -484,9 +572,15 @@ Two reasons stand in the way, and neither is a bug you can fix.
 **Floating-point addition isn't associative.** For finite-precision values,
 $(a + b) + c \ne a + (b + c)$ in general, because each addition rounds. A matmul
 of inner dimension 5120 is a sum of 5120 products. The order in which a kernel
-accumulates them depends on its tile size, its split-K strategy, and how many
-warps it assigns to the reduction. Your kernel and cuBLAS's kernel choose
-differently, so they land on different sums of the same numbers.
+accumulates them depends on how it's organized:
+
+- Its tile size.
+- Its split-K strategy, which splits the 5120-long sum across several groups of
+  threads and adds the partial sums at the end.
+- How many warps, groups of 32 threads, it assigns to the reduction.
+
+Your kernel and cuBLAS's kernel choose differently, so they land on different
+sums of the same numbers.
 
 **bfloat16 has 8 bits of significand.** That's one sign bit, 8 exponent bits,
 and 7 stored mantissa bits, plus the implicit leading 1. The relative spacing
@@ -508,9 +602,8 @@ equally valid roundings.
 
 ## Bisecting a mismatch
 
-When the logits disagree, don't stare at the logits. ==Find the first layer
-where the residual streams diverge==; everything after it is downstream of one
-bug.
+When the logits disagree, don't stare at the logits. ==Find the first layer where the residual streams diverge==; everything
+after it is downstream of one bug.
 
 Register a forward hook on each decoder layer of both models, run one prompt,
 and collect the outputs into two lists in layer order. Then walk them:
@@ -526,8 +619,10 @@ def first_divergent_layer(mine, reference, tol=1e-2):
 The tolerance is a threshold, not a physical constant. Set it well above the
 bfloat16 noise floor for a hidden state and well below the size of a real bug.
 $10^{-2}$ on a residual stream whose entries are order 1 is roughly three times
-$\varepsilon$. If every layer is just over the line, your tolerance is too
-tight; if the first divergence is layer 63, it's too loose.
+$\varepsilon$. Two signs tell you the threshold is off:
+
+- If every layer is barely over the line, your tolerance is too tight.
+- If the first divergence is layer 63, it's too loose.
 
 The following table is a rough guide to what the first bad layer tells you:
 
@@ -541,13 +636,19 @@ The following table is a rough guide to what the first bad layer tells you:
 
 ## Prefill and decode must agree
 
-Prefill and decode run the same code with different shapes: $T$ large with the
-cache empty, versus $T = 1$ with the cache holding everything. They must
-produce the same numbers.
+One question remains before the engine can generate text: does your model give
+the same answer however you feed it the tokens? Prefill and decode run the same code with different shapes: $T$ large with the cache empty,
+versus $T = 1$ with the cache holding everything. They must produce the same
+numbers.
 
-The test is direct. Run a full forward pass over a sequence with no cache.
-Then create a cache, prefill a prefix, feed the remaining tokens one at a time,
-and compare the logits at matching positions:
+The test is direct:
+
+1. Run a full forward pass over a sequence with no cache.
+2. Create a cache and prefill a prefix.
+3. Feed the remaining tokens one at a time.
+4. Compare the logits at matching positions.
+
+The following code runs those steps:
 
 ```python
 reference = model(input_ids)                       # (1, T, vocab)
@@ -606,15 +707,19 @@ sits at absolute position $r + (L - T)$, where $L$ is the total context and $T$
 the number of new tokens. Drop that offset and the mask is correct during
 prefill, when $L = T$, and wrong on every decode step. Let a query see one
 position into the future and the model leaks the answer to itself during
-prefill and produces confident nonsense during decode. The symptom is a model
-that handles its prompt well and then drifts within a few dozen tokens.
+prefill and produces confident nonsense during decode.
+
+- Symptom: a model that handles its prompt well and then drifts within a few
+  dozen tokens.
 
 **A norm applied to the wrong tensor.** Pre-norm means `x + mixer(norm(x))`.
 It doesn't mean `norm(x + mixer(x))`, which is post-norm, and it doesn't mean
 `norm(x) + mixer(norm(x))`, which normalizes the residual stream itself. Both
-run, both produce finite numbers, and both are a different model. The symptom is degradation that compounds with depth:
-bisection shows a small divergence at layer 0 growing steadily to a large one at
-layer 63, the gradual-drift signature in the bisection table.
+run, both produce finite numbers, and both are a different model.
+
+- Symptom: degradation that compounds with depth. Bisection shows a small
+  divergence at layer 0 growing steadily to a large one at layer 63, the
+  gradual-drift signature in the bisection table.
 
 > [!RECAP]
 > - Each layer is two pre-norm residual sublayers. Only the mixer varies, and

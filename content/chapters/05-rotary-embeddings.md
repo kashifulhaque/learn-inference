@@ -2,7 +2,7 @@
 title: Rotary position embeddings
 slug: 05-rotary-embeddings
 part: "Part 2 — A forward pass"
-summary: RoPE derived from the relative-position requirement, then the partial and multimodal variants this model uses.
+summary: RoPE derived from the requirement that attention scores depend only on relative position, then the partial and multimodal variants this model uses.
 minutes: 80
 gpu: true
 objectives:
@@ -17,26 +17,32 @@ lab: 05-rope
 # Rotary position embeddings
 
 > [!TLDR]
-> - RoPE rotates each query and key by an angle proportional to its position.
->   In the score only the gap $m - n$ survives, with no learned parameters.
-> - A head is split into pairs with geometric frequencies set by `rope_theta`.
->   Raising $\Theta$ stops the slowest pair wrapping around over long context.
-> - This model rotates only the first 64 of 256 channels. The other 192 give
->   each head a content score that doesn't decay with distance.
-> - mRoPE gives image patches three coordinates. For text all three are equal, so
->   it reduces exactly to standard RoPE.
+> - Attention can't see word order on its own. RoPE fixes that by rotating each
+>   query and key by an angle proportional to its position, so the score
+>   between two tokens depends only on how far apart they are.
+> - Each head is split into pairs of channels that rotate at different speeds,
+>   like the hands of a clock. `rope_theta` sets how slow the slowest hand
+>   turns, and long-context models raise it so that hand doesn't lap itself.
+> - This model rotates only the first 64 of each head's 256 channels. The other
+>   192 give each head a content-matching score that doesn't fade with
+>   distance.
+> - mRoPE gives image patches three position coordinates. For text all three are
+>   equal, so it's exactly standard RoPE.
 
 Attention has no idea what order its inputs are in. Permute the tokens of a
 sequence and the attention output permutes with them, identically. "The cat sat
 on the mat" and "the mat sat on the cat" produce the same set of outputs,
 reordered. Position has to be injected deliberately.
 
-Rotary position embeddings do it by rotating each query and key vector by an
-angle proportional to its position. When a query at position $m$ meets a key at
-position $n$, the absolute angles cancel and only $m - n$ survives in the score.
-This chapter derives that rotation from the requirement, then covers the two
-things this model does differently: it rotates only a quarter of each head, and
-it carries three position coordinates instead of one.
+*Rotary position embeddings* (RoPE) do it by rotating each query and key vector
+by an angle proportional to its position. When a query at position $m$ meets a
+key at position $n$, the absolute angles cancel and only the gap $m - n$
+survives in the score.
+
+This chapter derives that rotation from the requirement, one dimension pair at a
+time. Then it covers the two things this model does differently: it rotates only
+a quarter of each head, and it carries three position coordinates instead of
+one.
 
 ## Before you start
 
@@ -71,9 +77,10 @@ real inner product is $\operatorname{Re}[z_x \overline{z_y}]$, where the bar is
 complex conjugation. The complex form makes the derivation two lines; the matrix
 form is what you implement.
 
-**Where this sits in the block.** Chapter 4 covered the per-head RMSNorm on
-queries and keys. RoPE comes immediately after it, and immediately before the
-key and value are written to the cache:
+**Where this sits in the block.** [Chapter 4](/c/04-rmsnorm-and-residuals)
+covered the per-head RMSNorm on queries and keys. RoPE comes immediately after
+it, and immediately before the key and value are written to the *KV cache*, the
+store of past keys and values that the engine keeps so it never recomputes them:
 
 ```python
 q, k, v, gate = self.project(x)          # q_norm and k_norm happen inside
@@ -84,16 +91,26 @@ if kv_cache is not None:
 ```
 
 That ordering means ==the cache stores keys that are already rotated==, so a
-cached key carries its absolute position baked in. Chapter 15 comes back to this
-when it tries to reuse a prefix.
+cached key carries its absolute position baked in.
+[Chapter 15](/c/15-paged-attention) comes back to this when it tries to reuse a
+prefix.
 
 ## The requirement
 
-The requirement is that the attention score depends on the gap between two
-positions and never on where they sit. Write $f(x, p)$ for the function that
-takes a vector and a position and produces the vector attention uses. The score
-between a query at $\hla{m}$ and a key at $\hlb{n}$ must depend on the two
-vectors and on the gap $\hlc{m - n}$, and on nothing else:
+Before any formula, this section pins down what "encode position" should mean,
+because the right requirement makes the answer almost fall out.
+
+Start with a picture. Imagine every vector as a clock hand, and every step along
+the sequence turns the hand by the same small angle. A token at position 10 has
+turned 10 steps; a token at position 15 has turned 15. On top of whatever angle
+the two hands started with, the extra angle between them is 5 steps' worth, and
+it's still 5 steps' worth if you move both tokens to positions 1010 and 1015. That's the property you want: the model sees
+how far apart two tokens are, not where they sit.
+
+Now say it precisely. Write $f(x, p)$ for the function that takes a vector and a
+position and produces the vector attention uses. The score between a query at
+$\hla{m}$ and a key at $\hlb{n}$ must depend on the two vectors and on the gap
+$\hlc{m - n}$, and on nothing else:
 
 $$
 \langle f(q, \hla{m}), f(k, \hlb{n}) \rangle = g(q, k, \hlc{m - n})
@@ -102,14 +119,15 @@ $$
 This is a strong constraint, and it rules out the obvious approaches. Adding a
 learned per-position vector, as the original transformer's learned embeddings
 do, gives a score with cross terms in $m$ and $n$ separately. Concatenating a
-position feature does the same. The constraint asks for the absolute positions to cancel
-==exactly, for every query and key==.
+position feature does the same. The constraint asks for the absolute positions
+to cancel ==exactly, for every query and key==.
 
 ## The two-dimensional solution
 
-With $d = 2$, a pure rotation satisfies the requirement, and the 2D case turns
-out to be the whole problem. Treat $q$ and $k$ as complex numbers and rotate
-each by its position times a fixed frequency $\theta$:
+The clock-hand picture already contains the answer, and this section checks it
+in two dimensions. With $d = 2$, a pure rotation satisfies the requirement, and
+the 2D case turns out to be the whole problem. Treat $q$ and $k$ as complex
+numbers and rotate each by its position times a fixed frequency $\theta$:
 
 $$
 f(x, p) = x\,e^{i p \theta}
@@ -120,9 +138,11 @@ conjugates, and $\overline{e^{i n \theta}} = e^{-i n \theta}$, so the two
 exponentials merge:
 
 $$
+\begin{aligned}
 \langle f(q, \hla{m}), f(k, \hlb{n}) \rangle
-= \operatorname{Re}\!\left[q e^{i \hla{m} \theta} \cdot \overline{k e^{i \hlb{n} \theta}}\right]
-= \boxed{\operatorname{Re}\!\left[q \bar{k}\, e^{i (\hlc{m - n}) \theta}\right]}
+&= \operatorname{Re}\!\left[q e^{i \hla{m} \theta} \cdot \overline{k e^{i \hlb{n} \theta}}\right] \\
+&= \boxed{\operatorname{Re}\!\left[q \bar{k}\, e^{i (\hlc{m - n}) \theta}\right]}
+\end{aligned}
 $$
 
 The absolute positions have cancelled. What remains is a function of $q$, $k$,
@@ -130,13 +150,17 @@ and $\hlc{m - n}$, which is exactly the requirement.
 
 ### The same thing as matrices
 
-In real coordinates, $f(x, p) = R(p\theta)x$. Write the gap as
+The code works with real numbers, so it helps to see the same result in real
+coordinates. There, $f(x, p) = R(p\theta)x$. Write the gap as
 $\hlc{\delta} = m - n$. The two rotations combine into one rotation by the gap,
 and expanding it gives the score in terms of the four coordinates:
 
 $$
+\begin{aligned}
 \langle R(\hla{m}\theta)q,\; R(\hlb{n}\theta)k \rangle
-= (q_0 k_0 + q_1 k_1)\cos(\hlc{\delta}\theta) + (q_0 k_1 - q_1 k_0)\sin(\hlc{\delta}\theta)
+&= (q_0 k_0 + q_1 k_1)\cos(\hlc{\delta}\theta) \\
+&\quad + (q_0 k_1 - q_1 k_0)\sin(\hlc{\delta}\theta)
+\end{aligned}
 $$
 
 > [!INTUITION]
@@ -160,16 +184,18 @@ $$
 > With $\delta = m - n$, that's $q^{\top} R(-\delta\theta) k$. Multiplying out
 > the 2-by-2 product gives the expansion in the body.
 
-Two consequences are worth naming now. The transform is orthogonal, so it
-doesn't change $\lVert q \rVert$ or $\lVert k \rVert$, and the per-head RMSNorm
-from chapter 4 survives it. And $f$ has no learned parameters at all; it's a
-fixed function of position.
+Two consequences are worth naming now:
+
+- **The transform is orthogonal.** It doesn't change $\lVert q \rVert$ or
+  $\lVert k \rVert$, so the per-head RMSNorm from chapter 4 survives it.
+- **It has no learned parameters.** $f$ is a fixed function of position.
 
 ## Extending to a full head
 
-A head is 256 channels, not 2, so split it into $d/2$ consecutive pairs, give
-pair $i$ its own frequency $\theta_i$, and rotate each pair independently. In
-matrix form that's a block-diagonal rotation:
+A real head isn't 2 channels wide, so this section scales the 2D answer up. A
+head is 256 channels. Split it into $d/2$ consecutive pairs, give pair $i$ its
+own frequency $\theta_i$, and rotate each pair independently. In matrix form
+that's a block-diagonal rotation:
 
 $$
 R_p =
@@ -196,6 +222,12 @@ holds for ==a head of any width==.
 
 ### The frequencies
 
+Why give each pair a different speed? Think of a clock again. The second hand
+tells apart moments a few seconds apart, but it can't tell 1:00 from 2:00. The
+hour hand can, but it barely moves in a few seconds. Together they cover both
+scales. The pairs of a head work the same way: fast pairs resolve nearby
+positions, slow pairs resolve distant ones.
+
 A single hyperparameter $\Theta$, `rope_theta` in the config, sets the
 frequencies as a geometric sequence:
 
@@ -220,12 +252,15 @@ encodes coarse position.
 
 ## What $\Theta$ controls, and why long context raises it
 
-$\Theta$ sets the *range* of wavelengths, from $2\pi$ at the fast end to about
-$2\pi\Theta$ at the slow end. It doesn't change the fast end at all.
+This section answers the one tuning question RoPE poses: how large should
+`rope_theta` be? $\Theta$ sets the *range* of wavelengths, from $2\pi$ at the
+fast end to about $2\pi\Theta$ at the slow end. It doesn't change the fast end
+at all.
 
 The design constraint is at the slow end. If the slowest wavelength is shorter
-than the context you intend to serve, the slowest pair wraps around, and
-positions a full wavelength apart become indistinguishable in every channel.
+than the context you intend to serve, the slowest pair wraps around, like an
+hour hand that can't tell 1:00 from 13:00. Positions a full wavelength apart then
+look identical to the one pair whose job was to tell far-apart positions apart.
 With $d = 64$, the slowest pair is $i = 31$:
 
 $$
@@ -239,20 +274,23 @@ The following table works out this wavelength for two values of $\Theta$:
 | $10^4$ | about $7.50 \times 10^{3}$ | about $4.71 \times 10^{4}$ | about 5.6 |
 | $10^7$ | about $6.04 \times 10^{6}$ | about $3.80 \times 10^{7}$ | about 0.0069 |
 
+Read the two rows as follows:
+
 - **At the classic $\Theta = 10{,}000$**, the slowest pair completes more than
   five full turns across a 262,144-token context. Position 1,000 and position
-  48,000 land at nearly the same angle in every pair, and the model has no way
-  to tell them apart.
+  48,000 land at nearly the same angle in that pair. Every faster pair has
+  wrapped even more often, so the model loses its coarse sense of which is
+  which.
 - **At $\Theta = 10^{7}$**, the slowest pair covers less than 1% of a turn,
   about 2.5 degrees, over the entire context. It has become a monotone coarse
   position signal instead of a periodic one.
 
 > [!KEY] Raising $\Theta$ is free at inference time, but not free in general
 > That's why long-context models raise it. $\Theta$ appears only in the table
-> you precompute, so it's the cheapest possible change to serve. But stretching the wavelengths spreads the same 32 pairs over a longer
-> range, so nearby positions become slightly harder to tell apart in the slow
-> pairs. A model trained at one $\Theta$ can't be served at another without
-> degradation.
+> you precompute, so it's the cheapest possible change to serve. But stretching
+> the wavelengths spreads the same 32 pairs over a longer range, so nearby
+> positions become slightly harder to tell apart in the slow pairs. A model
+> trained at one $\Theta$ can't be served at another without degradation.
 
 The literature on extending context after training, including position
 interpolation, NTK-aware scaling, and YaRN, is all about doing this rescaling in
@@ -260,6 +298,10 @@ a way the trained model tolerates. This model was trained at its $\Theta$, so th
 engine reads the config.
 
 ## Implementation
+
+You have the maths. This section turns it into the two pieces of code the lab
+asks for: a table of angles built once, and a rotation applied to every query
+and key.
 
 ### Precompute the tables
 
@@ -292,15 +334,15 @@ per channel that you never compute again.
 
 > [!WARNING] Compute the angles in float32
 > The angle at position $p$ for pair 0 is $p$ radians, and bfloat16 near 100,000
-> has an ulp of $2^{9} = 512$. Any two positions within 256 of each other round
-> to the same bfloat16 value, so a whole block of positions becomes
-> indistinguishable in every pair at once. Compute the angles in float32, take
-> the cosine and sine, which land in $[-1, 1]$ where bfloat16 is comfortable,
-> and cast after.
+> has an ulp, the gap between neighbouring representable values, of
+> $2^{9} = 512$. Positions there round to the nearest multiple of 512, so a
+> whole block of neighbouring positions collapses onto one value and becomes
+> indistinguishable. Compute the angles in float32, take the cosine and sine,
+> which land in $[-1, 1]$ where bfloat16 is comfortable, and cast after.
 
 ### Applying the rotation
 
-The textbook pairing puts channel $2i$ with channel $2i+1$. Implementations
+The derivation paired channel $2i$ with channel $2i+1$, but implementations
 overwhelmingly use a different pairing, the *half split*: within the rotary
 block, pair channel $j$ with channel $j + d/2$.
 
@@ -344,13 +386,15 @@ layout it was trained with.
 > Serve a checkpoint trained with the interleaved layout with the half-split
 > kernel and no permutation of the projection weights, and it pairs the wrong
 > channels and hands them the wrong frequencies. The model still runs and still
-> produces fluent text. It has no idea what order the words are in. Chapter 8's
-> end-to-end validation exists partly to catch this.
+> produces fluent text. It has no idea what order the words are in.
+> [Chapter 8](/c/08-the-forward-pass)'s end-to-end validation exists partly to
+> catch this.
 
 ## Partial rotary
 
-This model rotates only a quarter of each head. `partial_rotary_factor` is 0.25
-and `head_dim` is 256, so:
+This section covers the first way this model departs from textbook RoPE: it
+rotates only a quarter of each head. `partial_rotary_factor` is 0.25 and
+`head_dim`, the width of one head, is 256, so:
 
 $$
 \text{rotary\_dim} = 256 \times 0.25 = 64
@@ -367,7 +411,8 @@ rotated = rot * cos_full + _rotate_half(rot) * sin_full
 return torch.cat((rotated, passthrough), dim=-1)
 ```
 
-The tensors have the following shapes:
+The tensors have the following shapes, for the 24 query heads and the 4 key and
+value (KV) heads:
 
 | Tensor | Shape for `q` | Shape for `k` |
 |---|---|---|
@@ -390,21 +435,26 @@ only the head count differs.
 
 ### What the unrotated channels do, geometrically
 
-The transform on a full head is now block-diagonal with two blocks: a rotation
-on the first 64 channels and the identity on the last 192. Because it's
-block-diagonal, the score splits cleanly into a rotated part and a
+Why would a model leave three quarters of each head unrotated? The score
+answers it. The transform on a full head is now block-diagonal with two blocks:
+a rotation on the first 64 channels and the identity on the last 192. Because
+it's block-diagonal, the score splits cleanly into a rotated part and a
 $\hld{\text{passthrough}}$ part:
 
 $$
+\begin{aligned}
 \langle f(q, \hla{m}), f(k, \hlb{n}) \rangle
-= \underbrace{q_{\text{rot}}^{\top} R_{\hlb{n}-\hla{m}}\, k_{\text{rot}}}_{\text{depends on } \hlc{m - n}}
-\;+\;
-\underbrace{\hld{q_{\text{pass}}^{\top} k_{\text{pass}}}}_{\text{no position at all}}
+&= \underbrace{q_{\text{rot}}^{\top} R_{\hlb{n}-\hla{m}}\, k_{\text{rot}}}_{\text{depends on } \hlc{m - n}} \\
+&\quad + \underbrace{\hld{q_{\text{pass}}^{\top} k_{\text{pass}}}}_{\text{no position at all}}
+\end{aligned}
 $$
 
-Each head therefore computes a sum of two scores: a relative-position score over
-a 64-dimensional subspace, and a pure content-match score,
-$\hld{q_{\text{pass}}^{\top} k_{\text{pass}}}$, over a 192-dimensional subspace.
+Each head therefore computes a sum of two scores:
+
+- A relative-position score over a 64-dimensional subspace.
+- A pure content-match score, $\hld{q_{\text{pass}}^{\top} k_{\text{pass}}}$,
+  over a 192-dimensional subspace.
+
 The model chooses, per head and per direction, how much of its score to put in
 each.
 
@@ -425,19 +475,21 @@ channels of every KV head, because the passthrough channels are part of the key.
 The saving is arithmetic, and the arithmetic was never the bottleneck. Applying
 the rotation costs about 3 FLOPs per channel, so rotating 64 channels instead of
 256 across 28 heads saves about 16,000 FLOPs per token per full-attention layer.
-That's noise next to a 2.54 GFLOP output projection. Treat partial rotary
-as ==an architectural choice, not an optimization==.
+That's noise next to the 2.54 GFLOP per token of `lm_head`, the output
+projection onto the vocabulary. Treat partial rotary as
+==an architectural choice, not an optimization==.
 
 ## Multimodal RoPE
 
-This model accepts images, and an image isn't a sequence. A patch at row 7,
-column 12 of a frame has three coordinates, not one, and flattening them into a
-single index throws away the two-dimensional structure the model needs.
+This section covers the second departure: positions with more than one
+coordinate. This model accepts images, and an image isn't a sequence. A patch at
+row 7, column 12 of a frame has three coordinates, not one, and flattening them
+into a single index throws away the two-dimensional structure the model needs.
 
-mRoPE keeps the same rotation and changes where each pair reads its angle from.
-`mrope_section` is `[11, 11, 10]`, which sums to 32, so it splits the 32
-frequency pairs into three sections, and each section takes its angle from a
-different coordinate: time, height, and width.
+*mRoPE* (multimodal RoPE) keeps the same rotation and changes where each pair
+reads its angle from. `mrope_section` is `[11, 11, 10]`, which sums to 32, so it
+splits the 32 frequency pairs into three sections. Each section takes its angle
+from a different coordinate: time, height, and width.
 
 ```python
 def apply_mrope_sections(cos, sin, sections):
@@ -477,17 +529,19 @@ either mapping the text path is identical, for the same reason.
 
 ## Positions during decode
 
-Prefill passes positions $0, 1, \ldots, n-1$. Decode passes a single position:
-the index of the token being generated, which is the current cache length. One
-expression covers both phases:
+The last question is which position numbers to pass in, and it has a trap.
+*Prefill*, the pass that processes the whole prompt at once, passes positions
+$0, 1, \ldots, n-1$. *Decode*, which generates one token per step, passes a
+single position: the index of the token being generated, which is the current
+cache length. One expression covers both phases:
 
 ```python
 start = cache.length if cache is not None else 0
 positions = torch.arange(start, start + seq, device=input_ids.device)
 ```
 
-During prefill `cache.length` is 0 and `seq` is the prompt length; during decode
-`cache.length` is however many tokens are already cached and `seq` is 1.
+During prefill, `cache.length` is 0 and `seq` is the prompt length. During
+decode, `cache.length` is however many tokens are already cached and `seq` is 1.
 
 > [!WARNING] Passing position 0 on every decode step
 > It's an easy mistake when the decode path is written separately from prefill.
@@ -576,6 +630,8 @@ several-fold with nothing in the logs.
 > head. You pass when a query and key at gap 5 score the same wherever they sit.
 > The lab runs on GPU but is device agnostic, so the maths is checkable anywhere.
 
+The three functions and their checks are as follows.
+
 **`build_rope_cache(rotary_dim, max_position, theta, device, dtype)`** returns
 `cos` and `sin` of shape `(max_position, rotary_dim // 2)`, with
 $\theta_i = \Theta^{-2i/d}$. The harness checks the shape, that position 0 gives
@@ -588,9 +644,13 @@ split in halves.
 **`apply_rotary_partial(x, cos, sin, rotary_dim)`** rotates the first
 `rotary_dim` channels of a `(batch, heads, seq, head_dim)` tensor and passes the
 rest through. The harness runs it with `head_dim = 256`, `rotary_dim = 64`, and
-$\Theta = 10^{7}$. It checks that the shape survives, that channels past the
-boundary are bitwise unchanged, that channels before it do change, and that the
-norm of the rotated part is preserved to $10^{-4}$, the orthogonality property.
+$\Theta = 10^{7}$. It checks the following:
+
+- The shape survives.
+- Channels past the boundary are unchanged, to within $10^{-6}$.
+- Channels before the boundary do change.
+- The norm of the rotated part is preserved to $10^{-4}$, the orthogonality
+  property.
 
 Then comes the test the whole scheme exists for. The harness rotates a fixed
 query at $m$ and a fixed key at $n$ for the pairs $(10, 5)$, $(20, 15)$,

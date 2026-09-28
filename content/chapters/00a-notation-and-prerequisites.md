@@ -2,7 +2,7 @@
 title: Notation and prerequisites
 slug: 00a-notation-and-prerequisites
 part: "Part 1 — Ground truth"
-summary: The shapes, einsum strings, floating-point facts, and GPU vocabulary the rest of the course assumes.
+summary: A reference page to dip into, not read straight through. It covers the shapes, einsum strings, floating-point facts, and GPU vocabulary the rest of the course assumes.
 minutes: 35
 gpu: false
 objectives:
@@ -15,13 +15,13 @@ objectives:
 # Notation and prerequisites
 
 > [!TLDR]
-> - A shape lists named dimensions outermost first, and the last dimension is
->   contiguous in memory.
+> - A tensor's shape lists named dimensions outermost first, and the last
+>   dimension sits contiguously in memory.
 > - In an einsum string, a letter missing from the output is summed over.
 > - Softmax doesn't change when you shift every score by a constant, so every
->   implementation subtracts the maximum to avoid overflow.
-> - bfloat16 has float32's range but only 8 significand bits: a running sum
->   stops absorbing addends about 256 times smaller than itself.
+>   implementation subtracts the maximum first to avoid overflow.
+> - bfloat16 has float32's range but far less precision: a running sum stops
+>   absorbing addends about 256 times smaller than itself.
 > - GB is for vendor figures and GiB is for shape arithmetic. The GPU words and
 >   the course's symbols are collected at the end.
 
@@ -30,7 +30,12 @@ the course leans on: the shape conventions, the einsum notation, the linear
 algebra facts that recur, what floating-point formats actually store, and the
 GPU words that later chapters use without stopping to define.
 
-Skim it once, and come back when a chapter uses a symbol you don't recognize.
+> [!NOTE] You don't need to read this page top to bottom
+> Nobody needs to master it before chapter 1. Skim the headings once, then come
+> back when a chapter uses a symbol or a word you don't recognize. Each section
+> opens by saying why it matters later, so you can jump straight to the one you
+> need.
+
 Nothing here is proved at length. Each item exists so that chapter 6 can write
 $S_t = a_t S_{t-1} + \ldots$ and chapter 14 can say "subtract the running max"
 without a detour.
@@ -41,8 +46,10 @@ GPUs, transformers, or serving.
 
 ## Shapes and index conventions
 
-Every tensor in this course is written as a tuple of named dimensions, in the
-order they appear in memory, outermost first:
+Shape confusion is the most common way to get stuck in this course, so this
+section fixes how every chapter writes shapes and indices. Every tensor is
+written as a tuple of named dimensions, in the order they appear in memory,
+outermost first:
 
 ```text
 (batch, heads, seq, head_dim)
@@ -57,11 +64,13 @@ The course uses the following names consistently:
 
 - `batch` or `B`: independent sequences processed together.
 - `seq`, `q_len`, `kv_len`: token positions. `q_len` is how many queries this
-  call computes, and `kv_len` is how many keys they attend to. In decode,
-  `q_len` is 1 and `kv_len` is the whole context.
+  call computes, and `kv_len` is how many keys they attend to. In decode, the
+  phase that generates one new token per step, `q_len` is 1 and `kv_len` is
+  the whole context.
 - `heads`, `kv_heads`: attention heads. They differ in this model.
 - `head_dim`: width of one head, 256 here.
-- `hidden`: width of the residual stream, 5120 here.
+- `hidden`: width of the residual stream, the per-token vector that every layer
+  reads and adds to. It's 5120 here.
 
 In maths, indices follow three rules:
 
@@ -81,14 +90,15 @@ q = q.view(batch, q_len, heads, head_dim).transpose(1, 2)
 # q: (batch, heads, q_len, head_dim)
 ```
 
-Shape confusion is the most common way to get stuck in this course, so the
-listings say the shape after every reshape.
+That's why the listings say the shape after every reshape.
 
 ## Einstein summation
 
-`torch.einsum` writes a contraction by naming the indices, instead of arranging
-transposes and `reshape` calls until the dimensions line up. The whole
-specification is three rules:
+Chapters 6 and 7 write their contractions with `torch.einsum`, so reading an
+einsum string saves you from untangling transposes by hand. `torch.einsum`
+writes a contraction by naming the indices, instead of arranging transposes and
+`reshape` calls until the dimensions line up. The whole specification is three
+rules:
 
 1. Each input gets a group of letters, one per dimension, in order.
 2. A letter that appears in the inputs but not in the output is summed over.
@@ -142,7 +152,9 @@ This is $o_h = S_h^\top q_h$ written index by index.
 
 ## The linear algebra that keeps coming back
 
-Five facts recur across the course, each with the chapter that leans on it.
+Five linear algebra facts recur across the course, and knowing them in advance
+keeps the derivations in chapters 6 and 10 from feeling like leaps. Each one
+names the chapter that leans on it.
 
 **Outer products build state.** $k v^\top$ is a matrix of rank 1: every column
 is a multiple of $k$. Summing outer products, $S = \sum_j k_j v_j^\top$, packs
@@ -193,7 +205,9 @@ why the chunk size can stay small.
 
 ## Softmax, and why every implementation subtracts the max
 
-Softmax turns a vector of scores into a probability distribution:
+Attention and sampling both run softmax, and chapters 11 and 14 depend on one
+trick in how it's computed. Softmax turns a vector of scores into a probability
+distribution:
 
 $$
 \mathrm{softmax}(x)_i = \frac{e^{x_i}}{\sum_j e^{x_j}}
@@ -229,8 +243,9 @@ $$
 
 Two later chapters depend on this:
 
-- **Chapter 11** applies a temperature and a top-*p* cut to logits before
-  sampling, and the shift is what keeps that stable.
+- **Chapter 11** applies a temperature and a top-*p* cut to logits, the raw
+  scores the model outputs, before sampling, and the shift is what keeps that
+  stable.
 - **Chapter 14** goes further. FlashAttention never has the whole score row in
   memory at once, so it carries a *running* maximum and rescales the partial sum
   every time the maximum grows. Shift invariance is what makes that rescaling
@@ -238,8 +253,10 @@ Two later chapters depend on this:
 
 ## Floating-point formats
 
-Three formats appear in this course. Each stores a sign bit, an exponent field,
-and a mantissa field, and the value is roughly
+The weights are stored in bfloat16, and most numerical surprises in the labs
+come from what a format can and can't represent. Three formats appear in this
+course. Each stores a sign bit, an exponent field that sets the scale, and a
+mantissa field that holds the digits, and the value is roughly
 $(-1)^s \times 1.m \times 2^{e - \text{bias}}$:
 
 | Format | Sign | Exponent | Mantissa | Significand bits | Max finite |
@@ -249,19 +266,25 @@ $(-1)^s \times 1.m \times 2^{e - \text{bias}}$:
 | bfloat16 | 1 | 8 | 7 | 8 | $\approx 3.4 \times 10^{38}$ |
 
 The significand column counts the stored mantissa bits plus the implicit leading
-1.
+1. More significand bits means more precision; more exponent bits means more
+range.
 
 The two 16-bit formats make opposite trades:
 
 - **bfloat16 is float32 with 16 mantissa bits deleted.** It keeps the 8-bit
-  exponent, so it has float32's range: any float32 value that isn't subnormal
-  converts to bfloat16 without overflowing or flushing to zero. What it gives up
-  is precision: 8 significand bits, about 2 decimal digits.
+  exponent, so it has float32's range: any float32 value that isn't subnormal,
+  one of the tiny values below the smallest normal number, converts to
+  bfloat16 without overflowing or flushing to zero. What it gives up is precision: 8 significand
+  bits, about 2 decimal digits.
 - **float16 keeps precision and gives up range.** It has 11 significand bits,
   but an exponent that runs out at 65504. That's why float16 training needs loss
   scaling and why this course keeps weights in bfloat16.
 
 ## Rounding error and vanishing addends
+
+Labs compare your output with a reference to a tolerance, not exactly, and some
+state stays in float32 even though the weights are bfloat16. Chapters 4, 5, and
+6 lean on the reason, which starts with one definition.
 
 A *unit in the last place* (ULP) is the gap between one representable number and
 the next. For a value in $[2^e, 2^{e+1})$ with $\hlb{p}$ significand bits, that
@@ -322,8 +345,9 @@ cast down only at the end.
 
 ## GPU vocabulary
 
-This section gives enough vocabulary to read the kernel chapters, with numbers
-for the A100 80GB this course targets.
+Chapter 10 and the kernel chapters, 12 to 15, use these words without stopping
+to define them. This section gives enough vocabulary to read those chapters,
+with numbers for the A100 80GB this course targets.
 
 **Streaming multiprocessor (SM).** The GPU's unit of independent execution. An
 A100 has 108 of them, and each has its own registers, scheduler, and shared
@@ -351,16 +375,17 @@ largest and slowest:
 | HBM (global memory) | 80 GB | Whole GPU | Hundreds of cycles, 1275 GB/s measured |
 
 *HBM* is high-bandwidth memory: the DRAM stacked next to the die. It's where
-the weights and the KV cache live, and ==it's the bottleneck in almost
-everything this course measures==. Shared memory is a software-managed
-scratchpad, not a cache: you copy into it explicitly. In one sentence,
-FlashAttention is an attention kernel that keeps its working set in shared
-memory instead of round-tripping through HBM.
+the weights and the KV cache, the stored keys and values of past tokens, live,
+and ==it's the bottleneck in almost everything this course measures==. Shared
+memory is a software-managed scratchpad, not a cache: you copy into it
+explicitly. In one sentence, FlashAttention is an attention kernel that keeps
+its working set in shared memory instead of round-tripping through HBM.
 
 **Kernel launch.** Handing one GPU function to the driver to run across many
 blocks. Each launch costs 5 to 10 microseconds of overhead. That's nothing for a
 big kernel and a serious cost for a decode step that issues several hundred
-small ones, which is why CUDA graphs exist.
+small ones, which is why CUDA graphs exist. A CUDA graph records a sequence of
+launches once and replays it as a unit.
 
 **Memory coalescing.** When the 32 threads of a warp read 32 consecutive
 addresses, the hardware merges them into a few wide transactions. When they read
@@ -377,7 +402,9 @@ goal; a kernel at 25% occupancy that saturates bandwidth is finished.
 
 ## Units
 
-Storage has two conventions, and this course uses both deliberately:
+Byte counts appear in almost every chapter, and they come in two conventions
+that differ by about 7% at the gigabyte scale. This course uses both
+deliberately:
 
 $$
 1\ \mathrm{GB} = 10^{9}\ \text{bytes}, \qquad
@@ -403,7 +430,8 @@ pretending to be exact.
 
 ## Symbols used across the course
 
-The following table lists the symbols later chapters use, with their values for
+When a formula uses a symbol that isn't defined nearby, look it up here. The
+following table lists the symbols later chapters use, with their values for
 this model:
 
 | Symbol | Meaning | This model |
@@ -416,7 +444,7 @@ this model:
 | $d_{ff}$ | MLP intermediate width | 17408 |
 | $h$ | query heads in a full-attention layer | 24 |
 | $h_{kv}$ | key-value heads | 4 |
-| $g$ | GQA group size, $h / h_{kv}$ | 6 |
+| $g$ | grouped-query attention (GQA) group size, $h / h_{kv}$ | 6 |
 | $d_h$ | head dimension | 256 |
 | $d_r$ | rotary dimension, the rotated channels per head | 64 |
 | $V$ | vocabulary size | 248,320 |

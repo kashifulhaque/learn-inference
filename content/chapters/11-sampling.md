@@ -2,14 +2,14 @@
 title: Sampling
 slug: 11-sampling
 part: "Part 3 — Making it fast"
-summary: Turning 248,320 logits into one token — softmax and temperature from first principles, the truncations, the penalties, and the order that makes the knobs mean what they say.
+summary: Turning 248,320 raw scores into one token — softmax and temperature from first principles, the truncations, the penalties, and the order that makes the knobs mean what they say.
 minutes: 75
 gpu: false
 objectives:
   - Derive softmax with temperature and take its zero and infinite limits.
   - Show why subtracting the row maximum is mandatory in floating point.
   - Derive top-k, top-p, and min-p as truncations of a categorical distribution.
-  - Say which pairs of sampling transforms commute and which do not.
+  - Say which pairs of sampling transforms commute and which don't.
   - Prove that the Gumbel-max trick samples from the right distribution.
   - Cost a full-vocabulary softmax in bytes, FLOPs, and kernel launches.
 lab: 11-sampling
@@ -18,16 +18,19 @@ lab: 11-sampling
 # Sampling
 
 > [!TLDR]
-> - Softmax is the only map that makes logit differences into log-odds, and
->   temperature divides every log-odds by $\hla{T}$.
-> - Subtract the row maximum before you exponentiate. Without it, one logit
->   above 88.72 turns the whole row into `NaN`.
-> - Top-k, top-p, and min-p all mask logits to $-\infty$ and let softmax
->   renormalize. Min-p is a window of $|\ln \hlc{m}|$ logits below the top.
+> - The model ends with one raw score, a *logit*, per vocabulary entry. Softmax
+>   turns the scores into probabilities, and temperature stretches or squeezes
+>   the gaps between them to make the output more predictable or more varied.
+> - Subtract the largest logit before you exponentiate. Without that step, a
+>   single logit above 88.72 overflows float32 and turns the whole row into
+>   `NaN`.
+> - Top-k, top-p, and min-p all work the same way: they set the scores of
+>   excluded tokens to $-\infty$ and let softmax share the probability among
+>   the tokens that are left.
 > - Order matters: penalties, then temperature, then top-k, min-p, and top-p.
->   Temperature after top-p gives a narrower nucleus than the user asked for.
-> - By bytes, sampling is 0.05% of a decode step. By kernel launches, it isn't,
->   so production engines fuse it into one kernel.
+>   Temperature after top-p leaves fewer choices than the user asked for.
+> - Sampling moves almost no data, but a naive pipeline launches about twenty
+>   tiny GPU functions per step, so production engines fuse it into one.
 
 The forward pass ends with a vector of 248,320 numbers. The last linear layer,
 the *LM head*, multiplies the final hidden state by a `(5120, 248320)` matrix
@@ -42,10 +45,11 @@ To generate text, you need three things from them:
    token isn't always the token you want.
 3. A draw, reproducible from a seed, cheap enough to run every step.
 
-Each operation is trivial on its own. Composing them isn't: ==the same five
+Each operation is small on its own. Composing them isn't: ==the same five
 transforms in two different orders give two different distributions==, and
 only one of them matches what the parameter names promise. This chapter builds
-the three things in order, and then works out the order.
+the three things in order, then works out the order, and ends with what the
+whole pipeline costs on a GPU.
 
 ## Before you start
 
@@ -65,8 +69,8 @@ logit shifts its log-odds by that constant, which makes log-odds the natural
 unit for penalties.
 
 **Floating point.** Chapter 0a has the full table of formats. This chapter
-leans on two facts: bfloat16 and float32 share an 8-bit exponent, and float16
-doesn't.
+leans on two facts. A format's exponent field sets its range, the largest value
+it can hold. bfloat16 and float32 share an 8-bit exponent, and float16 doesn't.
 
 **PyTorch.** `topk`, `sort`, `cumsum`, `masked_fill`, `gather`, `scatter`, and
 `multinomial`, all with an explicit `dim`. The reference implementation is
@@ -74,13 +78,20 @@ doesn't.
 
 ## From logits to a distribution
 
-Softmax is the only map from logits to probabilities that makes logit
+This section answers the first need, a probability distribution, and shows that
+softmax is the only map from logits to probabilities that makes logit
 differences into log-odds.
 
-The model was trained with a cross-entropy loss, so the logits were fitted such
-that their *differences* carry the information. Adding the same constant to
-every logit changes nothing: a bias in the last layer could absorb it. So ask
-that logit differences *be* log-odds:
+Start with what the answer looks like. In the lab's five-logit row, the top two
+tokens have logits 3 and 2, and softmax gives them probabilities 0.6364 and
+0.2341. The first is $0.6364 / 0.2341 = 2.72$ times as likely as the second,
+which is $e^{1}$. A gap of one logit is a factor of $e$ in the odds, whatever
+the logits' absolute values are.
+
+That's no accident. The model was trained with a cross-entropy loss, so the
+logits were fitted such that their *differences* carry the information. Adding
+the same constant to every logit changes nothing: a bias in the last layer could
+absorb it. So ask that logit differences *be* log-odds:
 
 $$
 \log \frac{p_i}{p_j} = z_i - z_j \quad \text{for every } i, j.
@@ -105,16 +116,25 @@ imposed.
 
 ## Temperature
 
-Temperature is one knob that sharpens or flattens the distribution by scaling
-every log-odds. Divide the logits by the temperature $\hla{T} > 0$ before the
-softmax:
+This section answers the second need, trading fidelity against variety, with one
+knob that sharpens or flattens the distribution by scaling every log-odds.
+
+Picture the two top tokens again, one logit apart, with odds of $e^{1} = 2.72$
+to 1. Divide both logits by 2 and the gap halves to 0.5, so the odds fall to
+$e^{0.5} = 1.65$ to 1: the runner-up gets more of a chance. Divide by 0.5
+instead and the gap doubles to 2, so the odds rise to $e^{2} = 7.39$ to 1: the
+favorite pulls ahead.
+
+That divisor is the temperature $\hla{T} > 0$, and it's applied to the logits
+before the softmax:
 
 $$
 p_i(\hla{T}) = \frac{e^{z_i / \hla{T}}}{\sum_{j=1}^{V} e^{z_j / \hla{T}}}.
 $$
 
-The name comes from the Boltzmann distribution, which has the same form. Apply
-the log-odds identity, and temperature divides every log-odds by $\hla{T}$:
+The name comes from the Boltzmann distribution in physics, which has the same
+form. Apply the log-odds identity, and temperature divides every log-odds by
+$\hla{T}$:
 
 $$
 \log \frac{p_i(\hla{T})}{p_j(\hla{T})} = \frac{z_i - z_j}{\hla{T}}.
@@ -134,9 +154,10 @@ The two extremes of temperature are greedy decoding and uniform noise:
 - **As $\hla{T} \to \infty$**, $p_i(\hla{T}) \to 1/V$. The distribution is
   uniform over the whole vocabulary, and the model's output stops mattering.
 
-Between the two, the entropy of $p(\hla{T})$ rises monotonically with
-$\hla{T}$, from 0 at the greedy end to
-$\log V = \log 248{,}320 \approx 12.42$ nats at the uniform end.
+In between, the distribution spreads out steadily. Its *entropy*, a measure of
+how spread out it is, rises monotonically with $\hla{T}$. It goes from 0 at the
+greedy end to $\log V = \log 248{,}320 \approx 12.42$ *nats*, entropy's
+natural-log unit, at the uniform end.
 
 The engine special-cases `temperature == 0` to a plain `argmax` instead of
 dividing by something near zero. ==The limit exists, but the float arithmetic
@@ -194,8 +215,14 @@ If your sampler's temperature knob has no visible effect, check this first.
 
 ## Shift invariance and the max subtraction
 
-Adding a constant to every logit leaves softmax unchanged, and in floating point
-the right constant is the difference between a correct answer and a `NaN`.
+This section shows that adding a constant to every logit leaves softmax
+unchanged, and that in floating point the right constant is the difference
+between a correct answer and a `NaN`.
+
+The picture is a group photo where you measure everyone's height relative to
+the tallest person. The relative heights are all that matter, so you can choose
+any reference point. Softmax only sees logit differences, so the same freedom
+applies.
 
 For any $c \in \mathbb{R}$, with $\mathbf{1}$ for the all-ones vector, the
 factor $e^c$ appears in the numerator and the denominator:
@@ -209,8 +236,10 @@ holds for every $c$, so in exact arithmetic the choice of $c$ is free.
 
 ### The overflow arithmetic
 
-$e^x$ overflows to infinity once $x$ exceeds the natural log of the format's
-largest finite value. The thresholds for the three formats are as follows:
+In floating point the choice isn't free, because $e^x$ grows fast enough to
+leave the format. It overflows to infinity once $x$ exceeds the natural log of
+the format's largest finite value. The thresholds for the three formats are as
+follows:
 
 | Format | Exponent bits | Largest finite value | $e^x$ overflows above |
 |---|---|---|---|
@@ -264,6 +293,9 @@ idea behind the online softmax in [chapter 14](/c/14-flash-attention).
 
 ## Greedy against sampling
 
+This section covers the simplest sampler, always taking the top token, and why
+it isn't enough.
+
 At temperature 0, the sampler returns $\operatorname{arg\,max}_i z_i$. That's
 *greedy decoding*: deterministic, reproducible without a seed, and the right
 default for extraction, classification, and structured output. It isn't "the
@@ -272,8 +304,9 @@ most likely answer," though.
 Greedy maximizes the probability of each token given the prefix, one step at a
 time. That's not the same as maximizing the probability of the whole sequence:
 a token that's second-best now can open a continuation that's far more likely
-overall, and greedy never sees it. Beam search exists to find the
-high-probability sequence; greedy doesn't attempt it.
+overall, and greedy never sees it. *Beam search*, which keeps several candidate
+sequences alive at once, exists to find the high-probability sequence; greedy
+doesn't attempt it.
 
 Greedy also has a well-documented failure: on open-ended text, it falls into
 loops, repeating a phrase indefinitely. The nucleus sampling paper measured
@@ -281,9 +314,11 @@ this, and it's the reason the whole truncation family exists.
 
 ## Truncation: one operation, three rules
 
-Top-k, top-p, and min-p are the same operation with different rules for choosing
-a keep-set $S \subseteq \{1, \dots, V\}$. Keep only those outcomes and
-renormalize:
+This section sets up top-k, top-p, and min-p, which all do the same thing: cut
+off the unlikely tail so that a random draw can't land in it.
+
+They differ only in the rule for choosing a keep-set
+$S \subseteq \{1, \dots, V\}$. Keep only those outcomes and renormalize:
 
 $$
 q_i = \frac{p_i \, \mathbf{1}[i \in S]}{\sum_{j \in S} p_j}.
@@ -293,7 +328,9 @@ The code never writes that division. It sets the logits outside $S$ to
 $-\infty$ and lets the softmax renormalize:
 
 $$
-\operatorname{softmax}(\tilde z)_i = \frac{e^{\tilde z_i}}{\sum_j e^{\tilde z_j}}, \qquad \tilde z_i = \begin{cases} z_i & i \in S \\ -\infty & i \notin S. \end{cases}
+\tilde z_i = \begin{cases} z_i & i \in S \\ -\infty & i \notin S \end{cases}
+\qquad
+\operatorname{softmax}(\tilde z)_i = \frac{e^{\tilde z_i}}{\sum_j e^{\tilde z_j}}
 $$
 
 Because $e^{-\infty} = 0$, the numerator for $i \notin S$ and the excluded terms
@@ -310,8 +347,9 @@ Two consequences follow:
 
 ### Top-k
 
-Top-k keeps the indices $S_k$ of the $k$ largest logits, ties broken
-arbitrarily. The whole implementation is a threshold:
+Top-k keeps the $k$ most likely tokens and nothing else. Formally, it keeps the
+indices $S_k$ of the $k$ largest logits, ties broken arbitrarily. The whole
+implementation is a threshold:
 
 ```python
 def top_k_filter(logits, k):                      # logits: (batch, vocab)
@@ -336,9 +374,17 @@ isn't==:
 
 ## Top-p: a fixed mass
 
-Top-p, or nucleus sampling, replaces top-k's fixed count with a fixed mass.
-Sort the probabilities descending, $p_{(1)} \ge p_{(2)} \ge \dots \ge p_{(V)}$,
-and write the cumulative sums as follows:
+This section covers top-p, or nucleus sampling, which fixes top-k's weakness by
+keeping a fixed share of probability instead of a fixed count.
+
+Picture pouring tokens into a bucket, most likely first, and stopping as soon as
+the bucket holds at least $p$ of the probability. The token that tips it over
+stays in. On a confident row, one or two tokens fill the bucket; on a flat row,
+hundreds do.
+
+Formally, sort the probabilities descending,
+$p_{(1)} \ge p_{(2)} \ge \dots \ge p_{(V)}$, and write the cumulative sums as
+follows:
 
 $$
 C_n = \sum_{r=1}^{n} p_{(r)}, \qquad C_0 = 0.
@@ -413,7 +459,10 @@ costs nothing and it protects against `p = 0`.
 
 ## Min-p: a logit window
 
-Min-p keeps every token at least `min_p` times as likely as the most likely one:
+This section covers min-p, which scales its cutoff with the model's confidence:
+it keeps every token at least `min_p` times as likely as the most likely one.
+At `min_p = 0.1`, a token survives if it's at least a tenth as likely as the
+favorite.
 
 ```python
 def min_p_filter(logits, min_p):                       # logits: (batch, vocab)
@@ -428,7 +477,12 @@ The rule is a ratio, so the normalizer $Z$ cancels. Write $\hlc{m}$ for the
 `min_p` parameter and $z_{\max} = \max_j z_j$, then take logs:
 
 $$
-p_i \ge \hlc{m} \, p_{\max} \iff \frac{e^{z_i}}{Z} \ge \hlc{m} \frac{e^{z_{\max}}}{Z} \iff e^{z_i - z_{\max}} \ge \hlc{m} \iff \boxed{\, z_i \ge z_{\max} + \ln \hlc{m} \,}
+\begin{aligned}
+p_i \ge \hlc{m} \, p_{\max}
+&\iff \frac{e^{z_i}}{Z} \ge \hlc{m} \frac{e^{z_{\max}}}{Z} \\
+&\iff e^{z_i - z_{\max}} \ge \hlc{m} \\
+&\iff \boxed{\, z_i \ge z_{\max} + \ln \hlc{m} \,}
+\end{aligned}
 $$
 
 > [!INTUITION]
@@ -457,16 +511,22 @@ model's own confidence, so it grows only in proportion to $\hla{T}$.
 
 ## The order, and which pairs commute
 
-Only three kinds of adjacent pair change the output when swapped; knowing which
-is more useful than memorizing the list. The engine applies the transforms in
-this order:
+You now have five transforms. This section answers the question the opening
+raised: in what order do they run, and which swaps change the answer?
 
-1. **Penalties**, on raw logits.
+Swapping two adjacent steps changes the output for only three kinds of pair,
+and knowing which is more useful than memorizing the list. The engine applies
+the transforms in this order:
+
+1. **Penalties**, on raw logits. The penalties section later in this chapter
+   covers them; for now, they push down the logits of tokens already
+   generated.
 2. **Temperature**, dividing logits.
 3. **Truncation**: top-k, then min-p, then top-p.
 4. **Softmax and draw.**
 
-The following table shows which pairs commute:
+The following table shows which pairs *commute*, meaning that swapping them
+gives the same result:
 
 | Pair | Commutes? | Why |
 |---|---|---|
@@ -480,24 +540,27 @@ The following table shows which pairs commute:
 ### Repetition penalty commutes with temperature
 
 The repetition penalty maps a seen token's logit $z$ to $z/\rho$ when $z > 0$
-and to $z\rho$ when $z \le 0$, for $\rho > 1$. Temperature first gives
-$z/(\hla{T}\rho)$ and $z\rho/\hla{T}$; penalty first gives
-$(z/\rho)/\hla{T}$ and $(z\rho)/\hla{T}$, the same two expressions. Dividing
-by a positive $\hla{T}$ can't change the sign, so the branch taken is the same
-too.
+and to $z\rho$ when $z \le 0$, for $\rho > 1$. Apply both steps in each order:
+
+- **Temperature first** gives $z/(\hla{T}\rho)$ and $z\rho/\hla{T}$.
+- **Penalty first** gives $(z/\rho)/\hla{T}$ and $(z\rho)/\hla{T}$, the same
+  two expressions.
+
+Dividing by a positive $\hla{T}$ can't change the sign, so the branch taken is
+the same too.
 
 ### Additive penalties don't commute
 
-Presence and frequency penalties subtract. Before temperature, a penalty
-$\alpha$ becomes $(z - \alpha)/\hla{T} = z/\hla{T} - \alpha/\hla{T}$; after
-it, $z/\hla{T} - \alpha$. The effective strength differs by a factor of
-$\hla{T}$.
+Presence and frequency penalties subtract a constant $\alpha$. Before
+temperature, the penalty becomes $(z - \alpha)/\hla{T} = z/\hla{T} -
+\alpha/\hla{T}$; after it, $z/\hla{T} - \alpha$. The effective strength differs
+by a factor of $\hla{T}$.
 
-The convention is penalties first, so the effective log-odds shift is $\alpha/\hla{T}$: at
-`temperature = 0.7`, a presence penalty of `0.5` behaves like `0.714` in the
-space the truncations see. Document that rather than "fixing" it, because users
-tune penalties at a fixed temperature and expect the same numbers to work across
-engines.
+The convention is penalties first, so the effective log-odds shift is
+$\alpha/\hla{T}$. At `temperature = 0.7`, a presence penalty of `0.5` behaves
+like `0.714` in the space the truncations see. Document that rather than
+"fixing" it, because users tune penalties at a fixed temperature and expect the
+same numbers to work across engines.
 
 ### Temperature before truncation
 
@@ -543,8 +606,10 @@ Each truncation has its own reason for its place:
 
 ## Penalties as logit transforms
 
-Both penalty families map $z \mapsto z'$ before temperature, and they differ in
-whether they respect the log-odds geometry.
+This section covers the penalties, which discourage the model from repeating
+itself by lowering the logits of tokens it has already produced. Both families
+map $z \mapsto z'$ before temperature, and they differ in whether they respect
+the log-odds geometry.
 
 ### Repetition penalty
 
@@ -621,14 +686,18 @@ cost section takes into account.
 
 ## The Gumbel-max trick
 
-The Gumbel-max trick samples from a categorical distribution with one argmax:
-no normalization, no cumulative sum, and no search.
+This section covers the third need, the draw, and a way to do it with one
+argmax: no normalization, no cumulative sum, and no search.
 
 Everything so far ends at `torch.multinomial`, which wants a normalized
 probability vector, builds a cumulative sum, draws a uniform, and searches.
-Instead, let $\hld{G_1}, \dots, \hld{G_V}$ be independent standard Gumbel
-variables. You get one from a uniform $U \sim \text{Uniform}(0,1)$ as
-$\hld{G} = -\ln(-\ln U)$. Then:
+The alternative is a race. Give every token a random bonus, add it to the
+token's logit, and pick the highest total. With the right kind of random bonus,
+each token wins with exactly its softmax probability.
+
+The right kind is the *Gumbel* distribution. Let $\hld{G_1}, \dots, \hld{G_V}$
+be independent standard Gumbel variables. You get one from a uniform
+$U \sim \text{Uniform}(0,1)$ as $\hld{G} = -\ln(-\ln U)$. Then:
 
 $$
 \boxed{\,\operatorname{arg\,max}_{i} \, (z_i + \hld{G_i}) \sim \operatorname{softmax}(z)\,}
@@ -686,6 +755,9 @@ The argmax form has three properties that the cumulative-sum form doesn't:
 
 ## Seeding and reproducibility
 
+This section answers when a seed reproduces a generation, and how far you can
+promise that it does.
+
 A generation must reproduce exactly given a seed and identical inputs, which
 means threading an explicit generator rather than relying on global state:
 
@@ -694,15 +766,17 @@ gen = torch.Generator(device=logits.device).manual_seed(1234)
 token = torch.multinomial(probs, num_samples=1, generator=gen)   # (batch, 1)
 ```
 
-The global RNG is shared with every other operation in the process. A dropout
-layer, a shuffled dataloader, or another request's sampler consumes draws from
-it, so the same seed reproduces only if nothing else ever draws. An explicit
-`torch.Generator` is owned by the request.
+The global random number generator (RNG) is shared with every other operation in the
+process. A dropout layer, a shuffled dataloader, or another request's sampler
+consumes draws from it, so the same seed reproduces only if nothing else ever
+draws. An explicit `torch.Generator` is owned by the request.
 
 Reproducibility *across batch sizes* is a much stronger requirement, and it's
 usually not worth paying for. Floating-point addition isn't associative, so a
 reduction that splits a row differently at batch 1 and batch 8 produces logits
-that differ in the last bits. The LM head runs in bfloat16, which resolves
+that differ in the last bits.
+
+That small difference is enough. The LM head runs in bfloat16, which resolves
 logits to about `0.39%` relative, and with 248,320 candidates, several are
 routinely within that of each other. An argmax near a tie flips, and every
 subsequent token changes with it.
@@ -713,8 +787,8 @@ subsequent token changes with it.
 
 ## What sampling costs
 
-Sampling is negligible by bytes and expensive by kernel launches. Do the
-arithmetic before you dismiss it.
+This section prices the pipeline on a GPU: it's negligible by bytes and
+expensive by kernel launches. Do the arithmetic before you dismiss it.
 
 ### One softmax
 
@@ -732,11 +806,14 @@ $$
 \frac{7.45 \times 10^{5}}{1.99 \times 10^{6}} = 0.375 \ \text{FLOPs per byte}.
 $$
 
-[Chapter 10](/c/10-roofline) put the A100's ridge point at 161 FLOPs per byte,
-so softmax sits below it by a factor of $161 / 0.375 = 429$. It's as memory
-bound as anything in the engine. At the measured copy bandwidth of 1275 GB/s,
-the pass takes $1.99 \times 10^{6} / 1.275 \times 10^{12} = 1.6$
-microseconds; the arithmetic, at 312 TFLOP/s, would take 2.4 nanoseconds.
+[Chapter 10](/c/10-roofline) put the A100's ridge point, the FLOPs per byte an
+operation needs before arithmetic rather than memory limits it, at 161. Softmax
+sits below it by a factor of $161 / 0.375 = 429$, as memory bound as anything in
+the engine. The timings follow:
+
+- **Memory.** At the measured copy bandwidth of 1275 GB/s, the pass takes
+  $1.99 \times 10^{6} / 1.275 \times 10^{12} = 1.6$ microseconds.
+- **Arithmetic.** At 312 TFLOP/s, it would take 2.4 nanoseconds.
 
 ==Only the bytes matter.== That also prices a naive softmax: PyTorch's multi-pass
 form, with one kernel each for the max, the exponentials, the sum, and the
@@ -771,7 +848,9 @@ $$
 \frac{53.8 \times 10^{9}}{1.275 \times 10^{12}} = 42.2 \text{ ms}.
 $$
 
-By bytes, sampling is 0.05% of a decode step. By launches, it isn't:
+By bytes, sampling is 0.05% of a decode step. By launches, it isn't. A *kernel*
+is one function the GPU runs, and *launching* one costs the CPU a fixed
+overhead before any work starts:
 
 - The table is about twenty separate kernels, each on a single row of 248,320
   elements.
@@ -779,7 +858,8 @@ By bytes, sampling is 0.05% of a decode step. By launches, it isn't:
   100 to 200 microseconds in overhead against 21 microseconds of traffic.
   ==The launches cost five to ten times what the memory does.==
 - A row of 248,320 elements is 970 blocks at 256 threads, barely nine per SM
-  across 108 SMs, so no kernel has enough work to hide the next launch.
+  across the A100's 108 SMs, its independent processors. No kernel has enough
+  work to hide the next launch.
 
 Three further costs don't show up in either count:
 
@@ -787,7 +867,8 @@ Three further costs don't show up in either count:
   result make the GPU drain, and the CPU can't queue the next step's launches
   until it returns. On a 42 ms step the stall is absorbed, but the sampler is
   the one point where the pipeline is guaranteed to empty.
-- **A hole in the CUDA graph.** Data-dependent control flow, the sort in
+- **A hole in the CUDA graph.** A *CUDA graph* records a whole step's kernels
+  and replays them as one launch. Data-dependent control flow, the sort in
   particular, can't be captured. Chapter 10 noted that a decode step runs
   several hundred kernels and that graph capture removes that overhead. The hole
   costs more than the sampler's own time.
@@ -858,7 +939,7 @@ distribution a second time.
 > Both are shifts, and shift invariance holds for any constant, so both are
 > *mathematically* safe. Only the maximum guarantees that every exponent is at
 > most 0. Subtracting the mean leaves the largest logit above zero by however
-> far it exceeds the mean, and on a peaked 248,320-entry row that gap can easily
+> far it exceeds the mean, and on a peaked 248,320-entry row that gap can
 > exceed 88.7.
 
 > [!QUESTION] At `temperature = 1.5` and `min_p = 0.05`, how wide is the keep window in raw logits, and how many tokens does that admit?

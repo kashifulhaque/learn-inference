@@ -2,7 +2,7 @@
 title: FlashAttention
 slug: 14-flash-attention
 part: "Part 4 — Kernels"
-summary: Deriving the online softmax one step at a time, then building the tiled kernel that never writes a score matrix to memory.
+summary: Building the online softmax from a four-score example and then deriving it one step at a time, then writing the tiled kernel that never writes a score matrix to memory.
 minutes: 150
 gpu: true
 objectives:
@@ -17,34 +17,36 @@ lab: 14-flash-attention
 # FlashAttention
 
 > [!TLDR]
-> - Naive attention writes and reads an $L^2$ score matrix four times. At 8192
->   tokens, that's 97% of its memory traffic.
-> - The online softmax keeps three running values per query row, a maximum, a
->   sum, and an output, and repairs the last two with one scalar each time the
->   maximum rises.
+> - Ordinary attention builds a table of scores, one for every pair of tokens,
+>   and pushes it through GPU memory four times. At 8192 tokens, that table is
+>   97% of the memory traffic.
+> - The *online softmax* avoids the table. Each query keeps three running
+>   values, a maximum, a sum, and an output, and fixes the last two with one
+>   multiply whenever the maximum rises.
 > - The result is exact, not approximate. Only the order of floating-point
 >   additions changes.
-> - The tiled kernel keeps the accumulator in registers, stages $K$ and $V$
->   through shared memory, and never gives the score matrix an address.
-> - The Triton kernel runs at 0.63x of the vendor kernel and uses 27.5x less peak
->   memory than the naive path.
+> - The tiled kernel keeps its running output on the chip, streams the keys and
+>   values past it, and never gives the score table a place in memory.
+> - The Triton kernel runs at 0.63x the speed of the vendor kernel and uses 27.5x
+>   less peak memory than the naive path.
 
 Attention is the one operation in the model whose intermediate result is larger
 than the model. Everything else, including the projections, the MLP, and the
 norms, produces activations proportional to the number of tokens. Attention
-produces a score matrix proportional to the *square* of the number of tokens, and
-the naive implementation writes that matrix to memory, reads it back, writes it
+produces a score matrix proportional to the *square* of the number of tokens.
+The naive implementation writes that matrix to memory, reads it back, writes it
 again, and reads it once more.
 
-FlashAttention never writes it. The kernel produces the scores in tiles, consumes
-them immediately, and throws them away before the next tile arrives. The
-arithmetic is ==identical to the naive version, not approximate==, and the
+FlashAttention never writes it. The kernel produces the scores in tiles,
+consumes them immediately, and throws them away before the next tile arrives.
+The arithmetic is ==identical to the naive version, not approximate==, and the
 algorithm runs several times faster because it moves far fewer bytes.
 
-This chapter derives the trick that makes that possible. The obstacle is the
+This chapter builds the trick that makes that possible. The obstacle is the
 softmax: it needs a normalizer over an entire row, and you don't have the whole
-row until you've seen every key. The fix, the *online softmax*, is four lines of
-algebra that most treatments compress into one. Here it gets four sections.
+row until you've seen every key. The fix, the online softmax, is four lines of
+algebra that most treatments compress into one. Here it gets a worked example
+you can check by hand, and then four sections.
 
 ## Before you start
 
@@ -56,8 +58,10 @@ $$
 O = \operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d}}\right) V.
 $$
 
-$L_q$ is the number of query positions in this call, $L_k$ the number of cached
-key positions, and $d$ the head dimension: 256 in this model, 128 in the lab.
+$L_q$ is the number of query positions in this call, and $L_k$ is the number of
+cached key positions. $d$ is the head dimension, `head_dim` in code: 256 in this
+model, 128 in the lab. Each entry of $QK^\top / \sqrt{d}$ is a *score*, one for
+every query-key pair.
 
 **Softmax and its shift invariance.** For a vector $s$ and any constant $c$, the
 $e^{-c}$ cancels between numerator and denominator:
@@ -67,13 +71,15 @@ $$
 = \frac{e^{s_j - c}}{\sum_k e^{s_k - c}}.
 $$
 
-Chapter 0a proves it. Implementations take $c = \max_k s_k$ so that every
+Chapter 0a proves it. Implementations take $c = \max_k s_k$, so that every
 exponent is at most zero and $e^{s_j-c} \in (0, 1]$, which makes overflow
 impossible. That choice of $c$ is the only reason attention needs a maximum at
 all, and it's what the online softmax has to work around.
 
-**Registers, shared memory, HBM.** Three levels, each roughly an order of
-magnitude smaller and faster than the one below it:
+**Registers, shared memory, HBM.** A GPU has three levels of memory that
+matter here. Each is roughly an order of magnitude smaller and faster than the
+one below it. An SM, or streaming multiprocessor, is one of the A100's 108
+processor cores:
 
 | Level | Size on an A100 | Who can address it |
 |---|---|---|
@@ -84,16 +90,21 @@ magnitude smaller and faster than the one below it:
 Chapter 0a has the vocabulary. The entire design of this kernel is a statement
 about which tensor belongs at which level.
 
+**Tensor cores.** The units on each SM that do small matrix multiplies far
+faster than ordinary arithmetic. A kernel reaches them through a matmul call,
+`tl.dot` in Triton.
+
 **Triton basics from [chapter 13](/c/13-fusion-in-triton).** `tl.load` and
 `tl.store` with masks, `tl.dot` for a tile matmul, `tl.max` and `tl.sum` with an
 `axis`, and `tl.program_id` to find out which tile this program owns.
 
 ## What the naive version costs
 
-The naive version spends almost all of its memory, and almost all of its memory
-traffic, on the score matrix. Take the model's real geometry: 24 query heads,
-head dimension 256, and a sequence of 8192 tokens. One head's score matrix holds
-this many entries:
+This section measures the problem that FlashAttention solves. The naive version
+spends almost all of its memory, and almost all of its memory traffic, on the
+score matrix. Take the model's real geometry: 24 query heads, head dimension
+256, and a sequence of 8192 tokens. One head's score matrix holds this many
+entries:
 
 $$
 8192 \times 8192 = 67{,}108{,}864 \text{ entries}.
@@ -108,21 +119,29 @@ Count capacity first:
   element size and doubles the count: about 12.9 GB for one sequence, against
   53.8 GB of weights.
 
-Now count traffic. The naive path makes four passes over an $L^2$ matrix: write
-the scores, read them for the softmax, write the probabilities, and read them for
-the value multiply. The inputs $Q$, $K$, $V$ together are only $3Ld$ elements.
-At $L = 8192$ and $d = 256$, the inputs are 12.6 MB per head and the score
-traffic is 537 MB per head.
+Now count traffic. The naive path makes four passes over an $L^2$ matrix:
+
+1. Write the scores.
+2. Read them for the softmax.
+3. Write the probabilities.
+4. Read them for the value multiply.
+
+The inputs $Q$, $K$, and $V$ together are only $3Ld$ elements. At $L = 8192$
+and $d = 256$, the inputs are 12.6 MB per head, and the score traffic is 537 MB
+per head.
 
 The operation spends ==97% of its memory traffic== on a matrix that exists only
-to be consumed immediately. That's why long-context prefill runs out of memory
-before it runs out of time.
+to be consumed immediately. That's why long-context *prefill*, the phase that
+processes the whole prompt at once, runs out of memory before it runs out of
+time.
 
 ## Why softmax resists tiling
 
-The two matmuls tile, and the softmax between them doesn't. $QK^\top$ is a
-matmul, $PV$ is a matmul, and matmuls tile: you can compute a block of the output
-from blocks of the inputs, accumulating partial sums.
+This section explains why you can't cut the score matrix into tiles and handle
+them one at a time, which is the obvious fix. The two matmuls tile, and the
+softmax between them doesn't. $QK^\top$ is a matmul, $PV$ is a matmul, and
+matmuls tile: you can compute a block of the output from blocks of the inputs,
+accumulating partial sums.
 
 To normalize row $i$, the softmax needs a maximum and a sum over the whole row:
 
@@ -137,22 +156,85 @@ computing.
 
 Two escapes exist:
 
-1. **Two passes.** Compute $m_i$ and $\ell_i$ over the keys in the first pass
+1. **Two passes.** Compute $m_i$ and $\ell_i$ over the keys in the first pass,
    and the output in the second. That doubles the reads of $K$.
 2. **One pass with repair.** Compute everything in one pass, and *repair* the
    running values each time the maximum moves. This is the online softmax, and
    ==the repair costs a multiply==.
 
-The next four sections build the online softmax one quantity at a time, with one
-colour per quantity: the running maximum $\hla{m}$, the running sum $\hlb{\ell}$,
-the running output $\hlc{u}$, and the correction factor $\hld{\alpha}$.
+Next, you watch the repair work on four numbers before seeing it in general.
+
+## The online softmax on four scores
+
+This section runs the whole algorithm by hand on a row small enough to check.
+One query has four scores, split into two blocks of two. Each key carries a
+value, a single number here instead of a vector:
+
+| | Key 1 | Key 2 | Key 3 | Key 4 |
+|---|---|---|---|---|
+| Block | 1 | 1 | 2 | 2 |
+| Score $s_j$ | 1 | 2 | 4 | 3 |
+| Value $v_j$ | 10 | 20 | 30 | 40 |
+
+The goal is the softmax-weighted average of the values, computed while you see
+only one block at a time. You keep three running numbers, each with its own
+colour for the rest of the chapter:
+
+- The running maximum $\hla{m}$: the largest score so far.
+- The running sum $\hlb{\ell}$: the sum of $e^{s_j - \hla{m}}$ over the scores
+  so far, measured against the current maximum.
+- The running output $\hlc{u}$: the sum of $e^{s_j - \hla{m}} v_j$, measured
+  against the same maximum.
+
+**Block 1.** The larger score is 2, so $\hla{m} = 2$. Measure each score
+against it:
+
+- $e^{1-2} = 0.368$ and $e^{2-2} = 1$.
+- $\hlb{\ell} = 0.368 + 1 = 1.368$.
+- $\hlc{u} = 0.368 \times 10 + 1 \times 20 = 23.68$.
+
+**Block 2, and the maximum moves.** This block's larger score is 4, so the new
+maximum is 4. The new terms, measured against 4, are $e^{4-4} = 1$ and
+$e^{3-4} = 0.368$. They add $1.368$ to the sum and
+$1 \times 30 + 0.368 \times 40 = 44.72$ to the output.
+
+You can't add those to the old totals yet. The old $\hlb{\ell}$ and $\hlc{u}$
+were measured against a maximum of 2, and the new terms against 4. Multiplying
+any old term $e^{s_j - 2}$ by $e^{2-4}$ turns it into $e^{s_j - 4}$, so one
+multiply converts each whole total. That factor is the correction
+$\hld{\alpha} = e^{2-4} = 0.135$:
+
+- $\hlb{\ell} = 0.135 \times 1.368 + 1.368 = 0.185 + 1.368 = 1.553$.
+- $\hlc{u} = 0.135 \times 23.68 + 44.72 = 3.20 + 44.72 = 47.92$.
+
+**Finish.** Divide once: $47.92 / 1.553 = 30.86$.
+
+**Check against the ordinary softmax.** With all four scores at once, the
+maximum is 4. The exponentials are $e^{-3}$, $e^{-2}$, $e^{0}$, and $e^{-1}$,
+or 0.050, 0.135, 1, and 0.368, which sum to 1.553. The weighted sum is
+$0.050 \times 10 + 0.135 \times 20 + 1 \times 30 + 0.368 \times 40 = 47.92$,
+and $47.92 / 1.553 = 30.86$. It's the same answer.
+
+> [!INTUITION]
+> The running totals are recorded in units of "relative to the current
+> maximum." When the maximum rises, $\hld{\alpha}$ is the exchange rate that
+> converts an old total into the new units. It costs one multiply per total, no
+> matter how many terms the total already holds.
+
+Three facts made that work, and the next four sections turn each one into
+general algebra:
+
+- The maximum only ever moves up (stage 1).
+- One scalar converts every old term to the new maximum (stage 2).
+- The sum and the output both convert with that same scalar (stages 3 and 4).
 
 ## Stage 1: the streaming maximum
 
-The running maximum is the easy part. Process the keys in blocks. Write $S_t$
-for the set of key indices covered by the first $t$ blocks, and $s_j$ for the
-scaled score of key $j$ against the query row you're tracking. The running
-maximum after $t$ blocks is the following:
+The first question is how to track a row's maximum when you see the row one
+block at a time, and it's the gentlest of the four stages. Write $S_t$ for the set of key indices
+covered by the first $t$ blocks, and $s_j$ for the scaled score of key $j$
+against the query row you're tracking. The running maximum after $t$ blocks is
+the following:
 
 $$
 \hla{m^{(t)}} = \max_{j \in S_t} s_j .
@@ -167,11 +249,13 @@ $$
 
 Start at $\hla{m^{(0)}} = -\infty$, so the first block sets the maximum outright.
 The sequence $\hla{m^{(0)}} \le \hla{m^{(1)}} \le \dots$ ==never decreases==, and
-that monotonicity is what makes the rest safe.
+that monotonicity is what makes the rest safe. In the example, $\hla{m}$ went
+from $-\infty$ to 2 to 4.
 
 ## Stage 2: the rescaling identity
 
-Everything turns on one line of algebra. For any score $s_j$ and any two shifts
+This stage generalizes the exchange rate from the example, and everything turns
+on one line of algebra. For any score $s_j$ and any two shifts
 $m_{\text{old}}$ and $m_{\text{new}}$, add and subtract $m_{\text{old}}$ in the
 exponent, then split the exponential of a sum into a product:
 
@@ -204,8 +288,8 @@ $\hld{\alpha} \in (0, 1]$:
 
 ## Stage 3: correcting the running sum
 
-The running sum updates with one multiply by $\hld{\alpha}$. Define it shifted by
-the *current* running maximum:
+This stage shows that the running sum updates with one multiply by
+$\hld{\alpha}$. Define the sum shifted by the *current* running maximum:
 
 $$
 \hlb{\ell^{(t)}} = \sum_{j \in S_t} e^{s_j - \hla{m^{(t)}}}.
@@ -213,8 +297,8 @@ $$
 
 Read that carefully. The shift inside the sum is $\hla{m^{(t)}}$, which changes
 from step to step. That's what makes the update non-obvious, and it's why you
-need stage 2. Splitting the sum into old and new terms, and rescaling the old
-ones, gives the update:
+need stage 2. Split the sum into old and new terms, and rescale the old ones, to
+get the update:
 
 $$
 \boxed{\hlb{\ell^{(t+1)}} = \hld{\alpha_{t+1}}\, \hlb{\ell^{(t)}}
@@ -227,7 +311,8 @@ with $\hlb{\ell^{(0)}} = 0$.
 > [!INTUITION]
 > The old sum is already stored, but under the old shift. Multiply it by
 > $\hld{\alpha}$ and it's correct under the new shift. Then add the new block's
-> terms, which you compute directly under the new shift.
+> terms, which you compute directly under the new shift. In the example, that
+> was $0.135 \times 1.368 + 1.368$.
 
 > [!DEEPDIVE] Derive the running-sum update
 > Split the new sum into old terms and new terms:
@@ -251,8 +336,9 @@ with $\hlb{\ell^{(0)}} = 0$.
 
 ## Stage 4: correcting the running output
 
-The running output updates the same way. Define the unnormalized running output,
-a vector of length $d$, where $v_j$ is the value row for key $j$:
+This stage shows that the running output updates the same way as the sum.
+Define the unnormalized running output, a vector of length $d$, where $v_j$ is
+the value row for key $j$:
 
 $$
 \hlc{u^{(t)}} = \sum_{j \in S_t} e^{s_j - \hla{m^{(t)}}}\, v_j .
@@ -266,9 +352,9 @@ $$
 + \sum_{j \in \Delta_{t+1}} e^{s_j - m^{(t+1)}}\, v_j}
 $$
 
-Start at $\hlc{u^{(0)}} = 0$. The second term is a small matmul, a row of $B_c$
-probabilities against a $(B_c, d)$ block of values, and the first term is a
-scalar times a $d$-vector.
+Start at $\hlc{u^{(0)}} = 0$. The second term is a small matmul: a row of $B_c$
+probabilities, where $B_c$ is the number of keys per block, against a
+$(B_c, d)$ block of values. The first term is a scalar times a $d$-vector.
 
 That's the whole algorithm: ==three running quantities per query row==,
 $\hla{m^{(t)}}$, $\hlb{\ell^{(t)}}$, and $\hlc{u^{(t)}}$, and one correction
@@ -276,9 +362,10 @@ factor $\hld{\alpha}$ shared between the last two.
 
 ## Why the result is exact
 
-People expect a streaming algorithm to approximate something. This one doesn't,
-and the proof is two lines. After the final block $T$, with
-$S_T = \{1, \dots, L_k\}$, divide the output by the sum:
+This section proves that the streaming result equals the ordinary softmax, not
+an approximation of it. People expect a streaming algorithm to approximate
+something. This one doesn't, and the proof is two lines. After the final block
+$T$, with $S_T = \{1, \dots, L_k\}$, divide the output by the sum:
 
 $$
 \boxed{\frac{\hlc{u^{(T)}}}{\hlb{\ell^{(T)}}}
@@ -297,9 +384,9 @@ Each equality has one justification:
 
 No term is dropped, no series is truncated, and no tolerance is chosen. The only
 difference from a one-pass softmax is the *order* in which floating-point
-additions happen. Floating-point addition isn't associative, so the last bits can
-differ: in float32 the labs see agreement to about $10^{-5}$, and in bfloat16 to
-about $10^{-2}$. Both are ==rounding, not approximation==.
+additions happen. Floating-point addition isn't associative, so the last bits
+can differ: in float32 the labs see agreement to about $10^{-5}$, and in
+bfloat16 to about $10^{-2}$. Both are ==rounding, not approximation==.
 
 There's a small irony here. The online version does *more* arithmetic than the
 naive one: every block pays for a maximum, an exponential of the correction, and
@@ -308,13 +395,13 @@ arithmetic was never the constraint.
 
 ## The tiled algorithm
 
-The tiled algorithm runs the four stages over tiles of queries and keys. Choose
-two block sizes: $B_r$ query rows per tile and $B_c$ key columns per tile. The
-kernel in `engine/kernels/flash_attn_triton.py` defaults to $B_r = 128$ and
-$B_c = 64$, named `BLOCK_M` and `BLOCK_N`.
+This section turns the four stages into a loop over tiles, which is the shape
+the kernel takes. Choose two block sizes: $B_r$ query rows per tile and $B_c$
+key columns per tile. The kernel in `engine/kernels/flash_attn_triton.py`
+defaults to $B_r = 128$ and $B_c = 64$, named `BLOCK_M` and `BLOCK_N`.
 
-The outer loop runs over query tiles and isn't a loop at all. It's the launch
-grid, one program per tile, all running at once:
+The outer loop runs over query tiles, and it isn't a loop at all. It's the
+launch grid, one program per tile, all running at once:
 
 ```python
 grid = (triton.cdiv(q_len, block_m), batch * heads)
@@ -338,11 +425,14 @@ query tile $Q_i$ of shape $(B_r, d)$:
    - $\hla{m} \leftarrow m_{\text{new}}$.
 4. $O_i \leftarrow \hlc{u} / \hlb{\ell}$, and store to HBM.
 
-Two details are worth naming. The division by $\hlb{\ell}$ happens once, at
-the end, not once per block: dividing inside the loop would be correct but would
-cost $B_r \times d$ divisions per block instead of per tile. And the accumulator
-$\hlc{u}$ never leaves registers, so the kernel writes the output to HBM exactly
-once.
+Each pass of step 3 is the "Block 2" step of the worked example, done for 128
+query rows at once. Two details are worth naming:
+
+- **The division by $\hlb{\ell}$ happens once, at the end.** Dividing inside the
+  loop would be correct, but it would cost $B_r \times d$ divisions per block
+  instead of per tile.
+- **The accumulator $\hlc{u}$ never leaves registers.** So the kernel writes the
+  output to HBM exactly once.
 
 > [!NOTE] Why the loops run this way round
 > The original FlashAttention paper runs the loops the other way round: outer
@@ -353,8 +443,9 @@ once.
 
 ## What lives where
 
-This section places every tensor at a memory level, for the lab's geometry:
-$B_r = 128$, $B_c = 64$, $d = 128$, and bfloat16 inputs.
+This section places every tensor at a memory level, because that placement is
+the whole design. It uses the lab's geometry: $B_r = 128$, $B_c = 64$,
+$d = 128$, and bfloat16 inputs.
 
 **In registers, per program,** each program holds the following:
 
@@ -365,17 +456,17 @@ $B_r = 128$, $B_c = 64$, $d = 128$, and bfloat16 inputs.
 | $\hla{m}$, $\hlb{\ell}$ | $(128,)$ each | float32 | 1 KiB |
 | $S$, $P$ | $(128, 64)$ | float32 | 32 KiB each, transient |
 
-An A100 SM has 256 KB of register file shared by every resident program. The
-accumulator alone is 64 KiB, which is why the kernel asks for `num_warps=8` when
+An A100 SM has 256 KB of register file, shared by every resident program. The
+accumulator alone is 64 KiB. That's why the kernel asks for `num_warps=8` when
 `head_dim >= 128`: more warps means more threads to spread those registers over.
 
-Push $d$ to 256, this model's real head dimension, and the accumulator doubles to
-128 KiB. That's most of an SM's register file for one program, and it's the
-reason a kernel tuned at $d = 128$ might need $B_r = 64$ at $d = 256$. ==Register
-pressure is a function of the block sizes and the head dimension==, and nothing
-else.
+Push $d$ to 256, this model's real head dimension, and the accumulator doubles
+to 128 KiB. That's most of an SM's register file for one program, and it's the
+reason a kernel tuned at $d = 128$ might need $B_r = 64$ at $d = 256$.
+==Register pressure is a function of the block sizes and the head dimension==,
+and nothing else.
 
-**In shared memory, per program,** the kernel stages the $K_j$ and $V_j$ tiles
+**In shared memory, per program,** the kernel stages the $K_j$ and $V_j$ tiles,
 so that the loads for block $j+1$ overlap the arithmetic for block $j$. Triton
 calls the number of overlapping copies `num_stages`, and the engine computes it
 rather than guessing:
@@ -389,8 +480,8 @@ while num_stages > 1 and (
     num_stages -= 1
 ```
 
-`SHARED_MEMORY_BYTES` is 160 KB, a little under the 164 KB Ampere exposes. The
-factor of 2 is for $K$ and $V$.
+`SHARED_MEMORY_BYTES` is 160 KB, a little under the 164 KB that Ampere exposes.
+The factor of 2 is for $K$ and $V$.
 
 > [!EXAMPLE] Stages that fit at $B_c = 64$, $d = 128$
 > - bfloat16: $4 \times 64 \times 128 \times 2 \times 2 = 131{,}072$ bytes, or
@@ -400,16 +491,16 @@ factor of 2 is for $K$ and $V$.
 >   fit.
 
 Exceeding the limit raises `OutOfResources` at launch rather than failing
-quietly, so this is safe to compute rather than guess.
+quietly, so it's safe to compute this rather than guess.
 
 **In HBM,** the kernel keeps $Q$, $K$, $V$, and $O$. Nothing else. ==The score
 matrix has no address.==
 
 ## The kernel, line by line
 
-This section walks through the inner loop from
-`engine/kernels/flash_attn_triton.py`, with the surrounding setup. The first
-lines find this program's tile and head:
+This section walks through the kernel in
+`engine/kernels/flash_attn_triton.py`, so you can map each line to a step of
+the algorithm. The first lines find this program's tile and head:
 
 ```python
 start_m = tl.program_id(0)          # which query tile
@@ -425,8 +516,8 @@ offs_d = tl.arange(0, HEAD_DIM)                      # (HEAD_DIM,)
 
 `offs_m` holds this tile's absolute query positions, and `offs_d` the head
 dimension. Triton works in tiles of indices, not scalars, and every load that
-follows is a broadcast of two of these index vectors into a 2D tile. Next, the
-program loads its query tile:
+follows broadcasts two of these index vectors into a 2D tile. Next, the program
+loads its query tile:
 
 ```python
 q_ptrs = (
@@ -438,7 +529,8 @@ q = tl.load(q_ptrs, mask=offs_m[:, None] < q_len, other=0.0)   # (BLOCK_M, HEAD_
 
 There's one load, outside the loop. The mask handles the last tile when `q_len`
 isn't a multiple of `BLOCK_M`. Padded rows load zeros, and the store mask at the
-end discards their outputs. Then it initializes the running quantities:
+end discards their outputs. Then the program initializes the running
+quantities:
 
 ```python
 m_i = tl.full([BLOCK_M], float("-inf"), dtype=tl.float32)   # (BLOCK_M,)
@@ -506,17 +598,18 @@ acc = acc / tl.where(l_i == 0.0, 1.0, l_i)[:, None]
 tl.store(o_ptrs, acc.to(o_ptr.dtype.element_ty), mask=offs_m[:, None] < q_len)
 ```
 
-One division, one store. The `tl.where` guards a row whose scores were all
-masked, where $\hlb{\ell} = 0$. Dividing by zero there would put NaN into an
-output that's about to be discarded anyway, and NaNs propagate through everything
-downstream.
+That's one division and one store. The `tl.where` guards a row whose scores were
+all masked, where $\hlb{\ell} = 0$. Dividing by zero there would put NaN into an
+output that's about to be discarded anyway, and NaNs propagate through
+everything downstream.
 
 ## Causal masking and the blocks you can skip
 
-Causal attention lets query position $i$ see key position $j$ only when
-$j \le i$. Masking the score matrix after computing it saves nothing, because
-you paid for the matmul. ==The saving comes from never launching the blocks== that
-are entirely above the diagonal:
+This section shows how causal attention halves the work, and where the saving
+really comes from. Causal attention lets query position $i$ see key position $j$
+only when $j \le i$. Masking the score matrix after computing it saves nothing,
+because you already paid for the matmul. ==The saving comes from never
+launching the blocks== that are entirely above the diagonal:
 
 ```python
 offset = kv_len - q_len
@@ -525,8 +618,8 @@ hi = tl.minimum(kv_len, (start_m + 1) * BLOCK_M + offset) if IS_CAUSAL else kv_l
 
 `offset` aligns the query tile's local row indices with absolute positions. The
 last query in tile `start_m` sits at absolute position
-`(start_m + 1) * BLOCK_M - 1 + offset`, so no key beyond that can contribute, and
-`hi` cuts the loop there.
+`(start_m + 1) * BLOCK_M - 1 + offset`, so no key beyond that can contribute,
+and `hi` cuts the loop there.
 
 > [!EXAMPLE] Blocks a square causal pass runs at $L = 8192$
 > With $B_r = 128$ and $B_c = 64$, there are $8192/128 = 64$ query tiles and
@@ -547,27 +640,32 @@ strictly below the diagonal needs no mask at all, and a more aggressive kernel
 specializes those into a separate loop with no `tl.where` in it.
 
 > [!WARNING] The decode offset passes every prefill test
-> The `offset` is the same one from chapter 7, and it's where decode goes wrong.
-> During prefill, `q_len == kv_len` and the offset is zero. During decode,
-> `q_len` is 1 and `kv_len` is the whole cached prefix, so the offset is large,
-> and a kernel that assumes zero masks away the entire context. The lab checks a
-> decode step against the last row of a full prefill precisely to catch it.
+> The `offset` is the same one from chapter 7, and it's where *decode*, the
+> phase that generates one token at a time, goes wrong. During prefill,
+> `q_len == kv_len` and the offset is zero. During decode, `q_len` is 1 and
+> `kv_len` is the whole cached prefix, so the offset is large, and a kernel that
+> assumes zero masks away the entire context. The lab checks a decode step
+> against the last row of a full prefill precisely to catch it.
 
 ## Grouped queries in the kernel
 
-The kernel shares KV heads by indexing, not by copying. The model has 24 query
-heads and 4 KV heads, so six query heads share each KV head. The caller could
-materialize the duplication with `repeat_interleave`, which is what the naive
-reference does, and that would write six copies of $K$ and $V$ to HBM. The
-kernel indexes the shared head instead:
+This section shows how the kernel handles *grouped-query attention* (GQA),
+where several query heads share one key-value head. The kernel shares KV heads
+by indexing, not by copying. The model has 24 query heads and 4 KV heads, so six
+query heads share each KV head.
+
+The caller could materialize the duplication with `repeat_interleave`, which is
+what the naive reference does, and that would write six copies of $K$ and $V$ to
+HBM. The kernel indexes the shared head instead:
 
 ```python
 kv_head = head // kv_group      # kv_group = heads // kv_heads = 6
 ```
 
 Six programs now read the same $K$ and $V$ bytes. Those programs are scheduled
-close together, so the reads mostly hit L2 rather than HBM, and the effective
-bandwidth requirement for the KV read drops by a factor of six.
+close together, so the reads mostly hit L2, the GPU's 40 MB on-chip cache,
+rather than HBM. The effective bandwidth requirement for the KV read drops by a
+factor of six.
 
 > [!KEY] The bandwidth saving exists only if the kernel shares
 > That's the real benefit of grouped-query attention. A kernel that duplicates
@@ -576,8 +674,9 @@ bandwidth requirement for the KV read drops by a factor of six.
 
 ## The IO complexity result
 
-The asymptotics are the actual theorem behind FlashAttention, so this section
-makes the byte counting precise.
+This section makes the byte counting precise, because the asymptotics are the
+actual theorem behind FlashAttention. "IO" here means traffic between HBM and
+the chip.
 
 **Naive.** The score matrix is written and read a constant number of times, so
 HBM traffic, in elements, is the following:
@@ -593,15 +692,15 @@ four passes over the scores move 537 MB while the inputs are 6.3 MB.
 a $K$ tile and a $V$ tile together occupy $\Theta(M d)$ elements. Each of the
 $L/B_r$ query tiles streams all of $K$ and $V$, which is $2Ld$ elements per
 query tile. With $B_r$ bounded by the same on-chip budget, $B_r = \Theta(M)$,
-the total in elements is the following:
+and the total in elements is the following:
 
 $$
 \boxed{\frac{L}{B_r} \cdot 2Ld = \Theta\!\left(\frac{L^2 d}{M}\right)}
 $$
 
-Written in elements of SRAM rather than rows, call that $M_{\text{elem}} = M d$,
-the same bound is $\Theta(L^2 d^2 / M_{\text{elem}})$, which is how the paper
-states it.
+Written in elements of SRAM, the on-chip memory, rather than rows, call that
+$M_{\text{elem}} = M d$. The same bound is then
+$\Theta(L^2 d^2 / M_{\text{elem}})$, which is how the paper states it.
 
 Two things follow:
 
@@ -618,9 +717,9 @@ Two things follow:
 > so roughly $M = 320$ row pairs fit. Against $d = 128$, that predicts a factor
 > of about 2.5 in HBM traffic, which is far less than the speedups people report.
 
-The gap is L2. At $L = 8192$, $d = 128$, one head's $K$ and $V$ are 4.2 MB
-together, and the lab's eight heads are 33.6 MB, under the A100's 40 MB L2. The
-re-reads are quadratic in count, but they mostly never reach HBM.
+The gap is L2. At $L = 8192$ and $d = 128$, one head's $K$ and $V$ are 4.2 MB
+together, and the lab's two KV heads are 8.4 MB, well under the A100's 40 MB L2. The
+re-reads are quadratic in count, but most of them never reach HBM.
 
 This is the same effect chapter 13 measured for fused RMSNorm, where a saving
 predicted by the byte count vanished because the data never left cache. Here it
@@ -628,7 +727,9 @@ works in your favor instead.
 
 ## Speed: 0.63x, and why
 
-The README records the following measurements on the target hardware:
+This section explains why the teaching kernel is slower than the vendor kernel,
+and by how much. The README records the following measurements on the target
+hardware:
 
 | Measurement | Result |
 |---|---|
@@ -646,16 +747,18 @@ $$
 2 \times 2 L^2 d = 4 \times 8192^2 \times 128 = 34.4 \text{ GFLOP}
 $$
 
-Causality halves that to 17.2 GFLOP, and $\times 8$ heads gives 137 GFLOP. At
-the A100's 312 TFLOP/s for bfloat16, that's 0.44 ms.
+Causality halves that to 17.2 GFLOP, and $\times 8$ heads gives 137 GFLOP. The
+A100's tensor cores peak at 312 TFLOP/s, trillion floating-point operations per
+second, for bfloat16, so the floor is 0.44 ms.
 
 The engine's docstring records 1.64 ms for this kernel at that geometry with the
-$128 \times 64$ tiling, against 3.35 ms for a $64 \times 64$ tiling. So this
-kernel reaches about 27% of peak, and the vendor kernel, at 0.63x of 1.64 ms,
-lands near 1 ms, or about 43%.
+$128 \times 64$ tiling, against 3.35 ms for a $64 \times 64$ tiling:
 
-Neither is close to peak, which is normal for attention. What needs explaining is
-the gap between them, and four things account for most of it:
+- This kernel reaches about 27% of peak.
+- The vendor kernel, at 0.63x of 1.64 ms, lands near 1 ms, or about 43%.
+
+Neither is close to peak, which is normal for attention. What needs explaining
+is the gap between them, and four things account for most of it:
 
 - **Non-matmul work on the wrong units.** Every block computes $B_r \times B_c$
   exponentials. Over a causal pass, that's $L^2/2$ exponentials per head, or 268
@@ -666,24 +769,26 @@ the gap between them, and four things account for most of it:
   touches $B_r \times d$ float32 registers on every iteration. A tuned kernel
   defers more of that work, keeping the correction as a scalar applied at tile
   boundaries rather than a full accumulator multiply each time.
-- **Scheduling.** cuDNN and CUTLASS kernels use warp specialization, where some
-  warps do nothing but issue asynchronous copies while others do nothing but
-  matmul, plus hand-tuned pipelining and, on newer hardware, TMA descriptors.
-  Triton generates a good generic schedule, and good generic loses to hand-tuned
-  by tens of percent.
+- **Scheduling.** cuDNN and CUTLASS, NVIDIA's own kernel libraries, use warp
+  specialization, where some warps do nothing but issue asynchronous copies
+  while others do nothing but matmul. They add hand-tuned pipelining and, on
+  newer hardware, TMA descriptors, which drive a dedicated copy engine. Triton
+  generates a good generic schedule, and good generic loses to hand-tuned by
+  tens of percent.
 - **Autotuning.** The vendor kernel picks tile sizes per shape, per dtype, and
   per head dimension, from a table built by measurement. This kernel has two
   defaults. The measured $128 \times 64$ against $64 \times 64$ gap, 1.64 ms
-  against 3.35 ms, a factor of two from one parameter, shows how much is on the
-  table.
+  against 3.35 ms, is a factor of two from one parameter, and it shows how much
+  is on the table.
 
 Landing ==within 2x of a vendor kernel== with 40 lines you can read in one
 sitting is a good result. The lab's threshold is 0.33x for that reason.
 
 ## Memory: 27.5x
 
-The memory result isn't a near miss, and it's the one that changes what you can
-serve. The lab measures peak allocation at $L = 4096$, 8 heads, and $d = 128$.
+This section checks the memory result, which isn't a near miss, and it's the
+one that changes what you can serve. The lab measures peak allocation at
+$L = 4096$, 8 heads, and $d = 128$.
 
 > [!EXAMPLE] Check the 27.5x by hand
 > The naive path materializes the scores in float32:

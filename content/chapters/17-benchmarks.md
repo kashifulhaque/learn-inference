@@ -2,11 +2,11 @@
 title: Benchmarks that mean something
 slug: 17-benchmarks
 part: "Part 5 — Serving"
-summary: TTFT, inter-token latency, throughput, and goodput, each with a formula and with what it hides.
-minutes: 90
+summary: TTFT, inter-token latency, throughput, and goodput, each defined from per-request timestamps, with what each one hides and how to measure it honestly.
+minutes: 105
 gpu: true
 objectives:
-  - Define TTFT, ITL, end-to-end latency, throughput, and goodput as formulas over five timestamps.
+  - Define TTFT, ITL, end-to-end latency, throughput, and goodput as formulas over five per-request values.
   - Explain why p50 and p99 diverge under batching, and compute the gap from a mixture of step times.
   - Apply Little's law to relate concurrency, throughput, and latency.
   - Time GPU code correctly, and say how many repeats a claim needs.
@@ -18,50 +18,58 @@ lab: 17-benchmark
 # Benchmarks that mean something
 
 > [!TLDR]
-> - Every metric derives from five values per request, and each metric hides
->   something. Pair throughput with latency, and goodput with a tail percentile.
-> - Under batching, a slow step in every 20 barely moves the mean but triples
->   p99, and users see the tail.
-> - Little's law, $L = \lambda W$, cross-checks concurrency, throughput, and
->   latency.
-> - Time GPU code after warmup, with a synchronize, on one card variant. Twenty
->   runs resolve about a 2% difference.
+> - Every serving metric comes from five values you record per request: when it
+>   arrived, when its first and last tokens left, and how many tokens it read
+>   and wrote. Each metric hides something, so report throughput with latency,
+>   and goodput with a tail percentile.
+> - Users feel the slow steps, not the average. Under batching, one slow step in
+>   20 barely moves the mean but triples the 99th-percentile latency.
+> - Little's law ties together how many requests are in flight, how fast they
+>   arrive, and how long each one takes, so it exposes numbers that can't all be
+>   true.
+> - A GPU timing is right only after warmup, with a wait for the GPU to finish,
+>   and on one card variant. Twenty runs resolve about a 2% difference.
 
 "1000 tokens per second" isn't a number. Under what load, at what batch size,
 with what prompt lengths, and at what latency? Every chapter after this one
 claims a speedup, and a speedup is a comparison between two measurements. If the
 measurements are sloppy, the rest of the course is decoration.
 
-This chapter treats measurement as its own discipline. It defines each metric as
-a formula over timestamps you can record and says what each formula throws away.
-Then it covers what makes a GPU measurement wrong: missing synchronization,
-missing warmup, too few repeats, and a workload easier than the real one.
+This chapter treats measurement as its own discipline. First, you define each
+metric as a formula over timestamps you can record, and see what each formula
+throws away. Then you see what makes a GPU measurement wrong: missing
+synchronization, missing warmup, too few repeats, and a workload easier than
+the real one.
 
 ## Before you start
 
 You need four things, none of them deep.
 
-**Five timestamps per request.** Everything here derives from arrival, first
-token, completion, prompt token count, and generated token count.
+**Five values per request.** Everything here derives from arrival, first token,
+completion, prompt token count, and generated token count.
 `Request.metrics` in `engine/scheduler.py` returns exactly those.
 
-**Order statistics.** Given $n$ samples, the sorted values
-$x_0 \le \dots \le x_{n-1}$ are the order statistics. A percentile is an
-interpolation between two of them.
+**Order statistics.** Sort $n$ samples from smallest to largest, and call them
+$x_0 \le \dots \le x_{n-1}$. Those sorted values are the *order statistics*. A
+percentile is an interpolation between two of them.
 
-**Two distributions.** The exponential models the gap between arrivals, and the
-log-normal models generation lengths. This chapter derives what you need of
-both.
+**Two distributions.** The exponential distribution models the gap between
+arrivals, and the log-normal models generation lengths. This chapter derives
+what you need of both.
 
-**CUDA's asynchrony.** A kernel launch returns to the host almost immediately,
-and the work runs later on a stream. This is the most common source of a wrong
-GPU timing. Chapter 0a covers the vocabulary.
+**CUDA's asynchrony.** A kernel launch returns to the host, the CPU side of your
+program, almost immediately. The work runs later on a *stream*, the GPU's queue
+of pending work. It's like posting a letter: the mailbox accepts it at once,
+and delivery happens later. This is the most common source of a wrong GPU
+timing, and [the notation chapter](/c/00a-notation-and-prerequisites) covers the
+vocabulary.
 
 You don't need queueing theory. Little's law, the one result you need from it,
 has a four-line proof in this chapter.
 
 ## The five timestamps
 
+A benchmark is only as good as what it records, so start with the raw data.
 Record five values per request $i$, and nothing else:
 
 | Symbol | Meaning | Kind |
@@ -73,23 +81,35 @@ Record five values per request $i$, and nothing else:
 | $n_i$ | Generated tokens | Count |
 
 ==Every metric derives from these five==, and aggregates aren't recoverable in
-the other direction.
+the other direction. Keep the raw records, not only the summary.
+
+The lab's first record is a good one to hold in your head for the rest of the
+chapter:
+
+- It arrives at $\hla{a} = 10.00$ s, with a 100-token prompt.
+- Its first token streams out at $\hlb{f} = 10.25$ s.
+- It generates 11 tokens, 30 ms apart, so it completes at
+  $\hlc{c} = 10.25 + 10 \times 0.03 = 10.55$ s.
+
+The next section turns those numbers into latency metrics.
 
 ## Latency: TTFT, ITL, and end to end
 
-Three latency metrics split a request's life at its first token, and each one
+Latency answers "how long did the user wait?", and there's more than one kind of
+waiting. Three metrics split a request's life at its first token, and each one
 hides something different.
 
 ### Time to first token
 
-Subtract the arrival from the first token:
+*Time to first token* (TTFT) is the silence between pressing enter and seeing
+anything. Subtract the arrival from the first token:
 
 $$
 \operatorname{TTFT}_i = \hlb{f_i} - \hla{a_i}
 $$
 
-TTFT covers queue time plus prefill. It's what an interactive user feels first:
-the silence between pressing enter and seeing anything.
+For the lab's record, that's $10.25 - 10.00 = 0.25$ s. TTFT covers queue time
+plus *prefill*, the pass that processes the prompt before the first token.
 
 **What it hides.** It sums two terms with different causes and reports neither.
 A TTFT of 800 ms could be 780 ms of queueing with 20 ms of prefill, or 50 ms of
@@ -99,12 +119,18 @@ first admitted the request, and split TTFT in two.
 
 ### Inter-token latency
 
+*Inter-token latency* (ITL) is the gap between consecutive tokens once the
+stream has started: how smoothly the text flows.
+
 Generating $n_i$ tokens produces $n_i - 1$ gaps, not $n_i$, because TTFT already
-accounts for the first token. Divide the streaming time by the gap count:
+accounts for the first token. Think of fence posts: 11 posts have 10 gaps
+between them. Divide the streaming time by the gap count:
 
 $$
 \operatorname{ITL}_i = \frac{\hlc{c_i} - \hlb{f_i}}{n_i - 1}, \qquad n_i \ge 2
 $$
+
+For the lab's record, that's $(10.55 - 10.25)/10 = 0.03$ s, or 30 ms.
 
 For $n_i = 1$ there's no gap, and the metric is undefined. ==Return nothing
 rather than zero==: a zero silently drags every aggregate down, and the lab
@@ -118,12 +144,14 @@ only across requests.
 
 ### End-to-end latency
 
-End-to-end latency is the whole span, and it equals TTFT plus every gap:
+End-to-end latency (E2E) is the whole span, and it equals TTFT plus every gap:
 
 $$
 \operatorname{E2E}_i = \hlc{c_i} - \hla{a_i}
 = \operatorname{TTFT}_i + (n_i - 1)\operatorname{ITL}_i
 $$
+
+For the lab's record, that's $0.25 + 10 \times 0.03 = 0.55$ s.
 
 > [!TIP] Assert the identity in your harness
 > The example record from `Request.metrics` satisfies it. With `ttft_s` 0.214,
@@ -137,8 +165,9 @@ identically for both. Compare TTFT and ITL instead, or normalize by $n_i$.
 
 ## Throughput and goodput
 
-Throughput counts the work a run finishes per second, and goodput counts only
-the requests that met their deadlines.
+Latency describes one user's experience; throughput and goodput describe the
+whole service. Throughput counts the work a run finishes per second, and goodput
+counts only the requests that met their deadlines.
 
 ### Throughput
 
@@ -169,12 +198,15 @@ answers every one 40 seconds later has excellent throughput and is unusable.
 Throughput is only meaningful paired with the latency it was achieved at, which
 is why the standard presentation is a curve.
 
-It also ignores prompt tokens. Prefill does real work, often most of the FLOPs, and $X_{\text{tok}}$ counts
-only output. Report $\sum_i (m_i + n_i)$ separately to compare total work.
+It also ignores prompt tokens. Prefill does real work, often most of the FLOPs,
+and $X_{\text{tok}}$ counts only output. Report $\sum_i (m_i + n_i)$ separately
+to compare total work.
 
 ### Goodput
 
-Goodput is the fraction of requests that met their service level objective:
+*Goodput* asks a sharper question than throughput: how many requests were served
+well enough? It's the fraction of requests that met their *service level
+objective* (SLO), a target for TTFT and one for ITL:
 
 $$
 G = \frac{1}{N} \sum_{i=1}^{N}
@@ -182,19 +214,24 @@ G = \frac{1}{N} \sum_{i=1}^{N}
 \;\wedge\; \operatorname{ITL}_i \le T_{\text{itl}}\right]
 $$
 
-The indicator $\mathbf{1}[\cdot]$ is 1 when the condition holds and 0 otherwise.
-Multiply by $X_{\text{req}}$ for goodput in requests per second rather than as a
-fraction.
+The indicator $\mathbf{1}[\cdot]$ is 1 when the condition holds and 0 otherwise,
+so the sum counts the requests that met both targets. Multiply by
+$X_{\text{req}}$ for goodput in requests per second rather than as a fraction.
 
 Goodput catches a configuration that looks excellent on throughput while missing
 every deadline. Raise the batch size far enough and throughput keeps climbing
 while goodput falls off a cliff. A benchmark that reports only throughput
 recommends that configuration.
 
-Add one slow request with a 5-second TTFT to the ten-request run. With
-$T_{\text{ttft}} = 1$ s and $T_{\text{itl}} = 100$ ms, ten of eleven pass, so
-$G = 10/11 = 0.909$. Tighten the inter-token target to 1 ms and $G = 0$, with
-throughput unchanged.
+Add one slow request with a 5-second TTFT to the ten-request run. The following
+table shows goodput under two sets of targets:
+
+| $T_{\text{ttft}}$ | $T_{\text{itl}}$ | Requests passing | $G$ |
+|---|---|---|---|
+| 1 s | 100 ms | 10 of 11 | $10/11 = 0.909$ |
+| 1 s | 1 ms | 0 of 11 | 0 |
+
+Throughput is the same in both rows.
 
 **What it hides.** Goodput is binary per request, so it can't tell a request
 that missed by 1 ms from one that missed by 10 seconds. Report it alongside a
@@ -202,18 +239,24 @@ tail percentile.
 
 ## Percentiles
 
-A percentile needs a definition, because several exist and they disagree on
-small samples. Use linear interpolation between order statistics, which is what
-NumPy and the lab both do.
+An average blends the bad requests in with the good ones, and users complain
+about the bad ones. A *percentile* answers "how slow is the slow end?": p99, the
+99th percentile, is the latency that 99% of requests come in at or under. p50,
+the median, is the middle.
+
+A percentile needs a precise definition, because several exist and they
+disagree on small samples. Use linear interpolation between order statistics,
+which is what NumPy and the lab both do.
 
 For sorted samples $x_0 \le \dots \le x_{n-1}$ and $q \in [0, 100]$, compute the
 fractional rank $r$, split it into an index $i$ and a fraction $\phi$, and
 interpolate:
 
 $$
-r = \frac{q}{100}(n-1), \qquad i = \lfloor r \rfloor, \qquad \phi = r - i,
-\qquad
+\begin{gathered}
+r = \frac{q}{100}(n-1), \qquad i = \lfloor r \rfloor, \qquad \phi = r - i \\
 \boxed{P_q = x_i + \phi\,(x_{i+1} - x_i)}
+\end{gathered}
 $$
 
 with $P_{100} = x_{n-1}$. The $(n-1)$ rather than $n$ is what makes $P_0$ the
@@ -233,19 +276,22 @@ $q = 25$, $r = 0.25$ and $P_{25} = 0 + 0.25 \times 10 = 2.5$.
 > was.
 
 That's the property you want from a tail metric. It's also why the mean is
-useless: the mean of those eleven values is 0.636 s, which ==describes no
+useless here: the mean of those eleven values is 0.636 s, which ==describes no
 request in the run==.
 
 Percentiles need enough samples to exist. A p99 from 50 requests interpolates
 between the two largest samples and swings wildly between runs. Budget enough
 requests that about ten samples land beyond the percentile, which is
-$10 \times 100/(100-q)$: about 1000 requests for a usable p99, and 100 for a
-p90.
+$10 \times 100/(100-q)$ requests:
+
+- For a usable p99, that's about 1000 requests.
+- For a p90, it's about 100.
 
 ## Why p50 and p99 diverge under batching
 
-Batching turns a narrow step-time distribution into a mixture, and a mixture
-moves the tail far more than the mean.
+Why does the tail of a batched engine look so much worse than its average? The
+short answer: batching turns a narrow step-time distribution into a mixture of
+fast and slow steps, and a mixture moves the tail far more than the mean.
 
 At batch 1 the ITL distribution is narrow, because every decode step does the
 same work. Under continuous batching with chunked prefill, most steps carry
@@ -275,16 +321,21 @@ $\hlb{t_m}$.
 > That's why chapter 16 tunes `max_batched_tokens`. It sets $\hlb{t_m}$, and
 > therefore p99.
 
-Queueing adds a second mechanism. Past the knee of the latency-throughput curve
-the queue grows, so queue time enters TTFT for later arrivals but not earlier
-ones. The TTFT distribution becomes long-tailed even though every request does
-identical work.
+Queueing adds a second mechanism. Past the *knee* of the latency-throughput
+curve, the load at which latency starts to climb, the queue grows. Queue time
+then enters TTFT for later arrivals but not earlier ones, so the TTFT
+distribution becomes long-tailed even though every request does identical work.
 
 ## Little's law
 
-For any stable system over a long enough window, the mean number of requests in
-the system $\hla{L}$ equals the arrival rate $\hlb{\lambda}$ times the mean time
-a request spends in the system $\hlc{W}$:
+Little's law gives you a free consistency check on any benchmark. Picture a
+coffee shop where 10 customers arrive per minute and each one stays 3 minutes:
+on average, 30 customers are inside. The law says that this arithmetic holds
+for any stable system.
+
+Formally, over a long enough window, the mean number of requests in the system
+$\hla{L}$ equals the arrival rate $\hlb{\lambda}$ times the mean time a request
+spends in the system $\hlc{W}$:
 
 $$
 \boxed{\hla{L} = \hlb{\lambda}\,\hlc{W}}
@@ -307,11 +358,11 @@ any service discipline==.
 > $\frac{N}{T} \cdot \frac{1}{N}\sum_{i=1}^{N} W_i = \lambda\,W$.
 
 **What it buys you.** Two of the three quantities determine the third, so a
-benchmark reporting all three is either consistent or wrong. If your engine
+benchmark reporting all three is either consistent or wrong. Suppose your engine
 sustains $\hlb{\lambda} = 5.3$ requests per second at a mean latency of
-$\hlc{W} = 6.0$ s, then $\hla{L} = 31.8$ requests are resident on average. The
-scheduler's default `max_batch_size` is 32, so you're at the batch-size limit,
-and the fix for latency is a larger batch or a second GPU, not a faster kernel.
+$\hlc{W} = 6.0$ s. Then $\hla{L} = 31.8$ requests are resident on average. The
+scheduler's default `max_batch_size` is 32, so you're at the batch-size limit.
+The fix for latency is a larger batch or a second GPU, not a faster kernel.
 
 Applied to tokens, the same law gives the decode ceiling. Each running sequence
 emits one token every $\operatorname{ITL}$ seconds, so:
@@ -326,15 +377,21 @@ you know which number to check.
 
 ## Timing GPU code
 
-A GPU timing is right only after warmup, with a synchronize, and with the right
-clock for the question.
+So far you've defined what to measure. The rest of the chapter is about
+measuring it without fooling yourself, starting with the clock. A GPU timing is
+right only after warmup, with a synchronize, and with the right clock for the
+question.
 
-**Warm up first.** Four things happen on the first call and never again: kernels
-are compiled or loaded, Triton and cuBLAS autotune over candidate
-configurations, the caching allocator requests memory from the driver, and the
-caches are cold. A first Triton call can take hundreds of milliseconds against a
-steady state under one. `engine/bench.py` discards five iterations and then
-times twenty:
+**Warm up first.** Four things happen on the first call and never again:
+
+- Kernels are compiled or loaded.
+- Triton and cuBLAS *autotune*, trying candidate configurations to find the
+  fastest.
+- The caching allocator requests memory from the driver.
+- The caches are cold.
+
+A first Triton call can take hundreds of milliseconds against a steady state
+under one. `engine/bench.py` discards five iterations and then times twenty:
 
 ```python
 def benchmark(fn, label="fn", warmup=5, runs=20):
@@ -356,7 +413,8 @@ autotuning on the first timed iteration.
 **Wall clock with a synchronize** measures everything the host experiences:
 launch overhead, gaps between kernels, Python time, and the kernels themselves.
 That's right for a serving metric, because a user waits for all of it. It's what
-`sync()` in the preceding listing provides, wrapping `torch.cuda.synchronize()`.
+`sync()` in the preceding listing provides, wrapping `torch.cuda.synchronize()`,
+which blocks the host until the GPU has finished all queued work.
 
 **CUDA events** are markers recorded into a stream. The device timestamps them,
 so the elapsed time between two events is device time, excluding host-side gaps:
@@ -379,8 +437,9 @@ overhead. Use wall clock with a synchronize for anything a user experiences.
 > so the clock measures how long it took to queue the work. On a decode step of
 > several hundred kernels that reports a few microseconds, which looks
 > spectacular and is a bug. The symptom is a time below chapter 10's roofline
-> floor: if a kernel appears to move 53.8 GB in 2 ms, that's 27 TB/s, and the
-> measurement is wrong rather than the kernel fast.
+> floor, the fastest the hardware could possibly move the bytes. If a kernel
+> appears to move 53.8 GB in 2 ms, that's 27 TB/s, and the measurement is wrong
+> rather than the kernel fast.
 >
 > **`elapsed_time` before the end event is recorded on the device.** It needs
 > both events complete. Without `end.synchronize()`, it raises or reads a
@@ -390,22 +449,30 @@ overhead. Use wall clock with a synchronize for anything a user experiences.
 
 ## How many repeats a claim needs
 
-Twenty runs resolve about a 2% difference. Let $\bar{t}$ be the sample mean of
-$n$ timings, $s$ their standard deviation, and $c = s/\bar{t}$ the coefficient
-of variation. The 95% confidence interval for the mean has this relative
+Timings wobble from run to run, so a single run can't tell a real 2% speedup
+from noise. Twenty runs resolve about a 2% difference, and this section shows
+where that number comes from.
+
+Let $\bar{t}$ be the sample mean of $n$ timings and $s$ their standard
+deviation. Their *coefficient of variation* $c = s/\bar{t}$ is the spread as a
+fraction of the mean. The 95% confidence interval for the mean has this relative
 half-width:
 
 $$
 \frac{1.96\,s}{\bar{t}\sqrt{n}} = \frac{1.96\,c}{\sqrt{n}}
 $$
 
-GPU timings in steady state typically have $c$ around 0.03, giving 2.6% at
-$n = 5$, 1.3% at $n = 20$, and 0.6% at $n = 100$.
+GPU timings in steady state typically have $c$ around 0.03. The half-width then
+shrinks with the square root of the number of runs:
+
+- At $n = 5$, it's 2.6%.
+- At $n = 20$, it's 1.3%.
+- At $n = 100$, it's 0.6%.
 
 Comparing two configurations is harder, because both estimates carry error. For
 two independent samples of size $n$ with the same $c$, the difference of means
-has relative half-width $1.96\,c\sqrt{2/n}$, so resolving a difference $d$
-needs:
+has relative half-width $1.96\,c\sqrt{2/n}$. So resolving a difference $d$
+needs this many runs:
 
 $$
 \boxed{n \ge 2\left(\frac{1.96\,c}{d}\right)^{2}}
@@ -421,9 +488,10 @@ possibly different silicon. No number of in-process repeats measures that.
 
 ## Comparing across GPU variants invalidates the comparison
 
-The A100 80GB ships in two forms with different memory bandwidth: the SXM4
-module rated at 2039 GB/s and the PCIe card at 1935. A cloud provider hands you
-whichever is free.
+Even a perfectly repeated measurement is wrong if the two runs landed on
+different hardware. The A100 80GB ships in two forms with different memory
+bandwidth: the SXM4 module rated at 2039 GB/s and the PCIe card at 1935. A
+cloud provider hands you whichever is free.
 
 For a memory-bound kernel, which is every decode kernel in this engine, time is
 bytes over bandwidth. So the ratio of times across the two cards is the inverse
@@ -445,11 +513,14 @@ hide the same way.
 
 Clocks are the other environmental axis. An A100 boosts when cool and drops when
 hot, so a 10-second benchmark runs at boost clocks, and a 10-minute one runs 10
-to 15% lower. Both are real, and they answer different questions: burst clocks
-say what one request sees on an idle server, and sustained clocks say what a
-loaded server delivers all day. Five warmup iterations warm the caches and the
-autotuner but leave the die cold, so `benchmark` reports boost-clock numbers by
-construction. That's right for kernel work and wrong for a capacity estimate.
+to 15% lower. Both are real, and they answer different questions:
+
+- Burst clocks say what one request sees on an idle server.
+- Sustained clocks say what a loaded server delivers all day.
+
+Five warmup iterations warm the caches and the autotuner but leave the die
+cold, so `benchmark` reports boost-clock numbers by construction. That's right
+for kernel work and wrong for a capacity estimate.
 
 ## What a load generator must model
 
@@ -457,10 +528,12 @@ Sending 100 requests at once measures a burst, not a service. Queueing, which
 dominates TTFT under load, only appears when arrivals are spread over time, so a
 load generator models when requests arrive and how long they are.
 
-**The arrival process.** Use a Poisson process with rate $\lambda$. That's not
-for convenience: the superposition of many independent, low-rate users converges
-to a Poisson process, which is close to what a real service sees. Its gaps are
-exponential, with this CDF:
+**The arrival process.** Real users don't coordinate. Each one clicks
+occasionally and independently, so arrivals come in random clumps: mostly short
+gaps, with the occasional long one. The *Poisson process* with rate $\lambda$
+is the model for exactly that, and the superposition of many independent,
+low-rate users converges to it. Its gaps are exponential, with this cumulative
+distribution function (CDF), the probability that a gap is at most $t$:
 
 $$
 F(t) = 1 - e^{-\lambda t}, \qquad t \ge 0
@@ -484,11 +557,15 @@ An exponential has mean $1/\lambda$ and standard deviation also $1/\lambda$, so
 Uniform gaps have a coefficient of variation of $1/\sqrt{3} = 0.577$, and the
 lab's test separates the two on exactly this statistic.
 
-**The length distributions.** Prompt length drives prefill FLOPs and the chunk
-the scheduler admits. Output length drives how long a sequence holds a batch
-slot and how many cache blocks it accumulates. Output length matters most, and
-log-normal is a reasonable default. If $\ln n \sim \mathcal{N}(\mu, \sigma^2)$,
-then:
+**The length distributions.** Each length drives a different cost:
+
+- Prompt length drives prefill FLOPs and the chunk the scheduler admits.
+- Output length drives how long a sequence holds a batch slot and how many
+  cache blocks it accumulates.
+
+Output length matters most, and log-normal is a reasonable default: most
+outputs are short, and a few are very long. If $\ln n \sim \mathcal{N}(\mu,
+\sigma^2)$, then:
 
 $$
 \text{median} = e^{\mu}, \qquad
@@ -503,12 +580,14 @@ $$
 > ratio is the whole reason continuous batching exists.
 
 Long prompts also tend to produce long outputs, so sampling the two
-independently understates the variance. Replaying a trace avoids the question.
+independently understates the variance. Replaying a trace of real traffic
+avoids the question.
 
 ## Why a fixed-length benchmark flatters an engine
 
-Fix every prompt at 512 tokens and every output at 128, and four things become
-artificially easy:
+The previous section says what realistic load looks like. This one shows what
+you lose by skipping it. Fix every prompt at 512 tokens and every output at
+128, and four hard problems disappear from view:
 
 - **Static batching stops looking bad.** A static batch runs until its longest
   member finishes, and with identical lengths every member finishes on the same
@@ -529,8 +608,9 @@ unpredictable factor.
 
 ## The latency-throughput curve
 
-Sweep the request rate $\lambda$, record throughput and p99 TTFT at each rate,
-and plot them against each other. Three regions appear:
+One curve brings throughput and latency together and tells you how much load to
+accept. Sweep the request rate $\lambda$, record throughput and p99 TTFT at each
+rate, and plot them against each other. Three regions appear:
 
 | Region | Throughput | Latency | What's happening |
 |---|---|---|---|
@@ -551,8 +631,9 @@ Past the knee, adding load makes everything worse and improves nothing.
 Comparing your engine against a production one is the honest test, and it's
 sobering the first time. Match the conditions: same model, dtype, context
 length, batch size, sampling parameters, and GPU variant. `enforce_eager=True`
-in vLLM turns off CUDA graphs, which makes the comparison fairer if you haven't
-implemented them.
+in vLLM turns off CUDA graphs, which replay a recorded sequence of kernel
+launches with almost no launch overhead. That makes the comparison fairer if you
+haven't implemented them.
 
 Expect to be 2 to 5 times slower at first. The gap comes from CUDA graphs, a
 fused GEMM stack, and a great deal of tuning. Decompose the gap rather than
@@ -623,12 +704,16 @@ Each of these mistakes produces a number that looks reasonable:
 > Poisson arrival generator. You pass when each formula matches its
 > hand-computable case and your arrival gaps look exponential.
 
-Implement `ttft`; `mean_inter_token_ms`, with the $n-1$ gap rule and a `None`
-for single-token responses; `percentile`, with linear interpolation between
-order statistics; `summarise`, returning request count, total output tokens, p50
-and p99 for both TTFT and ITL, and throughput over the wall-clock span;
-`goodput`, against a TTFT target and an ITL target; and `poisson_arrivals`,
-returning arrival times whose gaps are exponential.
+Implement the following functions:
+
+- `ttft`.
+- `mean_inter_token_ms`, with the $n-1$ gap rule and a `None` for single-token
+  responses.
+- `percentile`, with linear interpolation between order statistics.
+- `summarise`, returning request count, total output tokens, p50 and p99 for
+  both TTFT and ITL, and throughput over the wall-clock span.
+- `goodput`, against a TTFT target and an ITL target.
+- `poisson_arrivals`, returning arrival times whose gaps are exponential.
 
 The harness checks each formula against hand-computable cases: the 9.7-second
 span, the 110 tokens, the $10/11$ goodput, and the p99 that moves while p50

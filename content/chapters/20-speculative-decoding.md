@@ -2,8 +2,8 @@
 title: Speculative decoding
 slug: 20-speculative-decoding
 part: "Part 6 — Scaling"
-summary: Trading idle compute for tokens, with the proof that the output distribution is exactly unchanged.
-minutes: 110
+summary: Spending decode's idle compute on guessed tokens, with the proof that the output distribution is exactly unchanged.
+minutes: 115
 gpu: true
 objectives:
   - Explain why verifying gamma + 1 tokens costs about the same as generating one.
@@ -17,34 +17,49 @@ lab: 20-spec-decode
 # Speculative decoding
 
 > [!TLDR]
-> - Decode at batch 1 is memory bound, so verifying five tokens costs the same
->   42.2 ms as generating one.
-> - Accept each draft token with probability $\min(1, p/q)$ and resample from
->   a residual on rejection, and the output is distributed exactly as the
->   target.
-> - The acceptance rate is $1 - D_{\text{TV}}(p, q)$. The speedup is capped by
->   $1/(1-\alpha)$ and, at large batch sizes, by the ridge point.
-> - Rejected tokens must be rolled back from the KV cache and the recurrent
->   state; verifying as one chunk avoids the second rollback.
+> - Generating one token for one sequence leaves the GPU's arithmetic almost
+>   idle while it reads the weights, so checking five tokens in one pass costs
+>   the same 42.2 ms as generating one.
+> - Speculative decoding lets a cheap *draft* guess several tokens, then has the
+>   full model check them all in one pass. Every guess it keeps is a token you
+>   didn't pay for.
+> - A short accept-or-resample rule makes the output distributed exactly as the
+>   full model's would be, for any draft. A bad draft makes speculation slow,
+>   never wrong.
+> - The gain depends on how often the draft agrees with the full model, and it
+>   fades at large batch sizes, where the idle compute is already in use.
+> - Rejected guesses must be undone in the model's per-sequence memory, both
+>   the KV cache and the recurrent state. Checking the guesses as one chunk
+>   avoids undoing the second.
 
-Decode at batch 1 uses about 0.7% of an A100's arithmetic. Everything else is
-idle while the memory system reads 53.8 GB of weights. Speculative decoding
-spends that idle compute on tokens.
+*Decode*, generating one token per step, uses about 0.7% of an A100's
+arithmetic at batch 1. Each step reads all 53.8 GB of weights to produce one
+token, and nearly all the time goes to that read. The rest of the chip waits.
+Speculative decoding spends that idle compute on extra tokens.
 
-What makes it more than a heuristic is that it's exact. The accept-reject rule
-produces samples distributed *identically* to sampling from the target model
+Think of the weight read as a bus that crosses town once per step, whether it
+carries one passenger or five. Plain decode sends it with one token. Speculation
+puts a few guessed tokens on board and lets the full model check them during
+the same trip. The guesses that pass are tokens you got for free.
+
+What makes this more than a heuristic is that it's exact. The accept-reject
+rule produces samples distributed *identically* to sampling from the full model
 directly: not approximately, not in the limit, but for every token. That proof
-is the point of this chapter, and it's the part most treatments skip. Without
+is the heart of this chapter, and it's the part most treatments skip. Without
 it, speculation is a quality risk you can't measure. With it, it's
 ==a pure speed knob== you can turn on by default.
 
 ## Before you start
 
+**Target and draft.** The *target* is the model whose output you want, here the
+27B model you've been serving. The *draft* is anything cheap that guesses what
+the target will say next.
+
 **Sampling from a categorical distribution.** A distribution $p$ over a
 vocabulary $V$ assigns $p(x) \ge 0$ with $\sum_{x \in V} p(x) = 1$. The
 [sampling chapter](/c/11-sampling) covers how temperature, top-$k$, and top-$p$
-transform the logits into $p$. Everything here operates on $p$ after those
-transforms.
+transform the logits, the model's raw scores, into $p$. Everything here
+operates on $p$ after those transforms.
 
 **Total variation distance.** For two distributions on the same support, it's
 half the summed absolute difference:
@@ -56,25 +71,31 @@ $$
 It lands in $[0, 1]$, is 0 when the distributions are identical, and turns out
 to be exactly what the acceptance rate depends on. The lab measures it.
 
-**The roofline.** Decode at batch 1 has an arithmetic intensity around 1 FLOP
-per byte against a ridge point of 161, so its time is bytes over bandwidth. That
+**The roofline.** *Arithmetic intensity* is FLOPs done per byte read from
+memory. The *ridge point*, 161 FLOPs per byte on the A100, is the intensity
+where a pass stops being memory bound and becomes compute bound. Decode at
+batch 1 sits around 1 FLOP per byte, so its time is bytes over bandwidth. That
 gap is the resource speculation spends. For more, see
 [the roofline chapter](/c/10-roofline).
 
 **The paged KV cache and the recurrent state.** Both are per-sequence state
-that a rejected token must not advance. They come from
-[the paged attention chapter](/c/15-paged-attention) and
-[the gated delta rule chapter](/c/06-gated-delta-rule), and the last section of
-this chapter is about rolling them back.
+that a rejected token must not advance. The KV cache holds the keys and values
+of the 16 full-attention layers, from
+[the paged attention chapter](/c/15-paged-attention). The recurrent state is
+the fixed-size memory of the 48 linear-attention layers, from
+[the gated delta rule chapter](/c/06-gated-delta-rule). The section on rolling
+back a rejected token covers both.
 
 **Notation.** Write $\gamma$ for the number of tokens the draft proposes in one
-round and $\alpha$ for the probability an individual draft token is accepted.
-The lab calls $\gamma$ `k`.
+round and $\alpha$ for the probability that an individual draft token is
+accepted. The lab calls $\gamma$ `k`.
 
 ## Why verifying many tokens costs one weight read
 
-A forward pass on one token and a forward pass on five tokens take
-==almost the same time==, because the pass is memory bound.
+This section answers the question the whole technique rests on: why is checking
+five tokens no slower than generating one? Because the pass is memory bound, a
+forward pass on one token and a forward pass on five take
+==almost the same time==.
 
 > [!EXAMPLE] One token versus five, at batch 1
 > The weights are 53.8 GB, read once per forward pass regardless of how many
@@ -104,18 +125,19 @@ $$
 $$
 
 So guess the next few tokens cheaply, then verify all of them in one forward
-pass. Every guess that survives is a token you got for free. This only works
-because decode is memory bound, which is why speculation and batching, the
-other way to fill idle compute, fight each other. That comes back at the end.
+pass. This only works because decode is memory bound. That's why speculation
+and batching, the other way to fill idle compute, fight each other, which you
+see later in this chapter.
 
 ## The algorithm
 
-One round of speculative decoding has five steps:
+Now that verification is free, here is how one round of speculative decoding
+uses it. A round has five steps:
 
-1. A cheap **draft** proposes $\gamma$ tokens autoregressively, each conditioned
-   on the ones before it.
-2. The **target** model runs one forward pass over all $\gamma$ draft tokens
-   plus the current prefix, producing a distribution at each of the $\gamma + 1$
+1. The **draft** proposes $\gamma$ tokens autoregressively, each conditioned on
+   the ones before it.
+2. The **target** runs one forward pass over all $\gamma$ draft tokens plus the
+   current prefix, producing a distribution at each of the $\gamma + 1$
    positions.
 3. Walk the draft tokens in order, accepting or rejecting each by the rule in
    the next section.
@@ -125,21 +147,28 @@ One round of speculative decoding has five steps:
    distribution at position $\gamma + 1$, which the same forward pass already
    produced.
 
+For example, with $\gamma = 3$, suppose the draft proposes "the cat sat". The
+target accepts "the" and "cat", rejects "sat", and samples "is" in its place.
+The round emits three tokens, "the cat is", for one target pass.
+
 A round yields between 1 and $\gamma + 1$ tokens. Even total rejection yields
 one, so ==speculation never loses ground==: the worst case is one token per
 target pass, which is what you had before.
 
 ## The acceptance rule and its proof
 
-This section states the rule and proves the output is distributed exactly as
-the target. Fix one position. Let $p$ be the target's distribution there and
-$q$ the draft's. The draft proposed token $x \sim q$.
+This section states the rule for step 3 and proves that it leaves the output
+distributed exactly as the target's. Fix one position. Let $p$ be the target's
+distribution there and $q$ the draft's. The draft proposed token $x \sim q$.
 
 **The rule.** Draw $u \sim \mathcal{U}(0,1)$ and accept $x$ if:
 
 $$
 u \le \min\!\left(1, \frac{p(x)}{q(x)}\right)
 $$
+
+In words: if the target likes $x$ at least as much as the draft does, always
+accept it. Otherwise, accept it with probability $p(x)/q(x)$.
 
 On rejection, draw the replacement from the *residual distribution*, the
 positive part of $p - q$ renormalized:
@@ -148,9 +177,30 @@ $$
 p'(y) = \frac{\big(p(y) - q(y)\big)_{+}}{\sum_{z \in V}\big(p(z) - q(z)\big)_{+}}
 $$
 
-Here $(a)_{+} = \max(0, a)$.
+Here $(a)_{+} = \max(0, a)$. The residual only puts mass on tokens the target
+likes more than the draft does.
 
 **The claim.** The token this procedure outputs is distributed exactly as $p$.
+
+> [!EXAMPLE] The lab's three-token vocabulary
+> Take $p = [0.5, 0.3, 0.2]$ for the target and $q = [0.25, 0.6, 0.15]$ for the
+> draft. In the following table, $\hlc{\min(p, q)}$ is the chance the draft
+> proposes a token and it's accepted, $q$ times the accept probability, and
+> $\hld{(p - q)_{+}}$ is the residual before normalizing:
+>
+> | Token | $p$ | $q$ | Accept probability | $\hlc{\min(p, q)}$ | $\hld{(p - q)_{+}}$ |
+> |---|---|---|---|---|---|
+> | 0 | 0.5 | 0.25 | 1 | 0.25 | 0.25 |
+> | 1 | 0.3 | 0.6 | 0.5 | 0.3 | 0 |
+> | 2 | 0.2 | 0.15 | 1 | 0.15 | 0.05 |
+>
+> The draft over-proposes token 1, so the rule accepts it only half the time.
+> The rejection probability is $1 - (0.25 + 0.3 + 0.15) = 0.3$, and the
+> residual is $[0.25, 0, 0.05] / 0.3$. So token 0 comes out with probability
+> $0.25 + 0.3 \times 0.25/0.3 = 0.5$, exactly $p(0)$. Tokens 1 and 2 give
+> $0.3 + 0 = 0.3$ and $0.15 + 0.05 = 0.2$.
+
+The proof shows that this bookkeeping works for every $p$ and $q$.
 
 ### The proof
 
@@ -212,14 +262,18 @@ That's the claim. The argument holds for every $q$, including a bad one:
 
 ### The acceptance rate is one minus total variation distance
 
-The acceptance rate is fixed by how close the draft is to the target. Start
-from $\alpha = \sum_y \min(p(y), q(y))$, use
+The proof also tells you how often a guess survives, and the answer depends
+only on how close the draft is to the target. Start from
+$\alpha = \sum_y \min(p(y), q(y))$, use
 $\min(a,b) = \tfrac{1}{2}(a + b - |a - b|)$, and sum:
 
 $$
 \alpha = \frac{1}{2}\left(1 + 1 - \sum_y \lvert p(y) - q(y)\rvert\right)
 = \boxed{1 - D_{\text{TV}}(p, q)}
 $$
+
+In the three-token example, $D_{\text{TV}} = \tfrac{1}{2}(0.25 + 0.3 + 0.05)
+= 0.3$, so $\alpha = 0.7$, matching the $0.25 + 0.3 + 0.15$ you summed there.
 
 > [!KEY] Acceptance is a property of the draft, not a knob
 > The only way to raise $\alpha$ is to make the draft agree with the target
@@ -259,17 +313,21 @@ Two details cause most bugs, and the lab tests both:
 
 ## Expected tokens per round
 
-A round emits a truncated geometric number of tokens, and high acceptance
-matters far more than a long draft. Model each draft position as accepting
-independently with probability $\alpha$. Let $N$ be the number of draft tokens
-accepted before the first rejection, so $N \in \{0, 1, \dots, \gamma\}$ and:
+You now know the output is correct. The next question is how many tokens a
+round gives you. The count is a truncated geometric number, and it shows that
+high acceptance matters far more than a long draft.
+
+Model each draft position as accepting independently with probability $\alpha$.
+Let $N$ be the number of draft tokens accepted before the first rejection, so
+$N \in \{0, 1, \dots, \gamma\}$ and:
 
 $$
 \Pr[N \ge i] = \alpha^{i}, \qquad i = 0, 1, \dots, \gamma
 $$
 
-A round emits $N + 1$ tokens in every case: $N$ accepted plus one correction on
-a rejection, or $\gamma$ accepted plus the bonus token on full acceptance. Sum
+In words, getting past $i$ positions means $i$ acceptances in a row. A round
+emits $N + 1$ tokens in every case: $N$ accepted plus one correction on a
+rejection, or $\gamma$ accepted plus the bonus token on full acceptance. Sum
 the tail probabilities, using $\mathbb{E}[N] = \sum_{i \ge 1} \Pr[N \ge i]$:
 
 $$
@@ -302,12 +360,12 @@ Two things follow:
 
 ## Net speedup, and the optimal draft length
 
-The draft isn't free, so the speedup divides the tokens a round yields by what
-the round costs. Let $c$ be the cost of one draft forward pass as a fraction of
-one target forward pass. A round costs one target pass plus $\gamma$ draft
-passes, $\hlb{1 + \gamma c}$ target-pass units, and produces
-$\hla{\mathbb{E}[N+1]}$ tokens. Plain decoding produces one token per target
-pass, so:
+Tokens per round isn't the whole story, because the draft isn't free. The
+speedup divides the tokens a round yields by what the round costs. Let $c$ be
+the cost of one draft forward pass as a fraction of one target forward pass. A
+round costs one target pass plus $\gamma$ draft passes, $\hlb{1 + \gamma c}$
+target-pass units, and produces $\hla{\mathbb{E}[N+1]}$ tokens. Plain decoding
+produces one token per target pass, so:
 
 $$
 \boxed{\operatorname{speedup}(\alpha, \gamma, c)
@@ -324,8 +382,9 @@ $$
 
 ### Where the optimum sits
 
-The optimal $\gamma$ has no closed form, but it solves in a line of arithmetic.
-Treat $\gamma$ as continuous and write $A = \alpha^{\gamma+1}$ and
+A longer draft buys more tokens per round but costs more draft passes, so there
+is a best $\gamma$. It has no closed form, but it solves in a line of
+arithmetic. Treat $\gamma$ as continuous and write $A = \alpha^{\gamma+1}$ and
 $L = \ln(1/\alpha)$. The derivative of the numerator is $AL$, and setting the
 quotient's derivative to zero gives $AL\,(1 + \gamma c) = (1 - A)\,c$, which
 rearranges to:
@@ -373,8 +432,10 @@ $\gamma \le 4$. Past that, every extra draft token costs real compute time: the
 
 ## Choosing a draft
 
-The best draft is cheap and agrees with the target. The four common options
-trade those two properties as follows:
+With the speedup formula in hand, you can judge a draft by two numbers: its
+cost $c$ and its acceptance rate $\alpha$. The best draft is cheap and agrees
+with the target. The four common options trade those two properties as
+follows:
 
 | Draft | Cost $c$ | Acceptance | Exact? |
 |---|---|---|---|
@@ -444,8 +505,9 @@ continuations simultaneously.
 
 ## Batching makes it worse
 
-At batch 1, speculative decoding gives 2 to 3 times. At batch 32 it often gives
-nothing, for two reasons that compound.
+Everything so far assumed batch 1. This section explains why the gain shrinks as
+the batch grows. At batch 1, speculative decoding gives 2 to 3 times. At batch
+32 it often gives nothing, for two reasons that compound.
 
 **The idle compute is gone.** Arithmetic intensity rises with the number of
 tokens in the pass. At batch 32 a plain decode step already carries 32 tokens,
@@ -474,10 +536,12 @@ global switch.
 
 ## Rolling back a rejected token
 
-A rejection means tokens $i+1$ through $\gamma$ never happened. Every piece of
-per-sequence state they touched has to be undone, and this model has two kinds.
+The last practical question is what happens to the engine's state after a
+rejection. If the target rejects draft token $i + 1$, then tokens $i+1$ through
+$\gamma$ never happened. Every piece of per-sequence state they touched has to
+be undone, and this model has two kinds.
 
-### The 16 full-attention layers are easy
+### The 16 full-attention layers roll back by length
 
 Keys and values were appended at slots the scheduler assigned, so undoing them
 is a length rollback. Set the sequence length back to prefix plus $i + 1$, and
@@ -506,10 +570,16 @@ speculative tokens; the only question is where their state ends up.
 update is invertible in closed form, so you could run the recurrence backwards.
 Don't. Every backward step multiplies by $1/\alpha_t > 1$, where $\alpha_t$ is
 the gate, not the acceptance rate, so rounding error is amplified instead of
-damped. Over $\gamma = 8$ steps the amplification is $\prod_t 1/\alpha_t$,
-which is $0.9^{-8} = 2.3$ for a slow-forgetting head with $\alpha_t \approx 0.9$
-and $2^{8} = 256$ for a fast-forgetting head with $\alpha_t \approx 0.5$. In
-bfloat16, with 8 mantissa bits, the second case destroys the state completely.
+damped.
+
+The amplification over $\gamma = 8$ steps is $\prod_t 1/\alpha_t$:
+
+- For a slow-forgetting head with $\alpha_t \approx 0.9$, it's
+  $0.9^{-8} = 2.3$.
+- For a fast-forgetting head with $\alpha_t \approx 0.5$, it's $2^{8} = 256$.
+
+In bfloat16, with 8 mantissa bits, the second case destroys the state
+completely.
 
 > [!DEEPDIVE] The closed-form inverse
 > [The gated delta rule chapter](/c/06-gated-delta-rule)'s update rearranges
@@ -565,6 +635,28 @@ Nothing has to be snapshotted, because nothing was overwritten. The commit is an
 update over an $i+1$-token chunk, which is work you'd have done anyway. The only
 cost is that the chunk kernel must accept a variable commit length, which is a
 parameter, not a redesign.
+
+## The engine you've built
+
+This is the last piece of the course, so it's worth stepping back to see what
+it completes. You started with a model on disk and one rented A100. Since then
+you've written the forward pass through a hybrid of full attention and gated
+delta layers, the KV cache, sampling, your own CUDA and Triton kernels,
+FlashAttention, a paged cache, continuous batching, benchmarks you can trust,
+quantization, and tensor parallelism.
+
+Chapter 0 named three levers against the memory bottleneck, and your engine
+pulls all of them:
+
+- **Serve more tokens per read of the weights.** Continuous batching.
+- **Read fewer bytes.** Grouped-query attention, linear attention, paged
+  caches, quantization, and tensor parallelism, which splits the bytes across
+  GPUs.
+- **Get more than one token per read.** Speculative decoding, the technique
+  in this chapter.
+
+Each of those pieces is code you wrote and a lab tested. So when an engine
+behaves in a way you don't expect, you know which lever to look at.
 
 ## What goes wrong
 
