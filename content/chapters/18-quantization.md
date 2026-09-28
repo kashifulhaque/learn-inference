@@ -393,6 +393,10 @@ the set of weights that share a scale. There are two standard granularities:
   `(out_features, in_features // g)`. This is the standard choice, and
   $\hlc{g} = 128$ is the standard size.
 
+```viz
+18-group-quant
+```
+
 The reshape is the whole implementation:
 
 ```python

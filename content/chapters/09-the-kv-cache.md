@@ -130,6 +130,10 @@ $$
 For long generations, ==the cache saves a factor of about $n/2$==. That's the
 whole result; the rest of the chapter is about what it costs.
 
+```viz
+09-cache-work-grid
+```
+
 > [!EXAMPLE] A 512-token prompt and 128 generated tokens
 > Plug in $p = 512$ and $n = 128$:
 >
@@ -543,6 +547,10 @@ token without limit:
 
 `ModelConfig.hybrid_breakeven_tokens` computes this for any config, and chapter
 2's lab has you derive it.
+
+```viz
+09-cache-memory
+```
 
 ### What decode actually reads
 

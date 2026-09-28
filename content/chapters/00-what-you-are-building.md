@@ -307,6 +307,10 @@ many tokens share one read of the weights. For a matrix with $n = 5120$:
 | 161 | 156 | About the ridge point |
 | 2048 — prefill | ~1460 | Compute |
 
+```viz
+00-intensity-ridge
+```
+
 > [!NOTE] FLOPs per parameter isn't FLOPs per byte
 > You'll see "2 FLOPs per parameter" quoted as decode's intensity. That's per
 > *parameter*. In bfloat16 each parameter costs two bytes, so per byte it's 1.

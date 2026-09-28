@@ -420,6 +420,10 @@ differ only in how far they take that:
 This model uses $H = 24$ and $H_{kv} = 4$, so the group size is
 $g = 24/4 = 6$.
 
+```viz
+07-gqa-heads
+```
+
 ### The cache arithmetic
 
 The cache stores $K$ and $V$ for every position in every full-attention layer.

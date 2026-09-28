@@ -245,6 +245,10 @@ That's the claim. The argument holds for every $q$, including a bad one:
 > $\hld{(p - q)_{+}}$ is exactly what the residual supplies. The two pieces
 > fit together into $p$.
 
+```viz
+20-accept-residual
+```
+
 > [!DEEPDIVE] Why the residual's normalizer is the rejection probability
 > For any reals $a, b$, $(a - b)_{+} = a - \min(a, b)$: if $a \ge b$ both
 > sides are $a - b$, and if $a < b$ both sides are 0. Apply that identity term
@@ -409,6 +413,10 @@ Two structural facts are visible in the table:
   makes rejections rare.
 - **The speedup is bounded by $1/(1-\alpha)$**, even with a free draft. At
   $\alpha = 0.8$ you can never beat 5 times.
+
+```viz
+20-speedup-curve
+```
 
 > [!TIP] You don't need to tune the draft length finely
 > The optimum is flat near its peak: at $\alpha = 0.7$ the values at

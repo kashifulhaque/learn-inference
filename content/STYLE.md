@@ -130,6 +130,42 @@ The error is ==a bias, not noise==, so averaging over 5120 terms doesn't
 cancel it.
 ```
 
+### Figures
+
+A figure is a small interactive drawing: a slider over context length, a
+toggle between data types, or an algorithm you can step through. To place one,
+write a `viz` fence that holds only the figure's name:
+
+````markdown
+```viz
+10-roofline-explorer
+```
+````
+
+Put the fence at the top level, straight after the paragraph that introduces
+the idea, and use at most two figures in a chapter. A figure illustrates the
+argument; it never carries a fact the prose doesn't also state.
+
+Figures live in `frontend/src/components/viz/`, one directory per group of
+chapters, and each group's `index.ts` registers its figures by name. A name
+starts with its chapter's number. Build a figure from the parts in
+`frontend/src/components/viz/kit.tsx`, and follow these rules:
+
+- Take every number from the chapter or the model's config. Keep the constants
+  at the top of the file and say where each one comes from.
+- Draw at the width that `useWidth` measures, so labels stay legible on a phone.
+- Colour marks with the tokens in `color`, so the figure follows the theme. To
+  tie a mark to a coloured term in an equation, use the same maths colour.
+- Don't animate on load. Use `useStepper` and a **Play** button instead.
+- Choose a meaningful initial state. The PDF book prints each figure in that
+  state, without its controls, so show every value a control sets in the
+  drawing or the readout.
+
+To see every figure on one page, without the backend or a sign-in, run
+`npm run dev` in `frontend/` and open http://localhost:5173/viz.html. To show
+only one chapter's figures, add a prefix, for example `?only=10-`. The chapter
+check reports a fence that names no registered figure.
+
 ### Everything else
 
 - Code blocks get a language label and a copy button. Tag every fence with its

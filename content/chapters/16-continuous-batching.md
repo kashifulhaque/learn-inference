@@ -124,6 +124,12 @@ Count what each schedule paid for:
 - **Continuous batching** takes 6 steps and pays for 12 slot-steps, every one
   of them useful. C starts as soon as A leaves, and D as soon as C leaves.
 
+Step through both schedules to see where they diverge:
+
+```viz
+16-batch-timeline
+```
+
 > [!KEY] Re-plan every step, not every batch
 > A finished sequence frees its slot immediately, and a waiting request fills
 > it on the very next step. Nothing waits for the slowest member of a batch.
@@ -408,6 +414,10 @@ $T_p + B = 266$:
 > Up to about 250 tokens per step, prefill hides entirely under the memory time
 > the decode step was already paying. Past that, every prefill token is charged
 > to every decoding user's inter-token latency.
+
+```viz
+16-chunk-budget
+```
 
 No real kernel reaches peak, so the free chunk on real hardware is smaller than
 250. Measure it rather than trusting the arithmetic.

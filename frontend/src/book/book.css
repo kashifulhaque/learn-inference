@@ -827,3 +827,12 @@ body {
   font-style: italic;
   color: var(--fg-subtle);
 }
+
+/* A figure prints in its initial state. Its controls have nothing to do on
+   paper, and the figure stays on one page. */
+.prose-chapter .viz {
+  break-inside: avoid;
+}
+.prose-chapter .viz-controls {
+  display: none;
+}

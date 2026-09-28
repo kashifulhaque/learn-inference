@@ -316,6 +316,10 @@ $\hlb{t_m}$.
 > \qquad P_{50} = 30, \qquad P_{99} = 90
 > $$
 
+```viz
+17-tail-vs-mean
+```
+
 > [!KEY] The mean moved 10% and the tail moved 200%
 > A user watching a stream sees the tail: a visible hitch every twentieth token.
 > That's why chapter 16 tunes `max_batched_tokens`. It sets $\hlb{t_m}$, and

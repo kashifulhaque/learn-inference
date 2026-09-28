@@ -2,9 +2,10 @@
 
     python3 scripts/check_chapters.py [file ...]
 
-Reports callout markers the reader doesn't recognize, and chapters missing the
-parts every chapter has: one summary, one recap, the standard sections, and
-questions written as callouts. Exits nonzero if anything fails.
+Reports callout markers the reader doesn't recognize, ```viz fences that name
+no registered figure, and chapters missing the parts every chapter has: one
+summary, one recap, the standard sections, and questions written as callouts.
+Exits nonzero if anything fails.
 """
 
 import re
@@ -19,18 +20,37 @@ KINDS = {
 REQUIRED_SECTIONS = ["Check your understanding", "Further reading"]
 MARKER = re.compile(r"^((?:>[ \t]?)+)\[!([A-Za-z]+)\]")
 FENCE = re.compile(r"^(?:>[ \t]?)*[ \t]*```")
+VIZ_FENCE = re.compile(r"^(?:>[ \t]?)*[ \t]*```viz\s*$")
+VIZ_DIR = ROOT / "frontend" / "src" / "components" / "viz"
+# A registry key: a quoted name that starts with a chapter number.
+VIZ_KEY = re.compile(r'^\s*"(\d\d[a-z]?-[a-z0-9-]+)"\s*:', re.MULTILINE)
 
 
-def check(path: Path) -> list[str]:
+def figure_names() -> set[str]:
+    """The figure names registered in each group's index.ts."""
+    names: set[str] = set()
+    for index in VIZ_DIR.glob("*/index.ts"):
+        names.update(VIZ_KEY.findall(index.read_text()))
+    return names
+
+
+def check(path: Path, figures: set[str]) -> list[str]:
     problems: list[str] = []
     counts: dict[str, int] = {}
     headings: list[str] = []
     in_fence = False
+    in_viz = False
     for number, line in enumerate(path.read_text().splitlines(), start=1):
         if FENCE.match(line):
+            in_viz = not in_fence and bool(VIZ_FENCE.match(line))
             in_fence = not in_fence
             continue
         if in_fence:
+            if in_viz and line.strip():
+                name = re.sub(r"^(?:>[ \t]?)*", "", line).strip()
+                if name not in figures:
+                    problems.append(f"line {number}: no figure is registered as {name!r}")
+                in_viz = False
             continue
         if line.startswith("## "):
             headings.append(line[3:].strip())
@@ -64,8 +84,9 @@ def main() -> int:
         (ROOT / "content" / "chapters").glob("*.md")
     )
     failed = 0
+    figures = figure_names()
     for path in files:
-        problems = check(path)
+        problems = check(path, figures)
         if problems:
             failed += 1
             for problem in problems:

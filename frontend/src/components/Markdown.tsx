@@ -6,7 +6,8 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeHighlight from "rehype-highlight";
 import macros from "../lib/katexMacros.json";
-import { rehypeSectionize, remarkCallouts, remarkMark } from "../lib/markdownPlugins";
+import { rehypeSectionize, remarkCallouts, remarkMark, remarkViz } from "../lib/markdownPlugins";
+import Viz from "./viz/Viz";
 
 /** A link that stays inside the app, as opposed to one that leaves it. */
 function isInternal(href: string): boolean {
@@ -57,7 +58,7 @@ export default function Markdown({ children }: { children: string }) {
   return (
     <div className="prose-chapter">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath, remarkCallouts, remarkMark]}
+        remarkPlugins={[remarkGfm, remarkMath, remarkViz, remarkCallouts, remarkMark]}
         rehypePlugins={[
           // Sections first, so each one wraps the source headings before KaTeX
           // and the highlighter add their own markup.
@@ -87,6 +88,15 @@ export default function Markdown({ children }: { children: string }) {
                 {children}
               </a>
             ),
+          // remarkViz leaves a placeholder where a ```viz fence was.
+          div: ({ node: _node, ...props }) => {
+            const name = (props as Record<string, unknown>)["data-viz"];
+            return typeof name === "string" && String(props.className).includes("viz-embed") ? (
+              <Viz name={name} />
+            ) : (
+              <div {...props} />
+            );
+          },
           pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
           table: ({ children }) => (
             <div className="table-wrap">

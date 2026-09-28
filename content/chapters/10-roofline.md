@@ -425,6 +425,10 @@ The following table uses the exact $\hlc{I}(T)$ and a ridge point of 161.2:
 Continuous batching ([chapter 16](/c/16-continuous-batching)) and chunked
 prefill exist to do exactly that, and this table is why.
 
+```viz
+10-roofline-explorer
+```
+
 The MLP gains from batching because the batch shares its weights. Next, you see
 an operation where nothing is shared.
 
@@ -686,6 +690,10 @@ The table carries two lessons:
   thirty-seven full waves costs nothing. This effect is called *wave
   quantization*, and it's why a kernel can get slower when the problem grows by
   one.
+
+```viz
+10-wave-quantization
+```
 
 Decode at batch 1 loses badly here. Take RMSNorm with one block per row:
 

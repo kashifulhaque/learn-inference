@@ -221,6 +221,10 @@ and $47.92 / 1.553 = 30.86$. It's the same answer.
 > converts an old total into the new units. It costs one multiply per total, no
 > matter how many terms the total already holds.
 
+```viz
+14-online-softmax
+```
+
 Three facts made that work, and the next four sections turn each one into
 general algebra:
 
@@ -638,6 +642,10 @@ Half the work disappears. The extra 0.8% is the diagonal blocks, the ones that
 straddle the boundary and still need the elementwise `tl.where`. Every block
 strictly below the diagonal needs no mask at all, and a more aggressive kernel
 specializes those into a separate loop with no `tl.where` in it.
+
+```viz
+14-causal-blocks
+```
 
 > [!WARNING] The decode offset passes every prefill test
 > The `offset` is the same one from chapter 7, and it's where *decode*, the

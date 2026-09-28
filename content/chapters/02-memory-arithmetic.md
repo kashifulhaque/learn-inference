@@ -507,6 +507,10 @@ Above it, the hybrid wins, and the margin grows by 192 KiB for every further
 token. The ratio between them tends to 4 as $L$ grows, which is $64 / 16$: the
 layer ratio, as it must be.
 
+```viz
+02-breakeven
+```
+
 788 tokens is short. Almost every real request is longer than that, so in
 practice ==the hybrid always wins==. The calculation exists to prove the design
 isn't free, not to guide a decision.
@@ -582,6 +586,10 @@ The 4k row's sequence cost is $154{,}927{,}104 + 65{,}536 \times 4096$. On a
 40 GiB card, the numerator is negative before you divide anything, because the
 weights alone are bigger than the card, so the answer is 0 at every context
 length.
+
+```viz
+02-batch-budget
+```
 
 Three things follow from that formula:
 

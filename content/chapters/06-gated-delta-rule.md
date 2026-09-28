@@ -335,6 +335,10 @@ $k v_a^\top$ in the state. The second first applies $I - k k^\top$, which
 annihilates the $k$ direction and leaves $0$, then adds $k v_b^\top$. Reading
 gives $v_b$: the state replaced rather than accumulated.
 
+```viz
+06-delta-overwrite
+```
+
 ### Why the keys must be unit length
 
 The erase factor $I - \hlb{\beta} k k^\top$ is well behaved only when
@@ -481,6 +485,10 @@ gives:
 These are arithmetic, not measurements: they follow from the formula and the
 assumption that softplus returns 1. The checkpoint's actual $A_{\log}$ values
 live in the weights and vary by head.
+
+```viz
+06-forget-horizon
+```
 
 > [!KEY] Two units of $A_{\log}$ move the horizon by a factor of 7.4
 > Two units of $A_{\log}$ move the 90% horizon by $e^2 \approx 7.4$, so a layer's

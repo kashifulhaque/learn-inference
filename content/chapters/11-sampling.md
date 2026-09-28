@@ -509,6 +509,10 @@ Top-p's threshold is a mass, and flattening the distribution pushes mass into
 the tail, so the nucleus grows without bound. Min-p's threshold tracks the
 model's own confidence, so it grows only in proportion to $\hla{T}$.
 
+```viz
+11-truncation-rules
+```
+
 ## The order, and which pairs commute
 
 You now have five transforms. This section answers the question the opening
@@ -590,6 +594,10 @@ The support shrinks from three tokens to two, and the top token's probability
 rises from $0.51$ to $0.62$. Worse, the parameter no longer describes anything:
 in the wrong order, the two surviving tokens hold $0.4287 + 0.2600 = 0.6886$ of
 the tempered mass, under the $0.7$ that was asked for.
+
+```viz
+11-temperature-order
+```
 
 ### Why top-k, then min-p, then top-p
 

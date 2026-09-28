@@ -139,6 +139,10 @@ file.
 The `__metadata__` key is the one reserved name. It holds a flat map from
 strings to strings, and no tensor data.
 
+```viz
+01-safetensors-offsets
+```
+
 ## Why the format looks like this
 
 Next, you see why the layout is this bare. Each of the following four properties
@@ -441,6 +445,10 @@ layer_types = [
 > last layer of each group of four, not the first. Get this off by one and every
 > entry in the KV cache (the stored keys and values that chapter 9 builds) goes
 > to the wrong layer, and the model still runs.
+
+```viz
+01-layer-types
+```
 
 The following fields are worth knowing before chapter 2. The *residual stream*
 is the running per-token vector that every layer reads from and adds to, and the

@@ -4,6 +4,8 @@
 // - remarkCallouts turns `> [!KEY] Title` blockquotes into styled callouts, and
 //   the collapsible kinds into <details>.
 // - remarkMark turns `==text==` into <mark>.
+// - remarkViz turns a ```viz fence into a placeholder that Markdown.tsx swaps
+//   for the interactive figure it names.
 // - rehypeSectionize wraps each `##` section in a <section>, so the reader can
 //   track, number, and focus one section at a time.
 
@@ -12,6 +14,7 @@
 type Node = {
   type: string;
   value?: string;
+  lang?: string | null;
   tagName?: string;
   properties?: Record<string, unknown>;
   children?: Node[];
@@ -178,6 +181,30 @@ export function remarkMark() {
   const walk = (node: Node) => {
     if (PHRASING_PARENTS.has(node.type)) markInline(node);
     for (const child of node.children ?? []) walk(child);
+  };
+  return (tree: Node) => walk(tree);
+}
+
+/**
+ * Replaces each ```viz fence with an empty <div class="viz-embed">. The fence
+ * holds only the figure's name, for example `10-roofline-explorer`, and the
+ * registry in components/viz decides what renders.
+ */
+export function remarkViz() {
+  const walk = (node: Node) => {
+    const children = node.children ?? [];
+    children.forEach((child, index) => {
+      if (child.type === "code" && child.lang === "viz") {
+        const name = (child.value ?? "").trim().split(/\s+/)[0] ?? "";
+        children[index] = {
+          type: "paragraph",
+          data: { hName: "div", hProperties: { className: ["viz-embed"], dataViz: name } },
+          children: [],
+        };
+      } else {
+        walk(child);
+      }
+    });
   };
   return (tree: Node) => walk(tree);
 }

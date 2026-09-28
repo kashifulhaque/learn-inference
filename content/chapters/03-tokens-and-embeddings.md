@@ -529,6 +529,10 @@ def push(self, token_id: int) -> str:
 so the partial character doesn't appear yet. The token that completes it makes
 the whole character appear at once.
 
+```viz
+03-streaming-detokenizer
+```
+
 `flush`, at the end of a generation, uses `errors="replace"` instead. At that
 point an incomplete sequence is never going to be completed, and hiding it would
 lose output.

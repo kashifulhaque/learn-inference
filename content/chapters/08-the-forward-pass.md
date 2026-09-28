@@ -236,6 +236,10 @@ four layers:
 | 60, 61, 62 | Gated delta linear attention | A fixed-size state |
 | 63 | Grouped-query attention | A KV cache |
 
+```viz
+08-layer-schedule
+```
+
 Two details fall out of this, and both matter later:
 
 - **The last layer is full attention.** Whatever layer 63 contributes to the

@@ -236,6 +236,10 @@ example, with $B = 16$, position 37 sits in logical block 2 at offset 5. If the
 table says logical block 2 is physical block 9, the slot is
 $9 \times 16 + 5 = 149$.
 
+```viz
+15-block-table
+```
+
 The following code vectorizes the map over a tensor of positions:
 
 ```python

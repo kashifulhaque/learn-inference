@@ -220,6 +220,10 @@ $$
 The sharded intermediate $\hlb{H_p}$ is never gathered. It goes straight into
 the next layer in the form that layer already wants.
 
+```viz
+19-column-row-split
+```
+
 ### What one all-reduce costs
 
 To compare schemes, you need the price of a collective in bytes. A *ring
@@ -231,6 +235,10 @@ and runs two phases:
    summed piece.
 2. **All-gather.** The finished pieces travel around the ring for another
    $P - 1$ hops, until every rank has all of them.
+
+```viz
+19-ring-all-reduce
+```
 
 Each hop sends $1/P$ of the tensor, so each phase sends $\hlc{\tfrac{P-1}{P}}$
 of it per rank. One all-reduce therefore sends the following bytes per rank:

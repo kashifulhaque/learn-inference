@@ -599,6 +599,10 @@ Nearly half the intermediate has to reach HBM before the fusion pays at all.
 From the sweep, that happens ==between one and two times L2==: between 41.9 MB
 and 83.9 MB, or between about 4000 and 8000 rows of 5120.
 
+```viz
+13-fusion-vs-l2
+```
+
 Why one to two times, and not exactly one? Because the intermediate doesn't get
 the cache to itself.
 

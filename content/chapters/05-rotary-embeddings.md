@@ -250,6 +250,10 @@ Pair 0 turns once every $2\pi \approx 6.3$ positions and encodes fine
 distinctions: adjacent, two apart, three apart. The last pair turns slowly and
 encodes coarse position.
 
+```viz
+05-rotary-dials
+```
+
 ## What $\Theta$ controls, and why long context raises it
 
 This section answers the one tuning question RoPE poses: how large should

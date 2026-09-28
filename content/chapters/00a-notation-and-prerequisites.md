@@ -280,6 +280,10 @@ The two 16-bit formats make opposite trades:
   but an exponent that runs out at 65504. That's why float16 training needs loss
   scaling and why this course keeps weights in bfloat16.
 
+```viz
+00a-float-formats
+```
+
 ## Rounding error and vanishing addends
 
 Labs compare your output with a reference to a tolerance, not exactly, and some

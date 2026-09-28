@@ -123,6 +123,10 @@ Three properties follow directly:
   in that row, and nothing outside it. Rows are independent, which is why the
   kernel parallelizes one row per thread block.
 
+```viz
+04-rmsnorm-scale-shift
+```
+
 ## LayerNorm versus RMSNorm
 
 You'll meet LayerNorm in older models and in papers, so it's worth knowing
@@ -277,6 +281,10 @@ $$
 > So the normalizer is off by
 > $\sqrt{\widehat{\operatorname{ms}}}/\sqrt{s} = 1/\sqrt{20} \approx 0.224$,
 > and the output is about $1/0.224 \approx 4.5$ times too large.
+
+```viz
+04-bf16-stall
+```
 
 Two things make this worse than ordinary rounding noise:
 

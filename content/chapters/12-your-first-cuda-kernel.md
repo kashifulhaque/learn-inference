@@ -412,6 +412,10 @@ is how many warps the guard splits. The answer is one.
 The tail guard is free. Advice to avoid branches in CUDA is about branches
 inside the main loop, not about this one.
 
+```viz
+12-tail-guard
+```
+
 ### Choose the block size
 
 Before you choose a block size, you need one more picture: how an SM hides the
@@ -547,6 +551,10 @@ $128/1024 = 12.5\%$, an eightfold read amplification.
 
 ```cuda
 out[i] = a[i * 32];            // consecutive threads land 128 bytes apart
+```
+
+```viz
+12-warp-coalescing
 ```
 
 The size of the unit decides the answer, and only the sector model gets it
