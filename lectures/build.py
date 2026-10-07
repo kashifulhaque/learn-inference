@@ -942,7 +942,7 @@ def main(argv: list[str]) -> int:
               "or --quality l, or pass --allow-estimate for a 1080p test render (it can't be published).",
               file=sys.stderr)
         return 1
-    opts.jobs = max(1, opts.jobs or default_jobs())
+    opts.jobs = max(1, min(opts.jobs or default_jobs(), len(targets)))
     opts.ffmpeg_threads = max(1, cpu_count() // opts.jobs)
     opts.omp_threads = max(1, opts.omp_threads or opts.ffmpeg_threads)
     try:
