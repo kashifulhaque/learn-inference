@@ -21,5 +21,6 @@
     "lang": "en",
     "sample_rate": 24000
   },
-  "estimate_words_per_second": 2.6
+  "estimate_words_per_second": 2.6,
+  "narration_disclosure": "The narration voice is AI-generated (VibeVoice-1.5B)."
 }

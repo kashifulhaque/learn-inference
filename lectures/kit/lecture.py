@@ -41,6 +41,7 @@ from pathlib import Path
 
 import numpy as np
 from manim import (
+    DL,
     DOWN,
     LEFT,
     MEDIUM,
@@ -361,9 +362,19 @@ class Lecture(Scene):
             next_label=label_text,
             color=self.color,
         )
-        self.place(card, "top")
+        # The AI-voice disclosure sits along the bottom edge, so the card
+        # fits in the space above it.
+        disclosure = course.config().get("narration_disclosure")
+        footer = None
+        if disclosure:
+            footer = label(disclosure, size=th.SIZE_LABEL, color=th.INK_4)
+            footer.move_to([0, 0, 0]).align_to([th.SAFE_LEFT, th.SAFE_BOTTOM, 0], DL)
+            blocks.fit(card, th.SAFE_WIDTH, th.CONTENT_HEIGHT - footer.height - 0.35)
+        self.place(card, "top", fit=footer is None)
         text = narration or " ".join(recap)
         with self.narrate(text) as t:
+            if footer is not None:
+                self.add(footer)
             self.play(FadeIn(card.left_col[0]), run_time=0.4)
             for i, row in enumerate(card.items):
                 self.play(FadeIn(row, shift=0.1 * np.array([1, 0, 0])), run_time=0.5)
