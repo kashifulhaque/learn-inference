@@ -311,7 +311,7 @@ def _inside(p: Path, root: Path) -> bool:
 def build_target(target: Target, opts: argparse.Namespace, runner: Runner) -> dict:
     version = version_of(target, opts.quality)
     preview = opts.frames or bool(opts.only)
-    estimate = tts_mode() == "estimate"
+    estimate = tts_mode() in ("estimate", "collect")
     work = work_dir(opts.out, target, version, preview, estimate)
     dist = work / "dist"
     done = work / "done.json"
@@ -937,7 +937,7 @@ def main(argv: list[str]) -> int:
         return run_publish(opts, targets)
 
     preview = opts.frames or bool(opts.only)
-    if tts_mode() == "estimate" and not preview and opts.quality == "h" and not opts.allow_estimate:
+    if tts_mode() in ("estimate", "collect") and not preview and opts.quality == "h" and not opts.allow_estimate:
         print("error: LECTURE_TTS=estimate makes silent placeholder narration. Use it with --frames, --only, "
               "or --quality l, or pass --allow-estimate for a 1080p test render (it can't be published).",
               file=sys.stderr)

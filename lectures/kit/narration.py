@@ -70,10 +70,14 @@ COURSE_PRONUNCIATIONS = LECTURES / "pronunciations.json"
 
 
 def mode() -> str:
-    """Returns `estimate` or `remote`, from the `LECTURE_TTS` variable."""
+    """Returns `estimate`, `collect`, or `remote`, from the `LECTURE_TTS` variable.
+
+    `collect` behaves like `estimate` and also records every spoken sentence
+    in `$LECTURE_OUT/narration.jsonl`, for `prefetch.py` to synthesise in bulk.
+    """
     value = os.environ.get("LECTURE_TTS", "remote").strip().lower() or "remote"
-    if value not in ("estimate", "remote"):
-        raise ValueError(f"LECTURE_TTS must be 'estimate' or 'remote', not {value!r}.")
+    if value not in ("estimate", "collect", "remote"):
+        raise ValueError(f"LECTURE_TTS must be 'estimate', 'collect', or 'remote', not {value!r}.")
     return value
 
 
@@ -245,7 +249,11 @@ class Voice:
 
     def __init__(self, cache_dir: Path | None = None):
         self.mode = mode()
-        if self.mode == "estimate":
+        self.silent = self.mode in ("estimate", "collect")
+        self._collect = None
+        if self.mode == "collect":
+            self._collect = Path(os.environ.get("LECTURE_OUT", ".")) / "narration.jsonl"
+        if self.silent:
             base = Path(cache_dir) if cache_dir else ESTIMATE_DIR
             self.cache_dir = base / f"{WORDS_PER_SECOND}wps"
         else:
@@ -317,7 +325,7 @@ class Voice:
         return pcm
 
     def _synthesize(self, spoken_text: str) -> np.ndarray:
-        if self.mode == "estimate":
+        if self.silent:
             return np.zeros(int(round(estimate_seconds(spoken_text) * SAMPLE_RATE)), dtype=np.int16)
         return self._synthesize_remote(spoken_text)
 
@@ -326,7 +334,7 @@ class Voice:
         misses = list(dict.fromkeys(t for t in spoken_texts if not self._cache_path(t).exists()))
         if not misses:
             return
-        workers = 1 if self.mode == "estimate" else max(1, min(16, self._remote["workers"]))
+        workers = 1 if self.silent else max(1, min(64, self._remote["workers"]))
 
         def one(text: str) -> tuple[str, np.ndarray]:
             return text, self._synthesize(text)
@@ -357,6 +365,10 @@ class Voice:
                     f"`say` has {len(voiced)} sentences but the text has {len(captions)}; "
                     "give them the same number of sentences."
                 )
+        if self._collect is not None:
+            with self._collect.open("a", encoding="utf-8") as fh:
+                for t in voiced:
+                    fh.write(json.dumps({"spoken": t}, ensure_ascii=False) + "\n")
         existed = {t: self._cache_path(t).exists() for t in set(voiced)}
         self._fill_cache(voiced)
         gap = np.zeros(int(SENTENCE_GAP * SAMPLE_RATE), dtype=np.int16)
