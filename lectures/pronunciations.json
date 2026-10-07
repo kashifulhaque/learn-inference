@@ -1,4 +1,6 @@
 [
+  ["\\btorch\\.cat\\b", "torch dot cat"],
+  ["\\bPFLOPs?\\b", "petaflops"],
   ["\\btok(?:ens)?/s\\b", "tokens per second"],
   ["\\bTFLOP/s\\b", "teraflops per second"],
   ["\\bGFLOP/s\\b", "gigaflops per second"],
