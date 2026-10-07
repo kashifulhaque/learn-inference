@@ -31,3 +31,7 @@ frontend/tsconfig.tsbuildinfo
 # The PDF book, built by frontend/scripts/build-book.mjs at deploy time.
 /book/
 frontend/dist-book/
+
+# Lecture renders and the narration cache (lectures/README.md).
+lectures/.build/
+lectures/.cache/

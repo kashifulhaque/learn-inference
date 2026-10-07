@@ -1,0 +1,25 @@
+{
+  "course": "learn-inference",
+  "name": "Learn Inference",
+  "chapter_path": "content/chapters/{slug}.md",
+  "chapter_label": "Chapter",
+  "manifest_path": "content/lectures/{slug}.json",
+  "bucket": "learn-inference-lectures",
+  "public_base": "https://learn-inference-media.ifkash.dev",
+  "key_prefix": "lectures",
+  "accent": "#c2410c",
+  "fonts": {
+    "serif": "Source Serif 4",
+    "serif_display": "Source Serif 4 Display",
+    "sans": "IBM Plex Sans",
+    "mono": "IBM Plex Mono"
+  },
+  "voice": {
+    "model": "vibevoice-1.5b",
+    "voice": "en-Alice_woman",
+    "speed": 1.0,
+    "lang": "en",
+    "sample_rate": 24000
+  },
+  "estimate_words_per_second": 2.6
+}
