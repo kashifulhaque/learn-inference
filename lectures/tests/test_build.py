@@ -249,14 +249,27 @@ class NarrationTest(unittest.TestCase):
     def test_spoken_forms(self):
         spoken = self.narration.spoken
         self.assertEqual(spoken("The KV cache grows 64 KiB per token."),
-                         "The K V cache grows 64 kibibytes per token.")
+                         "The K V cache grows sixty-four kibibytes per token.")
         self.assertEqual(spoken("A quarter of a GiB."), "A quarter of a gibibyte.")
         self.assertEqual(spoken("bf16 on an A100 reads 2 TB/s from HBM."),
-                         "B F sixteen on an A one hundred reads 2 terabytes per second from H B M.")
+                         "B F sixteen on an A one hundred reads two terabytes per second from H B M.")
         self.assertEqual(spoken("GQA and RoPE, then RMSNorm."), "G Q A and rope, then R M S norm.")
-        self.assertEqual(spoken("It takes 12 µs, about 3 × faster."), "It takes 12 microseconds, about 3 times faster.")
-        self.assertEqual(spoken("24 / 4 = 6"), "24 over 4 equals 6")
-        self.assertEqual(spoken("0.25 GiB"), "0.25 gibibytes")
+        self.assertEqual(spoken("It takes 12 µs, about 3 × faster."),
+                         "It takes twelve microseconds, about three times faster.")
+        self.assertEqual(spoken("24 / 4 = 6"), "twenty-four over four equals six")
+        self.assertEqual(spoken("0.25 GiB"), "zero point two five gibibytes")
+
+    def test_numbers_become_words(self):
+        spoken = self.narration.spoken
+        self.assertEqual(spoken("The vocabulary holds 248,320 entries."),
+                         "The vocabulary holds two hundred forty-eight thousand three hundred twenty entries.")
+        self.assertEqual(spoken("Two to the 30th, and the 21st step."),
+                         "Two to the thirtieth, and the twenty-first step.")
+        self.assertEqual(spoken("A 100-token prompt."), "A one hundred-token prompt.")
+        self.assertEqual(spoken("A rate of 1e-4."), "A rate of ten to the minus four.")
+        # Running the rules twice changes nothing, so say= overrides are safe.
+        once = spoken("At p99 the LM waits 176 ms, 20% of a 4096-token step.")
+        self.assertEqual(spoken(once), once)
 
     def test_estimate_seconds(self):
         self.assertAlmostEqual(self.narration.estimate_seconds("one two three four five six seven eight nine ten "

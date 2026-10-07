@@ -435,8 +435,9 @@ class Publisher:
     `curl`, and no file written. The checks on the local build still run.
     """
 
-    def __init__(self, upload: bool, dry_run: bool, force: bool, printer=print):
+    def __init__(self, upload: bool, dry_run: bool, force: bool, printer=print, verify: bool = True):
         self.upload = upload
+        self.verify = verify
         self.dry_run = dry_run
         self.force = force
         self.say = printer
@@ -520,7 +521,10 @@ class Publisher:
              CONTENT_TYPES[p.suffix].split(";")[0], p.stat().st_size)
             for p in files
         ]
-        if self.dry_run:
+        if not self.verify:
+            self.say(f"{target.name}: skipped the URL checks (--no-verify); run --publish again without it "
+                     "once the public domain serves the bucket")
+        elif self.dry_run:
             for url, ctype, size in checks:
                 self.say(f"would check: {url} -> 200, {ctype}, {size} bytes")
         else:
@@ -899,6 +903,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         help="with --publish: the build directory to publish from (default: --out)")
     parser.add_argument("--upload", action="store_true", help="with --publish: put the files in R2 with cf first")
     parser.add_argument("--dry-run", action="store_true", help="with --publish: print the actions, change nothing")
+    parser.add_argument("--no-verify", action="store_true",
+                        help="with --publish: skip the public URL checks, for a bucket whose domain isn't attached yet")
     parser.add_argument("--version", dest="version", default=None,
                         help="with --publish and one target: publish this version instead of the current one")
     parser.add_argument("--_postprocess", help=argparse.SUPPRESS)
@@ -921,8 +927,8 @@ def main(argv: list[str]) -> int:
         return 0
 
     opts.out = (opts.out or DEFAULT_OUT).resolve()
-    if not opts.publish and (opts.upload or opts.dry_run or opts.from_dir or opts.version):
-        parser.error("--upload, --dry-run, --from, and --version go with --publish.")
+    if not opts.publish and (opts.upload or opts.dry_run or opts.from_dir or opts.version or opts.no_verify):
+        parser.error("--upload, --dry-run, --no-verify, --from, and --version go with --publish.")
     if opts.publish and (opts.frames or opts.only):
         parser.error("--frames and --only make previews; they can't be published.")
     try:
@@ -988,7 +994,7 @@ def run_publish(opts: argparse.Namespace, targets: list[Target]) -> int:
     if not root.is_dir():
         print(f"error: {root} isn't a directory.", file=sys.stderr)
         return 1
-    publisher = Publisher(upload=opts.upload, dry_run=opts.dry_run, force=opts.force)
+    publisher = Publisher(upload=opts.upload, dry_run=opts.dry_run, force=opts.force, verify=not opts.no_verify)
     failures = []
     for t in targets:
         try:

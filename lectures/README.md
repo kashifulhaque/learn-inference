@@ -71,6 +71,38 @@ directory and records the mode in its manifest. `build.py` refuses a 1080p
 full render in estimate mode unless you pass `--allow-estimate`, and
 `--publish` always refuses estimated builds.
 
+### Synthesize narration in bulk
+
+A render asks the speech server for one narration block at a time, so the
+GPU sees only a few requests at once. To keep the GPU busy, synthesize every
+sentence before you render:
+
+1. Record every spoken sentence with a fast frames-only pass:
+
+   ```bash
+   LECTURE_TTS=collect python3 lectures/build.py --all --frames --jobs 6 --out COLLECT_DIR
+   ```
+
+1. Send the sentences that aren't cached yet, with many requests in flight:
+
+   ```bash
+   python3 lectures/prefetch.py --from COLLECT_DIR --concurrency 32 --redo-wer 0.15
+   ```
+
+1. Render as usual. Every sentence is a cache hit, so the render doesn't wait
+   on the server.
+
+Replace `COLLECT_DIR` with any scratch directory. The speech server checks
+each sentence with speech recognition and returns its word error rate.
+`prefetch.py` records that rate in `qa.jsonl` in the cache, and `--redo-wer`
+synthesizes again, from scratch, every sentence above the threshold. To list
+the worst sentences with what the recognizer heard, pass `--report`. Many
+reported mismatches are spelling differences, such as "pre-fill" for
+"prefill", rather than misread speech.
+
+The spoken form spells every number as words, because the voice misreads long
+digit strings. Captions keep the digits.
+
 ## Render a lecture
 
 To render one lecture at 1080p, run the following command from the
@@ -183,6 +215,9 @@ python3 lectures/build.py --publish --all --from ~/lecture-builds/learn-inferenc
 ```
 
 If another process already copied the files to the bucket, omit `--upload`.
+If the bucket has no public domain yet, add `--no-verify` to upload and write
+the manifests without the URL checks. Run `--publish` again without it, with
+`--force`, once the domain serves the bucket.
 For each lecture, `--publish` does the following:
 
 1. Finds the build whose version matches the current scene. To publish
