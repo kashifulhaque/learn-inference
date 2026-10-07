@@ -1,0 +1,240 @@
+{
+  "course": "learn-inference",
+  "slug": "00a-notation-and-prerequisites",
+  "title": "Notation and prerequisites",
+  "version": "19de902e2605",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/00a-notation-and-prerequisites/19de902e2605/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 826.6,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "Notation and prerequisites",
+      "start": 0.0,
+      "end": 16.2,
+      "slide": "slides/01-title.webp",
+      "notes": "Notation and prerequisites. This chapter is a reference page, so you can dip into it, rather than read it straight through. In this lecture, you tour the shapes, the einsum strings, the floating-point facts, and the GPU words that every later chapter assumes."
+    },
+    {
+      "id": "shapes-memory",
+      "title": "The last dimension sits contiguously in memory",
+      "start": 16.2,
+      "end": 56.367,
+      "slide": "slides/02-shapes-memory.webp",
+      "notes": "Every chapter writes shapes the same way, because shape confusion is the easiest way to get stuck. A shape is a tuple of named dimensions, outermost first: batch, heads, sequence, and head dim. Here's one batch and one head, with 4 positions and 6 channels. In memory, the rows sit end to end, so the rightmost dimension is contiguous. A kernel that reads along that dimension reads consecutive bytes. A kernel that reads along the sequence jumps a whole head dim per step. With a head dim of 256, that's 512 bytes in bf16.",
+      "book_section": "s-shapes-and-index-conventions",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "shape-names",
+      "title": "The same names in every chapter",
+      "start": 56.367,
+      "end": 91.533,
+      "slide": "slides/03-shape-names.webp",
+      "notes": "The same names appear in every chapter. Batch counts the sequences processed together. The query length is how many queries this call computes, and the key length is how many keys they attend to. In decode, which generates one token per step, the query length is 1 and the key length is the whole context. Query heads and KV heads differ in this model. One head is 256 wide, and the residual stream is 5120 wide. When a listing writes a shape in a comment, that shape is exact.",
+      "book_section": "s-shapes-and-index-conventions",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "index-rules",
+      "title": "Vectors are columns",
+      "start": 91.533,
+      "end": 131.033,
+      "slide": "slides/04-index-rules.webp",
+      "notes": "Indices follow three rules. A bracketed subscript indexes a tensor, so Q with four indices is one element. A plain subscript names a position, so q t is the query vector at position t. And vectors are columns. So q t transpose times k j is a row times a column: a single number. Flip the order, and k j times v j transpose is a whole matrix. A capital letter with no indices is the whole tensor, like K, with one key per row.",
+      "book_section": "s-shapes-and-index-conventions",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "einsum-rules",
+      "title": "A letter missing from the output is summed",
+      "start": 131.033,
+      "end": 169.767,
+      "slide": "slides/05-einsum-rules.webp",
+      "notes": "Chapters 6 and 7 write contractions with einsum, which names indices instead of arranging transposes. It has three rules. Each input gets one letter per dimension, in order. A letter that appears in the inputs but not in the output is summed over. A letter in the output is kept, in the output's order. Take a matrix multiply, where x carries t and d, and W carries d and k. The output keeps t and k. The letter d is missing, so it's summed: a row of x times a column of W.",
+      "book_section": "s-einstein-summation",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "einsum-scores",
+      "title": "Attention scores: b and h ride along, d is summed",
+      "start": 169.767,
+      "end": 201.3,
+      "slide": "slides/06-einsum-scores.webp",
+      "notes": "Attention scores follow the same rules. Both inputs have the shape batch, heads, sequence, head dim. The letters b and h appear in every term, so they ride along as batch dimensions. Only d is missing from the output, so only d is summed. Each score is a dot product between query i and key j, for every pair. One caution: einsum doesn't promise a fast kernel, so use matmul in the inner loop.",
+      "book_section": "s-einstein-summation",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "outer-state",
+      "title": "Outer products pack many pairs into one matrix",
+      "start": 201.3,
+      "end": 244.333,
+      "slide": "slides/07-outer-state.webp",
+      "notes": "Some einsums sum nothing. With k and v per head, every letter survives, so the result is larger than either input. Entry i, j is k i times v j: an outer product. Every column is a multiple of k, so it has rank 1. Add up outer products over many tokens, and you pack many key-value pairs into one fixed-size matrix, S. Read it back with a query, and you get a blend of the stored values. Each value is weighted by how similar its key is to the query. That identity is the whole of linear attention.",
+      "book_section": "s-the-linear-algebra-that-keeps-coming-back",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "similarity",
+      "title": "One matrix multiply scores every key",
+      "start": 244.333,
+      "end": 274.333,
+      "slide": "slides/08-similarity.webp",
+      "notes": "The second fact: q transpose K transpose is a similarity vector. K holds one key per row, so K times q has one entry per key. Entry j is q transpose k j. It's large and positive when the query and the key point the same way. It's negative when they're opposed. Softmax then turns those numbers into weights. Attention is a similarity search, expressed as a matrix multiply.",
+      "book_section": "s-the-linear-algebra-that-keeps-coming-back",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "intensity",
+      "title": "The matrix is read once, however many vectors use it",
+      "start": 274.333,
+      "end": 314.7,
+      "slide": "slides/09-intensity.webp",
+      "notes": "Matrix times vector and matrix times matrix cost the same per weight, but not per byte. An n by m matrix times one vector costs 2 n m FLOPs, and reads n m entries. Times T vectors, it costs T times the FLOPs, but still reads the matrix once. So the arithmetic per byte grows with T. With 2 bytes per entry in bf16, it's T FLOPs per byte. Decoding one token at a time sits at 1 FLOP per byte, which wastes a GPU. Batching raises T, which is why batching fixes it.",
+      "book_section": "s-the-linear-algebra-that-keeps-coming-back",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "cheap-updates",
+      "title": "Rank-one updates and triangular solves stay cheap",
+      "start": 314.7,
+      "end": 351.733,
+      "slide": "slides/10-cheap-updates.webp",
+      "notes": "Two facts are about cost. Adding k v transpose to an n by m matrix costs n m multiply-adds, with no factorization. Chapter 6's delta rule applies one of these rank-one updates per token. Last, a triangular system doesn't need an inverse. With T lower triangular, you read off x 1, substitute, read off x 2, and so on. That's forward substitution, at order n squared operations. Forming the inverse costs order n cubed, and loses accuracy.",
+      "book_section": "s-the-linear-algebra-that-keeps-coming-back",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "softmax-shift",
+      "title": "Shifting every score changes nothing",
+      "start": 351.733,
+      "end": 381.433,
+      "slide": "slides/11-softmax-shift.webp",
+      "notes": "Attention and sampling both run softmax. Softmax turns scores into probabilities: positive, and summing to 1. Here are three scores, and their probabilities. Now add the same constant c to every score. The probabilities don't move. To see why, factor e to the c out of the numerator and the denominator. It cancels. Mathematically, the shift changes nothing. Numerically, it changes everything.",
+      "book_section": "s-softmax-and-why-every-implementation-subtracts-the-max",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "softmax-overflow",
+      "title": "Subtract the max, or the exponentials overflow",
+      "start": 381.433,
+      "end": 423.3,
+      "slide": "slides/12-softmax-overflow.webp",
+      "notes": "In float32, overflow starts at about 3.4 times 10 to the 38th, and e to the 89 already exceeds it. Take three scores: 92, 90, and 87. Exponentiate them directly, and the first two become infinity. Infinity over infinity is not a number. Now subtract the maximum first. The scores become 0, minus 2, and minus 5. The largest exponent is e to the 0, so nothing overflows, and tiny terms underflow harmlessly. Chapter 11 relies on this when it samples, and chapter 14 carries a running maximum.",
+      "book_section": "s-softmax-and-why-every-implementation-subtracts-the-max",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "float-formats",
+      "title": "bfloat16 keeps float32's range, not its precision",
+      "start": 423.3,
+      "end": 467.233,
+      "slide": "slides/13-float-formats.webp",
+      "notes": "The weights are stored in bf16, so it helps to know what a format stores. Each one has a sign bit, an exponent that sets the scale, and a mantissa that holds the digits. In float32, that's 8 exponent bits and 23 mantissa bits. In float16, it's 5 and 10, so its largest value is 65,504. The bf16 format is float32 with 16 mantissa bits deleted. It keeps all 8 exponent bits, so it keeps float32's range. What it gives up is precision: about 2 decimal digits.",
+      "book_section": "s-floating-point-formats",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "ulp-roundoff",
+      "title": "The gap between neighbors grows with the number",
+      "start": 467.233,
+      "end": 513.967,
+      "slide": "slides/14-ulp-roundoff.webp",
+      "notes": "Labs check your output against a tolerance, and here's why. A unit in the last place, or ULP, is the gap between neighboring representable numbers. In this toy format with 3 significand bits, the gap doubles at every power of two. With p significand bits, the gap above 2 to the e is 2 to the e minus p plus 1. Rounding to nearest lands within half a ULP, so the relative error is at most 2 to the minus p. That constant is the unit roundoff. For bf16, it's about 0.0039. So the course accepts about 10 to the minus 2 in bf16, and 10 to the minus 6 in float32.",
+      "book_section": "s-rounding-error-and-vanishing-addends",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "vanishing-addend",
+      "title": "In bfloat16, 256 + 1 is 256",
+      "start": 513.967,
+      "end": 565.233,
+      "slide": "slides/15-vanishing-addend.webp",
+      "notes": "Take a bf16 sum of 256, with 8 significand bits. Below 256 the gap is 1, but above it the gap is 2, so the neighbors are 255 and 258. Add 1, and the exact answer is 257: exactly halfway. Round to nearest even picks 256. Add 1 a thousand more times, and the sum is still 256. In general, an addend below about the sum divided by 256 vanishes. In float32, the ratio is about one in 16.8 million. That's why chapter 6's state and kernel reductions accumulate in float32.",
+      "book_section": "s-rounding-error-and-vanishing-addends",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "sm-warp-block",
+      "title": "108 SMs, warps of 32 threads",
+      "start": 565.233,
+      "end": 608.0,
+      "slide": "slides/16-sm-warp-block.webp",
+      "notes": "Chapter 10 and the kernel chapters use GPU words without defining them. The streaming multiprocessor, or SM, is the GPU's unit of independent execution. An A100 has 108 of them. A kernel that can't fill all 108 leaves most of the chip idle. A warp is 32 threads that run the same instruction together. If its threads take different branches, the warp runs both paths in turn, masking off the inactive threads. That's divergence. A thread block holds up to 1024 threads, runs on one SM, and cooperates through shared memory.",
+      "book_section": "s-gpu-vocabulary",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "memory-hierarchy",
+      "title": "Four levels of memory, and HBM is the bottleneck",
+      "start": 608.0,
+      "end": 648.8,
+      "slide": "slides/17-memory-hierarchy.webp",
+      "notes": "Memory comes in four levels. Registers hold 256 KB per SM, and reaching them is free. Shared memory holds up to 164 KB per SM, tens of cycles away. The L2 cache holds 40 MB, hundreds of cycles away. HBM holds 80 GB, measured at 1275 GB/s. It holds the weights and the KV cache, and it's the bottleneck in almost everything this course measures. Shared memory is a scratchpad you fill explicitly, not a cache. FlashAttention keeps its working set there.",
+      "book_section": "s-gpu-vocabulary",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "coalescing",
+      "title": "A warp should read consecutive addresses",
+      "start": 648.8,
+      "end": 682.9,
+      "slide": "slides/18-coalescing.webp",
+      "notes": "When the 32 threads of a warp read consecutive addresses, the hardware merges them into a few wide transactions. Here are 8 of them. When they read scattered addresses, it issues many narrow transactions, and wastes most of each. On this hardware, the measured gap is 6.9 times. Each launch costs 5 to 10 microseconds, so CUDA graphs replay many small kernels as one unit. And occupancy, the fraction of thread slots in use, is a means, not a goal.",
+      "book_section": "s-gpu-vocabulary",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "units",
+      "title": "GB for vendor figures, GiB for shapes",
+      "start": 682.9,
+      "end": 726.2,
+      "slide": "slides/19-units.webp",
+      "notes": "Byte counts come in two conventions, about 7% apart. A gigabyte is 10 to the 9th bytes. A gibibyte is 2 to the 30th, about 1.074 billion. Use decimal units for vendor figures, and binary units for shape arithmetic. So the weights are 53.8 GB, the same bytes as 50.1 GiB. The KV cache is 64 KiB per token, because 64 times 1024 is what the shapes produce. Bandwidth is always decimal. And chapter 2 treats the 80GB card as 80 GiB, minus 6 GiB of headroom.",
+      "book_section": "s-units",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "symbols",
+      "title": "The symbols, with this model's values",
+      "start": 726.2,
+      "end": 765.933,
+      "slide": "slides/20-symbols.webp",
+      "notes": "When a symbol isn't defined nearby, look it up in the chapter's table. The model has 64 decoder layers, and a hidden size of 5120. Its MLP is 17,408 wide, and its vocabulary holds 248,320 tokens. Every element takes 2 bytes, in bf16. A full-attention layer has 24 query heads and 4 KV heads. So each KV head serves a group of 6 query heads. Each head is 256 wide, and 64 of those channels are rotated.",
+      "book_section": "s-symbols-used-across-the-course",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "what-goes-wrong",
+      "title": "Overflow is loud; precision loss is silent",
+      "start": 765.933,
+      "end": 801.0,
+      "slide": "slides/21-what-goes-wrong.webp",
+      "notes": "Numerical failures come in two kinds. Overflow is loud: in float16, it shows up as infinity, then not a number. Precision loss is silent. In bf16, the output is finite, plausible, and wrong in the third digit, and it gets worse at long context. Einsum has a silent failure too. If q was never transposed, its letters line up with the wrong axes. When the sizes happen to match, it still runs, and returns a wrong tensor. Assert the shape; don't infer it.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 801.0,
+      "end": 826.6,
+      "slide": "slides/22-where-next.webp",
+      "notes": "Here's what to keep. Shapes are named outermost first, and the last dimension is contiguous. An einsum letter missing from the output is summed. Subtract the maximum before you exponentiate. The bf16 format has float32's range but about 2 decimal digits, so accumulate in float32. Next, you open the model's files on disk.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-10"
+    }
+  ]
+}

@@ -1,0 +1,240 @@
+{
+  "course": "learn-inference",
+  "slug": "11-sampling",
+  "title": "Sampling",
+  "version": "38229ef65a04",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/11-sampling/38229ef65a04/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 789.967,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "Sampling",
+      "start": 0.0,
+      "end": 15.233,
+      "slide": "slides/01-title.webp",
+      "notes": "Sampling. In this lecture, you turn 248,320 raw scores into one token. You derive softmax and temperature, cut the tail three ways, and work out the order that makes the knobs mean what they say."
+    },
+    {
+      "id": "logits-row",
+      "title": "248,320 raw scores, and three needs",
+      "start": 15.233,
+      "end": 54.4,
+      "slide": "slides/02-logits-row.webp",
+      "notes": "The forward pass ends with one number per vocabulary entry. The last layer multiplies the final hidden state, 5120 numbers wide, by a matrix with one column per token. Out come 248,320 logits. They're raw scores: not probabilities, and nothing constrains their scale. You need three things from them. First, a probability distribution. Second, a knob that trades fidelity against variety. Third, a draw that a seed can reproduce, cheap enough to run every step.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "log-odds",
+      "title": "A gap of one logit is a factor of e",
+      "start": 54.4,
+      "end": 83.6,
+      "slide": "slides/03-log-odds.webp",
+      "notes": "In the lab's five-logit row, the logits count down from 3 to minus 1. Softmax turns them into probabilities. The top token gets about 0.64, and the runner-up about 0.23. Their ratio is 2.72, which is e. So a gap of one logit is a factor of e in the odds. Add 1 to every logit, and nothing changes, because only the differences carry information.",
+      "book_section": "s-from-logits-to-a-distribution",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "softmax-derived",
+      "title": "Softmax is the only map that makes gaps into log-odds",
+      "start": 83.6,
+      "end": 114.1,
+      "slide": "slides/04-softmax-derived.webp",
+      "notes": "Derive softmax again, because the derivation tells you where temperature can go. Ask that logit differences be log-odds, for every pair of tokens. Rearrange, and each probability is another one times e to the gap. Sum over every token, so that the left side becomes 1. Solve for p j, and out comes the softmax. It's the only map with the property you asked for. And it comes out positive and normalized, without your imposing either.",
+      "book_section": "s-from-logits-to-a-distribution",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "temperature",
+      "title": "Temperature divides every gap",
+      "start": 114.1,
+      "end": 147.433,
+      "slide": "slides/05-temperature.webp",
+      "notes": "Temperature answers the second need. Divide every logit by T before the softmax. At a temperature of 1, the top two keep odds of 2.72 to 1. Divide by 0.5 instead, and the gap doubles, so the odds rise to 7.39 to 1. Divide by 2, and the gap halves, so the odds fall to 1.65 to 1. In log-odds terms, temperature divides every gap by T. It's a zoom on the gaps between logits.",
+      "book_section": "s-temperature",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "two-limits",
+      "title": "Temperature 0 is greedy; infinity is noise",
+      "start": 147.433,
+      "end": 181.7,
+      "slide": "slides/06-two-limits.webp",
+      "notes": "As T goes to zero, the distribution becomes a point mass on the argmax: greedy decoding. As T goes to infinity, every token gets 1 over V. In between, entropy rises steadily, up to about 12.42 nats. The engine special-cases a temperature of zero to a plain argmax, because the float arithmetic toward the limit doesn't survive. But greedy maximizes each token, not the whole sequence, and on open-ended text it falls into loops.",
+      "book_section": "s-temperature",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "logits-not-probs",
+      "title": "Temperature acts on logits, not probabilities",
+      "start": 181.7,
+      "end": 219.333,
+      "slide": "slides/07-logits-not-probs.webp",
+      "notes": "Only one of two similar operations is temperature. Raise each probability to the power 1 over T, and renormalize. Each probability is proportional to e to its logit, so that's the softmax of z over T. At a temperature of 2, the top token drops to about 0.43. Now multiply by 1 over T instead, and renormalize. The factor appears above and below the line, and cancels. The distribution comes back unchanged, so check this first if your knob does nothing.",
+      "book_section": "s-temperature",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "overflow",
+      "title": "One logit above 88.72 turns the row into NaN",
+      "start": 219.333,
+      "end": 263.933,
+      "slide": "slides/08-overflow.webp",
+      "notes": "Adding a constant to every logit leaves softmax unchanged, because it cancels above and below the line. In floating point, though, the constant matters. For float32, the exponential overflows above 88.72. The bfloat16 format shares that 8-bit exponent, so it overflows at the same place. And float16 overflows at 11.09, while a logit of 11 is ordinary. Underflow is harmless: below minus 103.3, the exponential flushes to zero. Without a shift, a logit of 100 makes infinity over infinity, which is NaN.",
+      "book_section": "s-shift-invariance-and-the-max-subtraction",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "stable-softmax",
+      "title": "Subtract the maximum, and nothing overflows",
+      "start": 263.933,
+      "end": 294.367,
+      "slide": "slides/09-stable-softmax.webp",
+      "notes": "So subtract the row maximum. The stable softmax is three lines. Take a row of the lab's five logits plus 97. Subtract the maximum, and every exponent is at most zero. Every term lands between zero and 1, and the largest is exactly 1. So the sum lies between 1 and 248,320, and can't overflow. The probabilities are the same as before.",
+      "book_section": "s-shift-invariance-and-the-max-subtraction",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "top-k-mask",
+      "title": "Every truncation is a mask to −∞",
+      "start": 294.367,
+      "end": 331.7,
+      "slide": "slides/10-top-k-mask.webp",
+      "notes": "Greedy's loops are why the truncation family exists: top-k, top-p, and min-p all cut off the unlikely tail. They differ only in the rule that picks the tokens to keep. Each filter sets the excluded logits to minus infinity, and lets the softmax renormalize. With k = 2, the threshold is the second-largest logit, and three logits become minus infinity. The two survivors renormalize to about 0.73 and 0.27. The weakness is that k is fixed, while the model's confidence isn't.",
+      "book_section": "s-truncation-one-operation-three-rules",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "top-p",
+      "title": "Top-p keeps the token that tips the bucket",
+      "start": 331.7,
+      "end": 368.7,
+      "slide": "slides/11-top-p.webp",
+      "notes": "Top-p keeps a fixed share of probability instead of a fixed count. Picture pouring tokens into a bucket, most likely first. Stop as soon as it holds at least p, and keep the token that tips it over. So keep rank r while the mass before it is still below p. At p = 0.7, the first token alone holds about 0.64, which is short. So the second goes in, and the kept mass reaches about 0.87. At p = 0.5, the first token alone is enough.",
+      "book_section": "s-top-p-a-fixed-mass",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "top-p-bug",
+      "title": "Test the mass before the token, not through it",
+      "start": 368.7,
+      "end": 397.933,
+      "slide": "slides/12-top-p-bug.webp",
+      "notes": "The cumulative sum gives the mass through each token, not before it. So subtract the token's own probability. That's the mass before rank r, which you test against p. The last line always keeps the top token. Comparing the cumulative sum itself with p is the classic bug. At p = 0.7, it keeps one token, short of what you asked for. The output still reads fluently, so the bug survives code review.",
+      "book_section": "s-top-p-a-fixed-mass",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "min-p",
+      "title": "Min-p keeps a window of logits below the top",
+      "start": 397.933,
+      "end": 446.033,
+      "slide": "slides/13-min-p.webp",
+      "notes": "Min-p keeps every token at least min-p times as likely as the favorite. The rule is a ratio, so the normalizer cancels. Take logs, and it becomes a window below the top logit. At a min-p of 0.3, the window is 1.204 logits wide. On the five-logit row, the cut lands at 1.796, so the logits 3 and 2 survive. At a min-p of 0.05, the window is 3 logits wide. Temperature stretches it: at 1.5, it's 4.49. So min-p grows only in proportion to temperature, while top-p's nucleus grows without bound.",
+      "book_section": "s-min-p-a-logit-window",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "order",
+      "title": "Penalties, temperature, truncation, then the draw",
+      "start": 446.033,
+      "end": 486.2,
+      "slide": "slides/14-order.webp",
+      "notes": "You now have five transforms, and their order matters. The engine applies penalties to the raw logits first. Then temperature divides them. Then the truncations run: top-k, then min-p, then top-p. Last come the softmax and the draw. Swapping two adjacent steps changes the output for only three kinds of pair. Additive penalties against temperature. Temperature against min-p or top-p. And penalties against any truncation, because penalties change the ranking. Top-p goes last, because it's the only one that reads the renormalized masses.",
+      "book_section": "s-the-order-and-which-pairs-commute",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "order-example",
+      "title": "Temperature after top-p narrows the nucleus",
+      "start": 486.2,
+      "end": 525.567,
+      "slide": "slides/15-order-example.webp",
+      "notes": "Now the swap that changes output visibly: top-p at 0.7 and a temperature of 2. In the right order, you temper first. The top two now hold about 0.69, below 0.7, so a third token survives. Renormalized, the top token gets about 0.51. In the wrong order, top-p keeps two tokens. Tempering those two gives the top token about 0.62. And the parameter no longer describes anything: you asked for more variety, and got a narrower nucleus.",
+      "book_section": "s-the-order-and-which-pairs-commute",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "repetition-penalty",
+      "title": "Divide positive logits, multiply negative ones",
+      "start": 525.567,
+      "end": 563.967,
+      "slide": "slides/16-repetition-penalty.webp",
+      "notes": "Penalties lower the logits of tokens the model has already produced. The repetition penalty scales each seen token's logit, with a branch on its sign. Dividing a positive logit moves it toward zero, which is down. For a negative logit, dividing moves it up. Minus 2 divided by 1.1 is minus 1.82, which encourages the token. So the negative branch multiplies instead. The lab checks this with a penalty of 2. The logit 2 halves to 1, minus 2 doubles to minus 4, and the unseen token stays put.",
+      "book_section": "s-penalties-as-logit-transforms",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "presence-frequency",
+      "title": "Presence and frequency subtract a constant",
+      "start": 563.967,
+      "end": 606.567,
+      "slide": "slides/17-presence-frequency.webp",
+      "notes": "Presence and frequency penalties subtract a constant instead. Presence applies once per distinct token seen. Frequency scales with the count, so it keeps biting. A presence penalty of 0.5 multiplies the odds by 0.607, a 39 percent cut. Because penalties run before temperature, the shift is divided by T. At a temperature of 0.7, a penalty of 0.5 acts like 0.714. Document that, rather than fixing it.",
+      "book_section": "s-penalties-as-logit-transforms",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "gumbel",
+      "title": "Add Gumbel noise, and take the argmax",
+      "start": 606.567,
+      "end": 641.7,
+      "slide": "slides/18-gumbel.webp",
+      "notes": "The third need is the draw, and it can be a race. Give every token a random bonus, add it to its logit, and pick the highest total. Here, the runner-up wins the first race. With Gumbel-distributed bonuses, each token wins with exactly its softmax probability. Over 5000 races, the win shares land on the softmax. The proof never needs the normalizer, and a masked token can never win. So the draw is one fused pass, with no cumulative sum and no search.",
+      "book_section": "s-the-gumbel-max-trick",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "seeding",
+      "title": "A seed reproduces only with your own generator",
+      "start": 641.7,
+      "end": 681.433,
+      "slide": "slides/19-seeding.webp",
+      "notes": "A generation should reproduce exactly, given a seed. That means threading an explicit generator through the sampler. The global random number generator is shared by the whole process. A dropout layer, a dataloader, or another request can consume its draws. An explicit generator is owned by the request. Across batch sizes, it's harder. A different reduction order changes the last bits of the logits, and a near-tie argmax flips. So promise only this: same seed, same batch composition, same engine version, same output.",
+      "book_section": "s-seeding-and-reproducibility",
+      "book_anchor": "s-12"
+    },
+    {
+      "id": "cost-softmax",
+      "title": "One softmax: 0.375 FLOPs per byte",
+      "start": 681.433,
+      "end": 721.733,
+      "slide": "slides/20-cost-softmax.webp",
+      "notes": "Now the cost. One float32 row of logits is a little under 1 MB. One softmax pass reads it and writes it: 1.99 MB. The arithmetic is about 745,000 FLOPs. That's 0.375 FLOPs per byte. The A100's ridge point is 161, so softmax sits 429 times below it. At 1275 GB/s, the bytes take 1.6 microseconds. The arithmetic would take 2.4 nanoseconds. Only the bytes matter.",
+      "book_section": "s-what-sampling-costs",
+      "book_anchor": "s-13"
+    },
+    {
+      "id": "cost-pipeline",
+      "title": "Cheap in bytes, expensive in launches",
+      "start": 721.733,
+      "end": 761.333,
+      "slide": "slides/21-cost-pipeline.webp",
+      "notes": "The whole pipeline at batch 1 moves at least 26 MB. That's about 21 microseconds, or 0.05 percent of a decode step. The pipeline is about twenty kernels, at 5 to 10 microseconds of launch overhead each. That's 100 to 200 microseconds, five to ten times the traffic. The draw also forces a synchronization, and the sort blocks CUDA graph capture. At batch 128, the traffic grows to 6 percent of the step. So production engines fuse the sampler into one kernel, with a Gumbel-max draw.",
+      "book_section": "s-what-sampling-costs",
+      "book_anchor": "s-13"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 761.333,
+      "end": 789.967,
+      "slide": "slides/22-where-next.webp",
+      "notes": "Here's what to keep. Softmax turns logit gaps into log-odds, and temperature divides them. Subtract the row maximum, and run the softmax in float32. Every truncation is a mask to minus infinity, and top-p tests the mass before each token. Apply penalties, then temperature, then truncation, and draw with one argmax. Next, you write your first CUDA kernel.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-14"
+    }
+  ]
+}

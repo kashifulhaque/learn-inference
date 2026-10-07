@@ -1,0 +1,230 @@
+{
+  "course": "learn-inference",
+  "slug": "12-your-first-cuda-kernel",
+  "title": "Your first CUDA kernel",
+  "version": "2a5bdf978357",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/12-your-first-cuda-kernel/2a5bdf978357/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 761.3,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "Your first CUDA kernel",
+      "start": 0.0,
+      "end": 14.267,
+      "slide": "slides/01-title.webp",
+      "notes": "Your first CUDA kernel. In this lecture, you picture how a GPU runs your code: threads, blocks, warps, and coalescing. Then you write a kernel from Python, and derive the number the lab measures on an A100."
+    },
+    {
+      "id": "a100-baseline",
+      "title": "Compare a kernel against 1275 GB/s, not 1935",
+      "start": 14.267,
+      "end": 53.333,
+      "slide": "slides/02-a100-baseline.webp",
+      "notes": "Every chapter so far has called someone else's kernels. This one writes a kernel by hand, compiled at run time from a Python string. The target is an A100 with 108 streaming multiprocessors. It has a 40 MB L2 cache, and 80 GB of HBM rated at 1935 GB/s. But chapter 10 measured a plain copy at 1275 GB/s, and that's your real yardstick. Almost everything outside the matrix multiplies is memory bound, so this lecture is about how bytes move.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "host-device",
+      "title": "The kernel sees one raw pointer",
+      "start": 53.333,
+      "end": 85.433,
+      "slide": "slides/03-host-device.webp",
+      "notes": "A CUDA program runs on two machines. The host is the CPU, where your Python runs. The device is the GPU, where kernels run. A global function runs on the device, and the host launches it: that's a kernel. A device function runs on the device, called only from device code. The kernel sees one raw pointer to the tensor's data. It knows nothing about shapes or dtypes, so you pass the element count separately.",
+      "book_section": "s-the-host-and-the-device",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "launch-hierarchy",
+      "title": "Threads march in warps, warps fill blocks",
+      "start": 85.433,
+      "end": 129.467,
+      "slide": "slides/04-launch-hierarchy.webp",
+      "notes": "A GPU runs a huge number of threads that each do a little. A thread runs your kernel on one small piece of data, and the lab launches about 16.8 million. Threads march in warps of 32, every lane running the same instruction at once. The warp is what the hardware schedules. A block is a team of up to 1024 threads, so 256 threads make 8 warps. The grid is every block of one launch. The hardware hands each block to an SM whenever one has room. The A100 has 108 SMs, and each hosts several blocks at once.",
+      "book_section": "s-how-the-gpu-runs-a-kernel",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "launch-queue",
+      "title": "A launch is a queued command, not a call",
+      "start": 129.467,
+      "end": 165.9,
+      "slide": "slides/05-launch-queue.webp",
+      "notes": "A launch is a queued command, not a function call. NVIDIA's compiler turns the triple angle brackets into a call that pushes a command onto a stream, an ordered queue of GPU work. It returns in 5 to 10 microseconds, long before the GPU starts. That's chapter 10's launch overhead. The full form takes four parameters: blocks, threads per block, shared memory bytes, and the stream. Blocks then run in no particular order. A kernel that depends on block order is wrong, even when it passes.",
+      "book_section": "s-what-a-kernel-launch-is",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "first-kernel",
+      "title": "Three lines on the device, one host function",
+      "start": 165.9,
+      "end": 211.967,
+      "slide": "slides/06-first-kernel.webp",
+      "notes": "Here's your first kernel, as a source string that PyTorch compiles at run time. The kernel is three lines. It's declared global and returns nothing, so results leave through the output pointer. The second line works out which element this thread owns. The third does two loads, one add, and one store, guarded because the grid rounds up. The host function is the only one Python calls. It allocates the output, picks 256 threads per block, and rounds the block count up. Then it queues the launch and returns, while the kernel may still be running. The first build takes 30 to 60 seconds, and any edit to the source costs that again.",
+      "book_section": "s-compile-cuda-from-python",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "thread-index",
+      "title": "The block is the row, the thread is the seat",
+      "start": 211.967,
+      "end": 242.2,
+      "slide": "slides/07-thread-index.webp",
+      "notes": "Every thread runs the same body, so it must work out which element it owns. Picture theater seats in rows of 256. Row 3, seat 7, is seat number 775. The block is the row, and the thread is the seat. So the index is the block index times the block size, plus the thread index. Divide to recover the block, and take the remainder for the thread. In code, it's one line.",
+      "book_section": "s-the-thread-index",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "index-order",
+      "title": "The thread index must be the fastest digit",
+      "start": 242.2,
+      "end": 270.033,
+      "slide": "slides/08-index-order.webp",
+      "notes": "Swap the digits, thread times grid size plus block, and every element is still covered once. But it's wrong. With the first order, neighboring threads get neighboring elements, so a warp reads one contiguous run. With the swapped order, neighbors land a whole grid apart. For 65,536 blocks, that's 256 KB apart. The thread index must be the fastest digit.",
+      "book_section": "s-the-thread-index",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "tail-warp",
+      "title": "Round up, guard, and only one warp diverges",
+      "start": 270.033,
+      "end": 319.267,
+      "slide": "slides/09-tail-warp.webp",
+      "notes": "To cover n elements, launch n over the block size, rounded up. Integer division truncates, so add the block size minus one first. Plain division silently drops the last partial block. Take the lab's awkward size, 1,000,003, at 256 per block. That's 3907 blocks. They launch 1,000,192 threads, so 189 sit idle. Here's the last block, as 8 warps of 32. Only its first 67 lanes are live. Warps 0 and 1 are fully live, and warps 3 to 7 are fully dead. Only warp 2 splits: one warp in 31,256, so the guard is free.",
+      "book_section": "s-grid-geometry-and-the-tail",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "block-size",
+      "title": "Keep enough warps resident to hide the wait",
+      "start": 319.267,
+      "end": 365.367,
+      "slide": "slides/10-block-size.webp",
+      "notes": "How big should a block be? A load from HBM takes hundreds of cycles. The SM doesn't wait; it switches to another ready warp, like a cook stirring a second pot. So you hide latency by keeping many warps resident. Start with 256 threads: 8 warps, small enough that several blocks share an SM. Then fill the machine. Fewer than about 216 blocks, two per SM, leaves SMs idle. At 2 to the 24 elements, you get 65,536 blocks, 607 per SM. At 2 to the 20, it's 4096 blocks, 38 per SM, and both are ample.",
+      "book_section": "s-grid-geometry-and-the-tail",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "grid-stride",
+      "title": "Size the grid to the machine, then stride",
+      "start": 365.367,
+      "end": 392.267,
+      "slide": "slides/11-grid-stride.webp",
+      "notes": "The alternative is to size the grid to the machine, and let each thread walk the array. Picture the grid as a rake. Each pass covers one element per thread. Then the rake moves forward by its own width. The grid size no longer depends on n. The loop condition is the guard. And within each pass, a warp still reads consecutive elements, so access stays coalesced.",
+      "book_section": "s-the-grid-stride-loop",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "divergence",
+      "title": "A split warp runs both paths",
+      "start": 392.267,
+      "end": 433.833,
+      "slide": "slides/12-divergence.webp",
+      "notes": "The warp is the hardware: its 32 lanes issue one instruction at a time. Picture a squad at a fork, some going left and some right. The squad walks one path while the others wait, then walks the other. So when lanes disagree on a branch, the warp runs both sides with lanes masked. A split warp pays the sum of both paths. Divergence counts per warp. The tail guard splits 1 warp in 31,256, which costs nothing. Branching on an even index splits every warp, doubling the kernel. Branching on the block index splits none.",
+      "book_section": "s-warps-and-divergence",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "coalescing",
+      "title": "A warp's load moves whole 32-byte sectors",
+      "start": 433.833,
+      "end": 482.467,
+      "slide": "slides/13-coalescing.webp",
+      "notes": "Now the property that decides every memory-bound kernel. Memory ships only whole 32-byte sectors, like crates. A warp's 32 threads each want one 4-byte float. When thread t reads element t, the floats span 128 bytes: exactly 4 sectors, every byte used. Now stride by 32 floats, so neighbors land 128 bytes apart. Each float sits alone in its own sector, and 28 bytes of every crate are wasted. The warp moves 1024 bytes to deliver 128: 12.5 percent efficiency. That's an eightfold amplification, not 32, because the unit is the sector.",
+      "book_section": "s-coalescing-sector-by-sector",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "lab-ratio",
+      "title": "The lab measures a 6.9× gap",
+      "start": 482.467,
+      "end": 511.133,
+      "slide": "slides/14-lab-ratio.webp",
+      "notes": "The lab runs both patterns on 2 to the 24 floats. The coalesced vector add reaches 1304 GB/s. That's level with the 1275 GB/s copy, so nothing is left to optimize. The strided copy reaches only 189 GB/s. The ratio is 6.9. The sector model predicted 8, so where did the difference go?",
+      "book_section": "s-derive-the-lab-s-6-9x",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "two-factors",
+      "title": "6.9 = 4.5 × 1.53: wasted bytes, then wasted requests",
+      "start": 511.133,
+      "end": 561.467,
+      "slide": "slides/15-two-factors.webp",
+      "notes": "Count the bytes that really move. The strided copy counts 8 per element: 4 read and 4 written. The write is coalesced, so it moves 4. But the read pulls a whole 32-byte sector. So each element really moves 36 bytes, an amplification of 4.5. At the same real rate, the strided kernel would show 290 GB/s. It measures 189, so 1.53 is left over. That factor is requests, not bytes: 32 sector requests per warp instead of 4, queueing on the way to L2. And the strided reads fit in L2, so a larger footprint would cost more than 6.9.",
+      "book_section": "s-derive-the-lab-s-6-9x",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "memory-hierarchy",
+      "title": "The fast storage is small",
+      "start": 561.467,
+      "end": 599.0,
+      "slide": "slides/16-memory-hierarchy.webp",
+      "notes": "Where can data live? Registers are one thread's own, about one cycle away. Shared memory belongs to one block, about 30 cycles away. The L2 cache serves the whole GPU, at about 200 cycles. HBM is about 400. Across 108 SMs, the registers total 27.6 MB, and shared memory 17.7 MB. Both are smaller than the 40 MB L2. Every later optimization moves data up this hierarchy once, and reuses it many times.",
+      "book_section": "s-the-memory-hierarchy",
+      "book_anchor": "s-12"
+    },
+    {
+      "id": "tree-reduction",
+      "title": "256 partial sums, 8 halving rounds",
+      "start": 599.0,
+      "end": 635.233,
+      "slide": "slides/17-tree-reduction.webp",
+      "notes": "The lab's RMSNorm kernel uses one block per row, and must add up 256 partial sums of squares. Each thread writes its partial sum to a shared slot, then waits at a barrier until the whole block arrives. Then the block reduces as a tree. On 8 slots, the lower 4 threads add the slot 4 places up. After a barrier, the lower 2 add the slot 2 places up. One more round, and slot 0 holds all 8. That's 3 rounds for 8 threads, and 8 rounds for 256.",
+      "book_section": "s-shared-memory-and-synchronization",
+      "book_anchor": "s-13"
+    },
+    {
+      "id": "five-details",
+      "title": "Five details decide whether it works",
+      "start": 635.233,
+      "end": 664.967,
+      "slide": "slides/18-five-details.webp",
+      "notes": "Five details decide whether it works. The shared array's size comes from the launch: 1024 bytes. The loop strides by the block size, so each load hits 4 sectors, not 16. The barrier must sit outside the if. Inside it, the upper threads never arrive, and the block hangs. The halving tree needs a power of two. And a tree's rounding grows with the log of the block size, not the size itself.",
+      "book_section": "s-shared-memory-and-synchronization",
+      "book_anchor": "s-13"
+    },
+    {
+      "id": "async-errors",
+      "title": "Errors surface late, and they stick",
+      "start": 664.967,
+      "end": 697.733,
+      "slide": "slides/19-async-errors.webp",
+      "notes": "Catch wrong answers by comparing with PyTorch at awkward sizes, like 1,000,003. Silent failures are worse, because CUDA errors are asynchronous. A kernel that reads out of bounds doesn't fail at the launch. It fails at the next synchronizing call, on an innocent line. So check two channels. The last error after the launch catches bad configurations. A synchronize reports what the kernel did. Errors are sticky, so the first one in your log is the real one.",
+      "book_section": "s-check-your-work",
+      "book_anchor": "s-14"
+    },
+    {
+      "id": "timing",
+      "title": "Time the device, not the queue",
+      "start": 697.733,
+      "end": 735.9,
+      "slide": "slides/20-timing.webp",
+      "notes": "A launch returns before the GPU finishes. So a CPU timer around it measures only the queueing, about 5 microseconds, whatever the kernel does. CUDA events fix that: the GPU timestamps them in the stream, so they measure device time. Then get three things right. Warm up: the course's benchmark runs 5 untimed iterations, then 20 timed. Report the median, because one preempted run skews a mean. And compare bandwidth against the 1275 GB/s copy: above 80 percent of it, the kernel is finished.",
+      "book_section": "s-time-a-kernel",
+      "book_anchor": "s-15"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 735.9,
+      "end": 761.3,
+      "slide": "slides/21-where-next.webp",
+      "notes": "Here's what to keep. The index is block times block size, plus thread, so a warp reads 32 neighbors. Round the block count up; the tail splits only one warp. Memory moves in 32-byte sectors, and the lab's 6.9 is wasted bytes times wasted requests. And errors arrive late, so synchronize before you read results or timings.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-16"
+    }
+  ]
+}

@@ -1,0 +1,220 @@
+{
+  "course": "learn-inference",
+  "slug": "10-roofline",
+  "title": "The roofline",
+  "version": "0c384518098b",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/10-roofline/0c384518098b/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 811.967,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "The roofline",
+      "start": 0.0,
+      "end": 11.733,
+      "slide": "slides/01-title.webp",
+      "notes": "The roofline. Before you optimize anything, decide what limits it. In this lecture, you sketch one picture, put two numbers on it, and then place every operation in the model on it."
+    },
+    {
+      "id": "two-waits",
+      "title": "Every operation waits on one of two things",
+      "start": 11.733,
+      "end": 49.0,
+      "slide": "slides/02-two-waits.webp",
+      "notes": "Every operation on a GPU waits on one of two things: arithmetic, or memory traffic. Picture a kitchen with fast cooks and one narrow delivery door. Every dish needs ingredients carried through the door, the bytes, and chopping, the flops. Bring a crate of ingredients for a little chopping, and the cooks stand at the door, waiting. Bring a handful of ingredients for hours of chopping, and the door sits idle. What separates the two cases is one ratio: work per ingredient. On a GPU, that's flops per byte moved, and it's called arithmetic intensity.",
+      "book_section": "s-picture-the-roofline",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "roofline-plot",
+      "title": "Two lines make the roof",
+      "start": 49.0,
+      "end": 88.3,
+      "slide": "slides/03-roofline-plot.webp",
+      "notes": "Put arithmetic intensity on the horizontal axis, and the throughput an operation can reach on the vertical axis. Both axes are logarithmic. On the left, the cooks wait at the door. Each byte unlocks a fixed amount of work, so throughput is bandwidth times intensity. On the right, the arithmetic units are the limit, at the A100's peak of 312 TFLOP/s. The bend is the ridge point, at 161 flops per byte. Left of it, an operation is memory bound. Right of it, it's compute bound.",
+      "book_section": "s-picture-the-roofline",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "operations",
+      "title": "Nearly everything sits on the slope",
+      "start": 88.3,
+      "end": 125.833,
+      "slide": "slides/04-operations.webp",
+      "notes": "Here's where the model's operations land, before you derive any of them. RMSNorm sits at 1 flop per byte. So does the MLP when it processes one token, which is decode at batch 1. Attention during decode sits at 6. All three are on the slope, far left of the ridge. A 2048-token prefill puts the MLP at 1899, under the flat roof. The embedding lookup does no arithmetic at all, so its intensity is 0. It falls off the left edge of a log axis.",
+      "book_section": "s-picture-the-roofline",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "two-floors",
+      "title": "Each rate sets a floor; the larger one wins",
+      "start": 125.833,
+      "end": 170.367,
+      "slide": "slides/05-two-floors.webp",
+      "notes": "Start with a tiny case: an operation reads 1 GB, and does a billion flops of arithmetic. At 1935 GB/s, the bytes take 0.517 ms to arrive. At 312 TFLOP/s, the arithmetic takes 3.2 µs. The operation can't finish before its bytes arrive, so the arithmetic sits idle over 99 percent of the time. In general, an operation does F flops and moves B bytes, and each rate sets its own floor. So the runtime floor is the larger one, because the hardware can overlap the two but can't beat either.",
+      "book_section": "s-the-two-rates-and-the-ridge-point",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "ridge-point",
+      "title": "The ridge point is C divided by β",
+      "start": 170.367,
+      "end": 205.267,
+      "slide": "slides/06-ridge-point.webp",
+      "notes": "Define arithmetic intensity, I, as flops divided by bytes. Divide the flops by the floor, and you get the best throughput an operation can reach. It's the smaller of the compute peak, and bandwidth times intensity. The ridge point is where they meet. Divide 312 TFLOP/s by 1935 GB/s, and you get 161.2 flops per byte. Below it, the arithmetic finishes before the next bytes arrive, so adding compute does nothing.",
+      "book_section": "s-the-two-rates-and-the-ridge-point",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "ridge-moves",
+      "title": "The ridge point moves with the bandwidth",
+      "start": 205.267,
+      "end": 244.267,
+      "slide": "slides/07-ridge-moves.webp",
+      "notes": "The ridge point belongs to the pair of rates, not to the card alone. The SXM4 module is rated at 2039 GB/s, which puts the ridge at 153. This course's PCIe card is rated at 1935, for 161.2. A plain copy really reaches 1275 GB/s on this card. The slope drops, and the ridge moves right, to 244.7. So even more of the model sits on the memory side than the headline suggests.",
+      "book_section": "s-the-two-rates-and-the-ridge-point",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "count-both",
+      "title": "A copy of N bytes moves 2N",
+      "start": 244.267,
+      "end": 283.0,
+      "slide": "slides/08-count-both.webp",
+      "notes": "Start with the simplest bandwidth-bound kernel there is: a device-to-device copy. Copying N bytes moves 2N bytes across the memory bus. N bytes are read from the source, and N bytes are written to the destination. The 1275 GB/s figure counts both. Count only N, and you halve your own result, and conclude the GPU is broken. The hand-written vector add reads two arrays and writes one, so it moves 3N bytes. Counted that way, it measures 1304 GB/s, the same as the copy.",
+      "book_section": "s-why-measured-bandwidth-is-66-of-rated",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "copy-ceiling",
+      "title": "Judge a kernel against the copy, not the spec sheet",
+      "start": 283.0,
+      "end": 327.033,
+      "slide": "slides/09-copy-ceiling.webp",
+      "notes": "Even a perfect copy reaches only 66 percent of the rating. The rating is a pin rate: memory clock times bus width, assuming the bus never idles. A real access stream pays for DRAM refresh, for row activation and precharge, and for turning the bus around between reads and writes. So measure bandwidth-bound kernels against 1275 GB/s. The fused RMSNorm from chapter 13 reaches 945 GB/s. That's 74 percent of the copy ceiling, but only 49 percent of the rating. At 85 percent of the ceiling, a memory-bound kernel is finished. Far below that, it has a real problem.",
+      "book_section": "s-why-measured-bandwidth-is-66-of-rated",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "mlp-intensity",
+      "title": "Every token in the pass shares one weight read",
+      "start": 327.033,
+      "end": 371.533,
+      "slide": "slides/10-mlp-intensity.webp",
+      "notes": "Now derive where each operation sits, starting with the MLP. It's a SwiGLU block: gate and up side by side, then down. With T tokens in the pass, the three matmuls cost 6 T h i flops. The weights are read once per forward pass, no matter how many tokens are in it. That's 534.8 MB. The activations add a little more. Divide, and intensity is T over 1 plus T over 26,112. Each token does 2 flops per 2-byte weight, and every token shares one read. So intensity is roughly T.",
+      "book_section": "s-the-mlp",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "mlp-limits",
+      "title": "Intensity approaches T from below",
+      "start": 371.533,
+      "end": 418.833,
+      "slide": "slides/11-mlp-limits.webp",
+      "notes": "The approximation is good while T is far below 26,112. At 16 tokens, that's 0.06 percent. At 2048, it's 7.8 percent. Past about 26,112 tokens, the activations move more bytes than the weights, and intensity levels off. The derivation assumes the gate and up outputs never reach HBM. At 4096 tokens, each one is 143 MB, 3.6 times the L2, so they spill. Counting those bytes drops intensity from 3540 to 1842. It's still compute bound, but the floor changes.",
+      "book_section": "s-the-mlp",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "decode-vs-prefill",
+      "title": "161 tokens in one pass make the GPU work",
+      "start": 418.833,
+      "end": 464.433,
+      "slide": "slides/12-decode-vs-prefill.webp",
+      "notes": "Now slide the MLP along the roofline. At one token, which is decode at batch 1, intensity is 1. It's memory bound by a factor of 161. At 16 tokens, it's still memory bound, by 10. At 161 tokens, it reaches the ridge. At 512, it's compute bound. A 2048-token prefill sits at 1899, nearly 12 times past the ridge. So decode at batch 1 uses 0.62 percent of the tensor cores' peak. Getting 161 tokens into one pass is what makes the GPU work, and that's why batching exists.",
+      "book_section": "s-the-mlp",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "decode-attention",
+      "title": "Decode attention's intensity is the group size, 6",
+      "start": 464.433,
+      "end": 512.667,
+      "slide": "slides/13-decode-attention.webp",
+      "notes": "Attention during decode is different: each sequence reads its own KV cache, so nothing is shared. The query is a single token, so the scores and the values each cost 2 H L d flops. The step reads keys and values for the 4 KV heads only. Divide, and both L and d cancel. With 2-byte elements, intensity is 24 / 4, which is 6: exactly the GQA group size. At 32k context across 16 layers, the step reads 2 GiB. Its memory floor is 1.11 ms, and its compute floor is 41.3 µs. That's a factor of 27, which is 161 divided by 6.",
+      "book_section": "s-attention-during-decode",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "attention-levers",
+      "title": "Only the dtype and the KV heads move it",
+      "start": 512.667,
+      "end": 554.367,
+      "slide": "slides/14-attention-levers.webp",
+      "notes": "That cancellation has three consequences. First, context length doesn't matter. At 1k context or at 256k, intensity is 6. Second, batch size doesn't matter. Each sequence brings its own cache, so flops and bytes grow together, and the ratio stays put. Third, the cache's number format is the only lever in the formula. Quantize the cache to int8, and intensity doubles to 12. Give every query head its own KV head, and it drops to 1. Decode attention is permanently memory bound, so every fix reads fewer bytes.",
+      "book_section": "s-attention-during-decode",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "rmsnorm",
+      "title": "RMSNorm's cost is pure memory traffic",
+      "start": 554.367,
+      "end": 606.2,
+      "slide": "slides/15-rmsnorm.webp",
+      "notes": "RMSNorm rescales each token's vector, then multiplies by a learned gain. Per row of h values, it does about 4 h flops, and it reads and writes h values of 2 bytes each. Divide, and both T and h cancel: intensity is 1, at every size. At 4096 rows of 5120, it moves 83.9 MB. The memory floor is 43.4 µs at the rated bandwidth. The compute floor is 0.27 µs, 160 times smaller. The Triton kernel runs in 88.8 µs. The only lever is to stop writing the output to HBM at all, by fusing the norm with its neighbors.",
+      "book_section": "s-rmsnorm",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "embedding",
+      "title": "The embedding lookup does no arithmetic",
+      "start": 606.2,
+      "end": 649.867,
+      "slide": "slides/16-embedding.webp",
+      "notes": "The embedding lookup is a gather: each token ID picks one row of the table. It computes nothing, so its intensity is 0. For a 2048-token prefill, it moves about 42 MB. That's 21.7 µs, against hundreds of milliseconds in the layers. Each row is 10,240 contiguous bytes, 80 whole cache lines, so the gather coalesces well. The table is 2.54 GB, 63 times the L2, so nothing stays resident between passes. The exception is a repeated token in one batch: its second read hits L2.",
+      "book_section": "s-the-embedding-lookup",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "launch-overhead",
+      "title": "Starting the kernels costs more than their arithmetic",
+      "start": 649.867,
+      "end": 701.033,
+      "slide": "slides/17-launch-overhead.webp",
+      "notes": "The roofline assumes the GPU is busy, and at batch 1 it often isn't. Launching a kernel costs 5 to 10 µs, and a forward pass is one stream of dependent kernels, so those costs add up in series. A decode step's arithmetic floor is 0.172 ms. It runs several hundred kernels; take 400. At 5 µs each, the launches cost 2 ms, 12 times the arithmetic floor. At 10 µs, they cost 4 ms, 23 times. Against the 27.8 ms memory floor, that's 7 to 14 percent. A CUDA graph captures the whole step and replays it as one launch. Production engines use graphs for decode.",
+      "book_section": "s-kernel-launch-overhead",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "idle-sms",
+      "title": "Decode at batch 1 fills 1 of 108 SMs",
+      "start": 701.033,
+      "end": 750.8,
+      "slide": "slides/18-idle-sms.webp",
+      "notes": "A kernel's threads come in blocks, and each block runs on one of 108 SMs. A kernel runs its blocks in waves of at most 108, and while a partial last wave finishes, the other SMs stand empty. With 8 blocks, 7.4 percent of the GPU is busy. With 108, every SM has work. Add one more block, and a second wave runs almost empty, so utilization halves, to 50.5 percent. RMSNorm with one block per row fills 99.8 percent of the GPU on a 4096-token prefill. Decode at batch 1 launches one block, and 107 SMs sit idle. The fix is more work, which is what batching is for.",
+      "book_section": "s-idle-sms-and-occupancy",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "what-goes-wrong",
+      "title": "Four ways to misjudge a kernel",
+      "start": 750.8,
+      "end": 777.2,
+      "slide": "slides/19-what-goes-wrong.webp",
+      "notes": "Four mistakes account for most wrong verdicts. First, counting only reads, which halves a copy's measured bandwidth. Second, dropping the factor of 2 in a matmul, which halves every intensity. Third, charging the weights once per token, when they're read once per pass. Fourth, reading all 24 heads of KV, when the cache holds only 4.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 777.2,
+      "end": 811.967,
+      "slide": "slides/20-where-next.webp",
+      "notes": "Here's what to keep. The runtime floor is the larger of the compute time and the memory time. The ridge point is 161 flops per byte, and about 245 against what a copy reaches. The MLP's intensity is roughly the number of tokens in the pass. Decode attention sits at 6, whatever the context or the batch. At batch 1, launches and idle SMs cost more than the arithmetic. Next, sampling turns the model's scores into one token.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-11"
+    }
+  ]
+}

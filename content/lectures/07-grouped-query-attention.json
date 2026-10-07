@@ -1,0 +1,240 @@
+{
+  "course": "learn-inference",
+  "slug": "07-grouped-query-attention",
+  "title": "Grouped-query attention",
+  "version": "d1cd75a06167",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/07-grouped-query-attention/d1cd75a06167/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 826.667,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "Grouped-query attention",
+      "start": 0.0,
+      "end": 14.8,
+      "slide": "slides/01-title.webp",
+      "notes": "Grouped-query attention. You build attention from a lookup, and see why its scores are scaled and masked. Then you count what sharing keys and values saves, and why decode attention leaves the GPU's arithmetic mostly idle."
+    },
+    {
+      "id": "sixteen-layers",
+      "title": "Sixteen of the 64 layers keep a KV cache",
+      "start": 14.8,
+      "end": 54.067,
+      "slide": "slides/02-sixteen-layers.webp",
+      "notes": "Sixteen of this model's 64 layers use ordinary softmax attention. They own the KV cache: every past token's keys and values, kept so they're never recomputed. Prefill pushes the whole prompt through in one pass. Decode then generates one token per pass, reading back the cache. The residual stream is 5120 wide. There are 24 query heads but only 4 key and value heads, each 256 wide. Each head's output passes through a gate, and the cache stores 2 bytes per element.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "lookup",
+      "title": "Attention is a differentiable lookup",
+      "start": 54.067,
+      "end": 91.3,
+      "slide": "slides/03-lookup.webp",
+      "notes": "Attention is a differentiable lookup in a table of the tokens seen so far. Picture a shelf of folders. Each past token offers a key, the label on its folder, and a value, its contents. The current token arrives with a query, its question. So attention scores every key against the query. Here, the scores are 2, 0.5, 1, and minus 1. A softmax turns them into weights that are positive and sum to 1. The output blends the values in those proportions: 16.75.",
+      "book_section": "s-queries-keys-and-values",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "three-properties",
+      "title": "The output is an average, so the past must be kept",
+      "start": 91.3,
+      "end": 128.733,
+      "slide": "slides/04-three-properties.webp",
+      "notes": "In matrix form, a whole block of queries runs at once, and M is the causal mask. First, the weights are non-negative and sum to 1, so the output is a convex combination. It always lands inside the range of the values it read. So attention can't amplify, and it can't output zero. Second, there's no fixed-size summary of the past, so every key and value has to be kept. That's the KV cache. Third, prefill is quadratic in the context, and decode is linear, but decode reads every cached byte.",
+      "book_section": "s-queries-keys-and-values",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "score-spread",
+      "title": "Raw scores spread by √256 = 16",
+      "start": 128.733,
+      "end": 160.133,
+      "slide": "slides/05-score-spread.webp",
+      "notes": "Why divide by the square root of the head width? Model the entries of q and k as independent, with mean zero and variance 1. The raw score adds up 256 products, and each product has variance 1. Independent variances add, so the score's variance is the head width. Its standard deviation is the square root of that: 16. The histogram fills in with 4000 simulated scores, and their spread lands on 16.",
+      "book_section": "s-where-the-scale-factor-comes-from",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "saturation",
+      "title": "Unscaled, one token takes all the weight",
+      "start": 160.133,
+      "end": 195.667,
+      "slide": "slides/06-saturation.webp",
+      "notes": "Now see what that spread does to a softmax. Here are six raw scores from one row, from about minus 14 to 26. Two scores 16 apart get weights in a ratio of about 8.9 million. So the largest score takes 99.9 percent of the weight, and the gradient through it is about zero. Divide by 16, which is 0.0625, and the weights spread across the row. The scale is about saturation, not overflow, because subtracting the row maximum already prevents overflow.",
+      "book_section": "s-where-the-scale-factor-comes-from",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "mask-before",
+      "title": "Mask before the softmax, not after",
+      "start": 195.667,
+      "end": 235.0,
+      "slide": "slides/07-mask-before.webp",
+      "notes": "The causal mask stops a token from seeing its own future. It sets every score where the key comes after the query to minus infinity, before the softmax. The future then adds nothing, and the weights still sum to 1. Take row 1, whose query may see keys 0 and 1. Its weights come out as 0.27 and 0.73. Now zero the future after the softmax instead. The denominator still counted the future keys, so the kept weights sum to only 0.32. The output shrinks by an amount that depends on the content.",
+      "book_section": "s-the-causal-mask",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "mask-offset",
+      "title": "A cached prefix shifts the mask",
+      "start": 235.0,
+      "end": 266.967,
+      "slide": "slides/08-mask-offset.webp",
+      "notes": "During decode, the keys include a cached prefix that the queries don't cover. Say nine tokens are cached, and one new token arrives. The key tensor has ten rows, but the query tensor has one, numbered 0. A mask that trusts that row number hides keys 1 to 9. That query really sits at position 9, and it may see all ten keys. So shift each row by the key count minus the query count. Here the offset is 9.",
+      "book_section": "s-the-causal-mask",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "mask-regimes",
+      "title": "Three regimes, one offset",
+      "start": 266.967,
+      "end": 303.367,
+      "slide": "slides/09-mask-regimes.webp",
+      "notes": "A key is blocked when its index passes the query's index plus the offset. Lab 07 checks three regimes. Prefill, with 4 queries and 4 keys, masks 6 entries. A decode step, with 1 query and 10 keys, masks nothing. A chunked prefill, with 3 queries and 10 keys, masks 3. Forget the offset, and the mask is right in prefill and wrong in every decode step. Nothing crashes. The model drifts, because each step hides most of its own context.",
+      "book_section": "s-the-causal-mask",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "shapes",
+      "title": "The attention block is wider than the stream",
+      "start": 303.367,
+      "end": 356.233,
+      "slide": "slides/10-shapes.webp",
+      "notes": "Follow the shapes through one layer, with the bars drawn to scale. The residual stream is 5120 wide. The query projection emits 12288 channels: 24 heads of 256 for the queries, and as many again for the gate. The key and value projections emit only 1024 each. After attention, the heads merge into 6144 channels, and the output projection brings them back to 5120. The head width isn't the hidden size over the head count, which would be 213.33. One layer holds 104.9 million parameters, 210 MB in bfloat16. Keys and values are only 10.5 million of them.",
+      "book_section": "s-shapes-end-to-end",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "heads",
+      "title": "Heads are free in arithmetic",
+      "start": 356.233,
+      "end": 394.6,
+      "slide": "slides/11-heads.webp",
+      "notes": "Real attention runs 24 heads in parallel, each with its own queries, keys, and values. One head gives each query one ranking of the context, and so one average. A token that needs its subject, its topic, and a matching bracket needs three rankings. With 24 heads, it gets 24 separate averages for the output projection to combine. Splitting the width into heads costs no extra FLOPs. What a head gives up is rank: its scores live in a 256-dimensional subspace.",
+      "book_section": "s-multi-head-attention",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "sharing",
+      "title": "Six query heads share one KV head",
+      "start": 394.6,
+      "end": 428.6,
+      "slide": "slides/12-sharing.webp",
+      "notes": "How many key and value heads do you need to keep? Queries are used on the spot, but keys and values stay in the cache for the rest of the sequence. So let several query heads read the same key and value head. Multi-head attention gives every query head its own: 24 KV heads. Multi-query attention shares one set across all of them. Grouped-query attention sits between. This model keeps 4 KV heads, so each group of 6 query heads shares one.",
+      "book_section": "s-mha-mqa-and-gqa",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "cache-table",
+      "title": "GQA's cache costs 64 KiB per token",
+      "start": 428.6,
+      "end": 477.3,
+      "slide": "slides/13-cache-table.webp",
+      "notes": "Count the cache bytes per token in one layer: 2, for keys and values, times the KV heads, times 256, times 2 bytes. With grouped-query attention, that's 4 KiB per layer. Over 16 layers, it's 64 KiB per token, and 2 GiB at 32k context. Multi-head attention costs six times that: 12 GiB at 32k. Multi-query costs 16 KiB per token. The weights leave about 26 GB of the card. With GQA at 32k, that holds 11 sequences, the batch chapter 2 derives. With MHA, it holds two.",
+      "book_section": "s-mha-mqa-and-gqa",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "quality",
+      "title": "A few KV heads keep nearly all the quality",
+      "start": 477.3,
+      "end": 510.1,
+      "slide": "slides/14-quality.webp",
+      "notes": "The trade costs a little quality. The GQA paper mean-pools a trained multi-head checkpoint's KV heads into groups, then uptrains briefly. Collapsing all the way to one KV head loses measurable quality. A handful of groups recovers nearly all of it, and keeps most of the cache saving. This model's case is better. It was trained with four KV heads from the start, so there's no conversion loss. And only 16 of its layers use attention at all.",
+      "book_section": "s-mha-mqa-and-gqa",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "intensity",
+      "title": "Decode attention does 6 FLOPs per byte",
+      "start": 510.1,
+      "end": 554.3,
+      "slide": "slides/15-intensity.webp",
+      "notes": "Arithmetic intensity is the FLOPs an operation does per byte it moves from HBM. Take one decode step for one sequence in one layer, at context L. The scores cost 2 H L d FLOPs, and the weighted sum of values costs the same again. The cache read is K and V: the KV heads times L times the head width, at b bytes each. Divide the two. The head width and the context length both cancel. With 2 bytes per element, the intensity is the query heads over the KV heads: the group size. For this model, that's exactly 6 FLOPs per byte.",
+      "book_section": "s-why-decode-attention-is-permanently-memory-bound",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "ridge",
+      "title": "27 times below the ridge",
+      "start": 554.3,
+      "end": 589.067,
+      "slide": "slides/16-ridge.webp",
+      "notes": "Compare that with the A100. Its ridge point, where arithmetic and memory finish together, is about 161 FLOPs per byte. Decode attention sits 27 times below the ridge, using under 4 percent of the arithmetic. Longer context doesn't help, because L cancelled. Batching doesn't help either, because each sequence reads its own cache. The only lever left is to read fewer bytes. An int8 cache, for example, halves b and doubles the intensity to 12.",
+      "book_section": "s-why-decode-attention-is-permanently-memory-bound",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "gate",
+      "title": "The output gate gives a head an off switch",
+      "start": 589.067,
+      "end": 624.533,
+      "slide": "slides/17-gate.webp",
+      "notes": "The query projection emits 12288 channels, and the second half is a gate. Chunk it in two, run attention on the queries, then multiply the output by the sigmoid of the gate. Attention returns a weighted average, so a head can't say that nothing here is relevant. Without a gate, models dump unwanted attention on the first token, an attention sink. A sigmoid near zero switches the head off, per channel and per token. It's bounded between 0 and 1, so it can attenuate, but never amplify.",
+      "book_section": "s-the-output-gate",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "gate-slice",
+      "title": "Slicing instead of chunking drops the gate",
+      "start": 624.533,
+      "end": 662.933,
+      "slide": "slides/18-gate-slice.webp",
+      "notes": "The gate costs one extra 5120 by 6144 matrix per layer. That's about 31.5 million parameters, or 62.9 MB in bfloat16. Across 16 layers, it's about 1 GB, spent on the ability to output nothing. The correct split chunks the projection into queries and a gate. If you slice the first 6144 channels instead, the shapes still work. Half the projection is discarded, and the gate is never applied. Quality drops in a way that's hard to trace.",
+      "book_section": "s-the-output-gate",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "repeat-kv",
+      "title": "Index the shared KV head; don't copy it",
+      "start": 662.933,
+      "end": 706.733,
+      "slide": "slides/19-repeat-kv.webp",
+      "notes": "The naive helper copies KV heads in two steps. First, expand adds a group axis with stride zero, so the six copies are the same memory. That's free. Then reshape can't keep that view, so it materializes every copy. At 32k context, one layer stores 128 MiB of keys and values. After the copy, it's 768 MiB, which undoes what GQA saved. A real kernel indexes the shared head instead. Query head 13 reads KV head 13 divided by 6, rounded down, which is 2.",
+      "book_section": "s-share-kv-heads-without-copying-them",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "naive",
+      "title": "Keep the naive path as your ground truth",
+      "start": 706.733,
+      "end": 746.667,
+      "slide": "slides/20-naive.webp",
+      "notes": "The naive implementation is four statements: scores, mask, softmax, and the weighted sum. It materializes one score for every query and key pair. At 8k context with 24 heads, the scores alone take 3 GiB in bfloat16. The listing computes in float32, which doubles that, and it keeps several score-sized tensors. Peak memory runs well past 12 GB, 27.5 times a FlashAttention kernel's. Keep it anyway: it's the reference every fast kernel gets checked against.",
+      "book_section": "s-the-naive-implementation-and-why-you-keep-it",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "decode-time",
+      "title": "At batch 1, reading the weights dominates",
+      "start": 746.667,
+      "end": 793.9,
+      "slide": "slides/21-decode-time.webp",
+      "notes": "At batch size 1, a decode step reads all 53.8 GB of weights, plus the cache and the state. At the rated 1935 GB/s, the weight read takes 27.8 ms, or 36 tokens per second. At the measured 1275 GB/s, it's 42.2 ms, or 24 tokens per second. At 32k context, the cache and state add about 1.8 ms. That grows with context and batch, but the weight read doesn't. Sixteen sequences read the weights once, so throughput goes up almost 16 times.",
+      "book_section": "s-where-decode-time-goes",
+      "book_anchor": "s-12"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 793.9,
+      "end": 826.667,
+      "slide": "slides/22-where-next.webp",
+      "notes": "Here's what to keep. Attention is a weighted average, and its scale guards against saturation, not overflow. Mask before the softmax, shifted by the cached prefix. Grouped-query attention costs 64 KiB per token, and decode attention does 6 FLOPs per byte, so only reading fewer bytes helps. Chunk the query projection into queries and a gate, and index the shared KV head instead of copying it. Next, you assemble the full forward pass.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-13"
+    }
+  ]
+}

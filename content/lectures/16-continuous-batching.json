@@ -1,0 +1,230 @@
+{
+  "course": "learn-inference",
+  "slug": "16-continuous-batching",
+  "title": "Continuous batching",
+  "version": "579b8579e49b",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/16-continuous-batching/579b8579e49b/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 828.433,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "Continuous batching",
+      "start": 0.0,
+      "end": 18.633,
+      "slide": "slides/01-title.webp",
+      "notes": "Continuous batching. Every decode step reads all 53.8 GB of weights, however many sequences it serves. So the real question is which sequences ride along, and when. In this lecture, you build the scheduler that decides, before every forward pass."
+    },
+    {
+      "id": "lifecycle",
+      "title": "A request waits, prefills, decodes, and retires",
+      "start": 18.633,
+      "end": 60.4,
+      "slide": "slides/02-lifecycle.webp",
+      "notes": "A step is one forward pass over a set of tokens, and the scheduler picks that set before every pass. A request arrives, and waits in a queue. Once it's admitted, it prefills: the whole prompt runs through the model and fills its cache. Then it decodes, one token per step, until it ends. Finally, it retires and returns its cache blocks. Time to first token runs from arrival to the first streamed token, so queueing and prefill dominate it. Inter-token latency is the gap between later tokens, and it equals one scheduler step. Users feel the first as sluggishness, and the second as stuttering.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "static-four",
+      "title": "Static batching holds a slot open for B",
+      "start": 60.4,
+      "end": 94.5,
+      "slide": "slides/03-static-four.webp",
+      "notes": "Take a GPU with room for two sequences, and four requests that arrive together. A, C, and D each need 2 output tokens. B needs 6. Static batching runs A and B until both finish. A is done after step 2, but its slot sits empty while B keeps going. Only at step 7 do C and D get a turn. That's 8 steps, paying for 16 slot-steps to make 12 tokens. So only 75 percent of the slots do useful work.",
+      "book_section": "s-four-requests-two-ways",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "continuous-four",
+      "title": "Continuous batching refills a slot the next step",
+      "start": 94.5,
+      "end": 119.567,
+      "slide": "slides/04-continuous-four.webp",
+      "notes": "Continuous batching checks after every step instead. When A finishes, C takes its slot on step 3. When C finishes, D takes it on step 5. D and B both finish on step 6. That's 6 steps instead of 8. It pays for 12 slot-steps, and every one of them is useful. Nothing waits for the slowest member of a batch.",
+      "book_section": "s-four-requests-two-ways",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "head-of-line",
+      "title": "One long request leaves 16 slots 7.2% busy",
+      "start": 119.567,
+      "end": 166.867,
+      "slide": "slides/05-head-of-line.webp",
+      "notes": "Now use realistic lengths, which in chat traffic span two orders of magnitude. Take a batch of 16, where fifteen requests stop at 20 tokens. One request runs to 2000. The useful work is 15 times 20, plus 2000: that's 2300 token-steps. The batch pays for 16 times 2000, which is 32,000 slot-steps. So the GPU does useful work only 7.2 percent of the time. It's worse outside the batch. A request that arrives one step late waits for the whole batch to drain, about 91 seconds of nothing. No batch size fixes this.",
+      "book_section": "s-what-static-batching-wastes",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "per-iteration",
+      "title": "Before every pass: retire, decode, prefill, admit",
+      "start": 166.867,
+      "end": 207.167,
+      "slide": "slides/06-per-iteration.webp",
+      "notes": "Continuous batching, also called iteration-level scheduling, runs the scheduler before every forward pass. Its state is three collections: waiting, running, and finished. Each step does four things, in order. First, it retires requests that finished last step, releasing their blocks. Second, it schedules one decode token for every running request past its prefill. Third, it continues prefills that still have prompt left. Fourth, it admits waiting requests from the head of the queue, while the budgets allow. So a waiting request joins the next step, not the next batch.",
+      "book_section": "s-scheduling-per-iteration",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "loop-code",
+      "title": "The loop, with three limits on every pass",
+      "start": 207.167,
+      "end": 253.933,
+      "slide": "slides/07-loop-code.webp",
+      "notes": "Here's the loop as pseudocode. The first pass walks the running list. Finished requests retire, and the rest each reserve one token for decode. The second pass gives each unfinished prompt a chunk, capped by the chunk size and the budget. Then admission takes requests from the head of the queue, and stops at the first one that doesn't fit. If the batch comes out empty while sequences are running, the scheduler preempts the newest one. Three limits bound every pass. A token budget caps the tokens in one forward pass, so prefill can't starve decode. A batch-size cap limits concurrent sequences. And the block pool caps everything underneath both.",
+      "book_section": "s-scheduling-per-iteration",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "flat-batch",
+      "title": "Every token goes in one flat run, with no padding",
+      "start": 253.933,
+      "end": 291.2,
+      "slide": "slides/08-flat-batch.webp",
+      "notes": "The scheduler returns a plan, and the plan fixes the tensor shapes. Each sequence brings a prefill chunk, or one decode token. Rather than pad them into a rectangle, the engine concatenates every token into one flat run. P counts the prefill tokens, D counts the decodes, and T is their sum. Side tables record where each sequence starts and ends. So the hidden states are T by 5120, with no padding. There's no batch dimension anywhere except the block tables. That's what makes ragged batches free.",
+      "book_section": "s-scheduling-per-iteration",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "lm-head",
+      "title": "Slice before the LM head",
+      "start": 291.2,
+      "end": 331.967,
+      "slide": "slides/09-lm-head.webp",
+      "notes": "The row people get wrong is the logits. The LM head projects each hidden state onto all 248,320 vocabulary tokens. You need it only for the last token of each decode sequence. You also need it for a prefill chunk's last token, but only when that chunk completes its prompt. Computing it for every token costs 2.54 GFLOP per token. At 4096 tokens in a step, that's 10.4 TFLOP, or 33 ms at peak. Slicing isn't an optimization; it's a requirement.",
+      "book_section": "s-scheduling-per-iteration",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "decode-first",
+      "title": "Decode first, so cache pressure falls",
+      "start": 331.967,
+      "end": 369.967,
+      "slide": "slides/10-decode-first.webp",
+      "notes": "When memory is tight, who goes first? The scheduler runs decodes first, then prefills, then admissions. A running sequence has already paid for its prefill, and it's holding blocks. Finishing it frees those blocks, so cache pressure falls. Admit a newcomer ahead of it, and the newcomer takes blocks instead. Pressure rises, which triggers preemption, which triggers recomputation. That burns the compute that would have finished the sequences you already had. Decode priority also helps tail latency: sequences near completion get to complete.",
+      "book_section": "s-decode-before-prefill",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "bytes-per-step",
+      "title": "The weight read is shared by the whole batch",
+      "start": 369.967,
+      "end": 414.5,
+      "slide": "slides/11-bytes-per-step.webp",
+      "notes": "Now the central trade: how large a batch do you want? Think of a bus, where the weight read is the trip. Each step reads all 53.8 GB of weights once, however many sequences ride along. Each passenger adds its own KV cache and recurrent state. At a context of 2048 tokens, that's 134.2 MB of cache, plus 155.0 MB of state. So each sequence adds about 289 MB per step. At batch 64, the step reads 72.3 GB, and most of that is still the weights.",
+      "book_section": "s-throughput-against-latency",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "throughput-latency",
+      "title": "Batch 64: 48× the throughput, 1.34× the latency",
+      "start": 414.5,
+      "end": 453.3,
+      "slide": "slides/12-throughput-latency.webp",
+      "notes": "To get the step time, divide the bytes by the measured 1275 GB/s, and the FLOPs by 312 TFLOP/s, and take the larger. At batch 1, a step takes 42.4 ms, for 24 tokens per second. At batch 64, it takes 56.7 ms, for 1129 tokens per second. Throughput rises 48 times. Each user's inter-token latency rises only 1.34 times. Every sequence you add rides on weight bytes that were moving anyway.",
+      "book_section": "s-throughput-against-latency",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "no-ridge",
+      "title": "Decode stays memory bound at every batch you can reach",
+      "start": 453.3,
+      "end": 499.7,
+      "slide": "slides/13-no-ridge.webp",
+      "notes": "The trade stops being favorable when the per-sequence term catches up. At batch 64, the per-sequence reads add up to 18.5 GB, against 53.8 GB of weights. And you can't batch your way to the ridge point. Intensity at batch 64 is 47.6 FLOPs per byte. The ridge is 161 against the rated bandwidth. Against the bandwidth you can measure, it's 245. The batch can't grow much further anyway: at 2048 tokens, the pool holds 65 sequences. So decode is memory bound at every reachable batch size, and the tensor cores sit mostly idle.",
+      "book_section": "s-throughput-against-latency",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "prefill-stall",
+      "title": "A 4000-token prompt stalls every stream for 690 ms",
+      "start": 499.7,
+      "end": 541.767,
+      "slide": "slides/14-prefill-stall.webp",
+      "notes": "That's the argument for chunked prefill. Prefill is the opposite of decode: compute bound, and bursty. A 4000-token prompt costs 215 TFLOP. That's 690 ms at the A100's peak, and more in practice. Run it as one forward pass, and every decode in flight stalls for that long. Every user watching a stream sees a hitch, because a stranger submitted a long prompt. Chunked prefill splits the prompt across several steps. Each step carries a few hundred prompt tokens alongside the decodes, so the streams keep flowing.",
+      "book_section": "s-chunked-prefill",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "chunk-size",
+      "title": "About 250 prefill tokens hide under the memory floor",
+      "start": 541.767,
+      "end": 599.233,
+      "slide": "slides/15-chunk-size.webp",
+      "notes": "How large can a chunk be before decoding users notice? Take 16 sequences decoding. Their step has a memory floor of 45.8 ms, however little arithmetic it does. Each prefill token adds 0.172 ms of arithmetic at peak, and almost no new bytes. The step time is the larger of the two, and they meet at 266 tokens. So about 250 prefill tokens per step ride free. At 512, the step takes 91 ms. At 1024, it takes 179, and every decoding user pays. Real kernels don't reach peak, so measure the free chunk yourself. The lab uses chunks of 256, and the engine defaults to 1024, which favors throughput.",
+      "book_section": "s-chunked-prefill",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "mixing",
+      "title": "A mixed step splits for attention, then rejoins",
+      "start": 599.233,
+      "end": 640.567,
+      "slide": "slides/16-mixing.webp",
+      "notes": "A step that mixes both kinds of token needs care. Prefill tokens need causal, variable-length attention over their chunk and its cached prefix. Decode tokens need the paged single-query kernel from chapter 15. So you split the batch by kind before attention, and rejoin it for the linear layers and the MLP. Chunk c must attend to every earlier chunk, and causally within itself. Write this step's keys and values before attention reads them. Only the last chunk samples, so that request's first token comes later. That's the right trade: everyone else stops stuttering.",
+      "book_section": "s-chunked-prefill",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "preemption",
+      "title": "Out of blocks: evict the newest, requeue it at the front",
+      "start": 640.567,
+      "end": 672.233,
+      "slide": "slides/17-preemption.webp",
+      "notes": "Sometimes memory runs out anyway. A running sequence needs a new block, and none is free. The scheduler preempts: it takes the blocks of the newest sequence, and sends it back to the front of the queue. Newest first, because the oldest sequences are closest to finishing, and finishing them frees blocks. To the front, because at the back, every arrival could overtake it, and preemption would become starvation. The victim restarts from scratch, recomputing its prefill.",
+      "book_section": "s-preemption",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "recompute",
+      "title": "Recompute costs more, and the reference does it anyway",
+      "start": 672.233,
+      "end": 709.467,
+      "slide": "slides/18-recompute.webp",
+      "notes": "For a 2000-token sequence, recompute costs about 345 ms of prefill arithmetic. Swapping its 273 MiB to host memory over PCIe takes about 13 ms each way. The reference recomputes anyway. Scattered blocks transfer poorly, and a swap-in sits on the critical path. Pinned host memory is a scarce global resource, and recompute is a few lines instead of a subsystem. And the retries are bounded by the batch-size cap, so preemption always ends.",
+      "book_section": "s-preemption",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "admission",
+      "title": "Admit above a watermark, from the head only",
+      "start": 709.467,
+      "end": 749.8,
+      "slide": "slides/19-admission.webp",
+      "notes": "Preemption is the cure, and admission control is the prevention. A candidate's first chunk must fit the token budget, and its blocks must fit above a watermark. At a 2 percent watermark on an 18,120-page pool, 362 pages stay unallocated. Without it, the scheduler hands out the last block, and the next decode step has nowhere to write. Admitted sequences keep growing, too, by one block every 16 steps. Finally, admission only looks at the head of the queue. If the head doesn't fit, the loop stops, rather than skipping to a smaller request behind it.",
+      "book_section": "s-admission-control",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "fairness",
+      "title": "Shortest-job-first starves the big request",
+      "start": 749.8,
+      "end": 793.367,
+      "slide": "slides/20-fairness.webp",
+      "notes": "Why refuse to skip? Skipping ahead is shortest-job-first. Under sustained load, it can pass over a large request forever. Its mean wait improves, and its p99 latency goes to infinity. The reference serves first come, first served, from the head of the queue. Your wait is bounded by the work ahead of you. If you need priorities, add aging: priority rises with waiting time, so nothing waits forever. One more effect is visible only to users. A stream arriving at 45 ms per token slows to 176 ms per token when a 1024-token chunk joins the step.",
+      "book_section": "s-fairness-and-the-tail",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 793.367,
+      "end": 828.433,
+      "slide": "slides/21-where-next.webp",
+      "notes": "Here's what to keep. Continuous batching re-plans every step, so finished requests leave and waiting ones join. Schedule decodes first, because finishing running work frees blocks. Batch 64 buys 48 times the throughput for 1.34 times the token gap. Chunked prefill fills the idle tensor cores, and about 250 prompt tokens per step come free. When memory runs out, evict the newest sequence to the front of the queue, and keep a watermark.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-12"
+    }
+  ]
+}

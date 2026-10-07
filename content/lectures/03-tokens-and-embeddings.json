@@ -1,0 +1,240 @@
+{
+  "course": "learn-inference",
+  "slug": "03-tokens-and-embeddings",
+  "title": "Tokens and embeddings",
+  "version": "d43a436b6359",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/03-tokens-and-embeddings/d43a436b6359/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 789.667,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "Tokens and embeddings",
+      "start": 0.0,
+      "end": 16.7,
+      "slide": "slides/01-title.webp",
+      "notes": "Tokens and embeddings. The model never sees text, only integers. In this lecture, you follow a string through the tokenizer and into the embedding table. Then you find out what that table costs, and why it's the cheapest layer to run."
+    },
+    {
+      "id": "pipeline",
+      "title": "The model only ever sees integers",
+      "start": 16.7,
+      "end": 48.467,
+      "slide": "slides/02-pipeline.webp",
+      "notes": "The model is a function on integers. Something outside the network, the tokenizer, turns a string into a list of integer IDs. On the network side, the first layer is the embedding: a table that maps each ID to a vector. Every token becomes a point in a space 5120 wide. The embedding and the output projection together hold 2.54 billion parameters. That's 9.5 percent of the weights, spent on the vocabulary.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "utf8",
+      "title": "UTF-8 spends one to four bytes per character",
+      "start": 48.467,
+      "end": 83.667,
+      "slide": "slides/03-utf8.webp",
+      "notes": "UTF-8 encodes each character as one to four bytes. A plain ASCII letter takes 1 byte. Accented Latin letters and Cyrillic take 2. Devanagari and most Chinese characters take 3. An emoji takes 4. UTF-8 is a prefix code: the first byte of a character says how many bytes follow. Every later byte is marked as a continuation. So you can always tell whether a byte sequence ends mid-character, and that's what makes streaming text possible.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "not-a-network",
+      "title": "A tokenizer is two tables and a loop",
+      "start": 83.667,
+      "end": 119.9,
+      "slide": "slides/04-not-a-network.webp",
+      "notes": "The tokenizer isn't a neural network. It has no trained weights, does no floating-point math, and runs on the CPU. It's two data structures and a greedy loop. A vocabulary maps byte strings to integer IDs. An ordered list of merge rules says which pairs of pieces combine into one. Both are fitted by counting, once, before training, and then frozen. Token ID 5000 means whatever row 5000 of the table learned it means. So the tokenizer is a correctness dependency, not a performance one.",
+      "book_section": "s-what-a-tokenizer-is-and-isn-t",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "bpe-round",
+      "title": "Each merge round adds one vocabulary entry",
+      "start": 119.9,
+      "end": 158.633,
+      "slide": "slides/05-bpe-round.webp",
+      "notes": "This model uses byte-level BPE, so the alphabet is the 256 possible byte values. A merge is an ordered pair of existing entries, and the single new entry they produce. Count every adjacent pair in the corpus. Add the most frequent pair as a new entry. Then rewrite the corpus with the new piece, and go again. Each round adds exactly one entry. So the vocabulary is the 256 bytes, plus one entry per merge, plus a few dozen special tokens. For this model, that's roughly 248,000 learned merges.",
+      "book_section": "s-how-byte-pair-encoding-builds-a-vocabulary",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "bpe-example",
+      "title": "Four merges turn lowest into two tokens",
+      "start": 158.633,
+      "end": 188.7,
+      "slide": "slides/06-bpe-example.webp",
+      "notes": "Take a corpus that's mostly the words low, lower, and lowest, and split every word into bytes. The pair l, o is the most frequent, so it becomes one new piece. Next, that piece followed by w is the most frequent, and the whole word low becomes one entry. Then e joins s, and that piece joins t. The word lowest now costs 2 tokens instead of 6 bytes. Nothing here is learned: it's frequency counting.",
+      "book_section": "s-how-byte-pair-encoding-builds-a-vocabulary",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "encode-order",
+      "title": "Encoding replays the merges in training order",
+      "start": 188.7,
+      "end": 225.967,
+      "slide": "slides/07-encode-order.webp",
+      "notes": "Encoding uses them on a string the tokenizer has never seen, like slowest. Split it into bytes, then apply the merge rules in the order they were learned, until no rule applies. Rule 1 joins l and o. Rule 2 joins that piece and w. The last two rules build the ending. Order matters, because low can only form after its first half exists. A tokenizer that applied the merges in any other order would produce different IDs for the same string. If generated text looks subtly wrong, check that the prompt round-trips.",
+      "book_section": "s-how-encoding-applies-the-merges",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "pre-tokenize",
+      "title": "Merges never cross a chunk boundary",
+      "start": 225.967,
+      "end": 257.667,
+      "slide": "slides/08-pre-tokenize.webp",
+      "notes": "Before BPE runs, a regular expression splits the text into chunks. Typically, that's words with a leading space, runs of digits, and runs of punctuation. Merges never cross a chunk boundary. That stops the tokenizer from learning a single token for a whole phrase, like the quick brown fox. It's also why a leading space is usually part of the token. The word cat with a space in front, and cat without one, are different IDs.",
+      "book_section": "s-how-encoding-applies-the-merges",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "byte-fallback",
+      "title": "Every byte has an entry, so nothing is unknown",
+      "start": 257.667,
+      "end": 295.167,
+      "slide": "slides/09-byte-fallback.webp",
+      "notes": "Every one of the 256 byte values has a vocabulary entry. So the encoder can always fall back to emitting raw bytes. That holds for any input at all: valid UTF-8, invalid UTF-8, a null byte, or the middle of a JPEG pasted into a chat box. There's no unknown token, because there's nothing unknown. Word-level vocabularies must decide what to do with a word they never saw. That means an unknown token, which destroys information before the model sees it.",
+      "book_section": "s-why-nothing-is-unrepresentable",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "token-cost",
+      "title": "Unfamiliar text costs more tokens",
+      "start": 295.167,
+      "end": 330.1,
+      "slide": "slides/10-token-cost.webp",
+      "notes": "The cost moves into the representation instead. A character the tokenizer has never seen in context becomes three or four separate byte tokens. The model can still read them, just less efficiently. English averages about 4 characters per token. Code averages fewer, because indentation and punctuation split. Non-Latin scripts often cost 2 to 3 times more tokens for the same content. For a user, that's a real cost difference: more tokens per message, more latency, and more money.",
+      "book_section": "s-why-nothing-is-unrepresentable",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "chat-template",
+      "title": "The prompt ends where the reply begins",
+      "start": 330.1,
+      "end": 368.967,
+      "slide": "slides/11-chat-template.webp",
+      "notes": "Special tokens are different. They're added to the vocabulary after training, and they're matched literally, before BPE runs. Merging ordinary text can never produce one. Encode a prompt with special-token parsing turned off, and the marker becomes ordinary tokens. The model has never seen that pattern, and loses the conversation's structure. That structure comes from the chat template, which turns a list of messages into a single string. The last line opens the assistant's turn and never closes it. The prompt ends exactly where the model continues.",
+      "book_section": "s-special-tokens-and-the-chat-template",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "stop-tokens",
+      "title": "Stop on either end-of-sequence ID",
+      "start": 368.967,
+      "end": 399.067,
+      "slide": "slides/12-stop-tokens.webp",
+      "notes": "The end-of-sequence setting is a list of two IDs. When the model emits either one, the reply is finished. Check only the first, and the engine misses the second. The generation runs to its token limit, with garbage after a good answer. The pad ID is 248044, and it matters only when you batch sequences of different lengths. A wrong template raises no error either, so when quality drops, print the exact string you tokenized.",
+      "book_section": "s-special-tokens-and-the-chat-template",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "vocab-cost",
+      "title": "The vocabulary costs 9.5% of the weights",
+      "start": 399.067,
+      "end": 437.333,
+      "slide": "slides/13-vocab-cost.webp",
+      "notes": "Each vocabulary entry owns a row of the embedding table, and each row is 5120 wide. Multiply the rows by the width, and the embedding holds about 1.27 billion parameters. At 2 bytes each in bfloat16, that's 2.54 GB. This model doesn't tie its weights, so the output projection is a second matrix of exactly the same size. Together, they take 5.09 GB. Divide by the 53.8 GB of weights, and the vocabulary costs 9.5 percent of the model.",
+      "book_section": "s-what-the-vocabulary-costs",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "worth-it",
+      "title": "A big vocabulary buys shorter sequences",
+      "start": 437.333,
+      "end": 465.1,
+      "slide": "slides/14-worth-it.webp",
+      "notes": "A bigger vocabulary means fewer tokens per document. Prefill does work in proportion to the number of prompt tokens. Decode does one full read of the weights for every generated token. Halving the vocabulary would give back 2.54 GB of HBM. But it would lengthen every sequence, and that costs prefill FLOPs and decode steps in proportion. The designers took the memory.",
+      "book_section": "s-what-the-vocabulary-costs",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "one-hot",
+      "title": "A one-hot product reads every row to keep one",
+      "start": 465.1,
+      "end": 510.4,
+      "slide": "slides/15-one-hot.webp",
+      "notes": "Textbooks write the embedding as a multiply by a one-hot vector: all zeros, except a single 1. Multiply the transposed table by it, and every row is zeroed out except row v. That's correct, and a catastrophic way to compute it. The product does 2.54 GFLOP of arithmetic, and it reads the whole 2.54 GB table. Every framework uses a gather instead. It reads row v, and nothing else: 5120 values at 2 bytes, which is 10 KiB. The ratio of bytes read is 248,320, which is exactly the vocabulary size.",
+      "book_section": "s-the-embedding-layer",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "gather",
+      "title": "In the engine, the embedding is one gather",
+      "start": 510.4,
+      "end": 554.033,
+      "slide": "slides/16-gather.webp",
+      "notes": "In the engine, the embedding is one line. It takes integer token IDs, shaped batch by sequence, and indexes the table. The table is 248,320 rows by 5120, in bf16. Each ID gathers its own row, wherever it sits in the table. For a 2000-token prompt, the gather moves about 20 MB, scattered across the 2.54 GB table. The reads have no locality, so each one misses L2 and pays a full trip to HBM. Even so, it's the cheapest layer in the model by a wide margin.",
+      "book_section": "s-the-embedding-layer",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "residual-start",
+      "title": "Layer 0 gets no position and no fixed scale",
+      "start": 554.033,
+      "end": 594.333,
+      "slide": "slides/17-residual-start.webp",
+      "notes": "The embedding's output is the starting value of the residual stream. First, it carries no position information. Two occurrences of the same token produce identical vectors, wherever they sit in the prompt. Rotation and attention tell them apart later. Second, its absolute scale barely matters. The first thing layer 0 does is RMSNorm, which divides each row by its own root-mean-square size. Some architectures scale the embedding by the square root of d, about 71.6, to offset a small initialization. A pre-norm model like this one doesn't need that.",
+      "book_section": "s-the-embedding-layer",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "lm-head",
+      "title": "The output projection reads all 2.54 GB per token",
+      "start": 594.333,
+      "end": 641.6,
+      "slide": "slides/18-lm-head.webp",
+      "notes": "After the final norm, the output projection maps the hidden state to one score per vocabulary entry. Each score is a logit, and the sampler in chapter 11 picks the next token from them. During decode it runs for a single position, so it does about 2.54 GFLOP. It also reads 2.54 GB of weights. That's an arithmetic intensity of 1 FLOP per byte read. To stay compute bound, the A100 needs about 161 FLOPs per byte. So the output projection spends nearly all its time waiting for memory. A decode step reads about 51.3 GB of weights, and this matrix is just under 5 percent of that.",
+      "book_section": "s-the-output-projection",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "slice-first",
+      "title": "Slice to the last position before projecting",
+      "start": 641.6,
+      "end": 680.1,
+      "slide": "slides/19-slice-first.webp",
+      "notes": "The slice to the last token is what keeps prefill honest. Without it, a 2000-token prompt computes logits for every position, then keeps only the last row. That output alone is 993 MB, and computing it takes about 5.09 TFLOP. Slice first, and the output is 497 KB, for 2.54 GFLOP. Training needs every position, because every position has a target. Inference needs one. Skipping it is silent: prefill just runs slower than your roofline estimate.",
+      "book_section": "s-the-output-projection",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "weight-tying",
+      "title": "This model keeps two separate matrices",
+      "start": 680.1,
+      "end": 716.867,
+      "slide": "slides/20-weight-tying.webp",
+      "notes": "Weight tying uses the same matrix for both jobs: E for the lookup, and E transposed for the projection. This model doesn't tie, which is the common choice at this scale. Untying costs 1.27 billion parameters, which is 4.7 percent of the model. One is gathered a row at a time, and the other is streamed in full every step. The engine has to check the flag, not assume it. Assume tying on an untied checkpoint, and the output weights never load. You get a crash, or a model that runs at full speed and emits confident nonsense.",
+      "book_section": "s-the-output-projection",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "detokenize",
+      "title": "A character can straddle two tokens",
+      "start": 716.867,
+      "end": 762.267,
+      "slide": "slides/21-detokenize.webp",
+      "notes": "Streaming runs the tokenizer backwards, and one token isn't one printable unit. Take the Devanagari letter ka, which is three bytes, followed by a space and the word ok. With two-byte tokens, the first token carries two-thirds of the letter. Decode each token on its own, and you get replacement characters at the seams. Append the new ID, decode all the accumulated IDs, and emit only the suffix that's new and complete. The first push returns an empty string, and that's correct behavior, not a bug. The second token completes the letter, and the whole character appears at once. At the end, flush replaces an incomplete tail instead of hiding it.",
+      "book_section": "s-detokenization-is-stateful",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 762.267,
+      "end": 789.667,
+      "slide": "slides/22-where-next.webp",
+      "notes": "Here's what to keep. Apply the merges in training order. Byte fallback means no unknown token, but unfamiliar text costs more tokens. Stop on every end-of-sequence ID, and print the exact prompt when quality drops. The embedding is a 10 KiB gather, while the output projection streams 2.54 GB per token. Next, you meet the normalization that every layer starts with.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-11"
+    }
+  ]
+}

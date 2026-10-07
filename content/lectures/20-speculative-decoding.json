@@ -1,0 +1,240 @@
+{
+  "course": "learn-inference",
+  "slug": "20-speculative-decoding",
+  "title": "Speculative decoding",
+  "version": "080b5eca3427",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/20-speculative-decoding/080b5eca3427/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 774.6,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "Speculative decoding",
+      "start": 0.0,
+      "end": 15.4,
+      "slide": "slides/01-title.webp",
+      "notes": "Speculative decoding. Decode leaves the GPU's arithmetic almost idle while it reads the weights. In this lecture, you spend that idle compute on guessed tokens. And you prove that the output is distributed exactly as before."
+    },
+    {
+      "id": "one-versus-five",
+      "title": "Checking five tokens costs the same 42.2 ms as one",
+      "start": 15.4,
+      "end": 52.6,
+      "slide": "slides/02-one-versus-five.webp",
+      "notes": "At batch 1, a decode step reads all 53.8 GB of weights. At the measured 1275 GB/s, that takes 42.2 ms. Think of it as a bus that crosses town once per step, with one passenger. Put five tokens on board, and the arithmetic grows to only 0.86 ms. The pass does 5 FLOPs per byte, against a ridge point of 161. So checking five tokens costs the same 42.2 ms as generating one.",
+      "book_section": "s-why-verifying-many-tokens-costs-one-weight-read",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "one-round",
+      "title": "One round: the draft guesses, the target checks once",
+      "start": 52.6,
+      "end": 85.133,
+      "slide": "slides/03-one-round.webp",
+      "notes": "Here's one round, with γ = 3. The draft proposes three tokens, one at a time: the, cat, sat. The target then runs one forward pass over all three, plus the prefix. That pass gives a distribution at four positions. The target accepts the, and accepts cat. It rejects sat, samples is in its place, and discards everything after. The round emits three tokens for one target pass.",
+      "book_section": "s-the-algorithm",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "never-loses",
+      "title": "A round yields between 1 and γ + 1 tokens",
+      "start": 85.133,
+      "end": 110.767,
+      "slide": "slides/04-never-loses.webp",
+      "notes": "A round always yields at least one token. If the first guess is rejected, the corrected token is still a real sample: what plain decode gives you. If some guesses pass, you keep them, plus the correction. If all three pass, the same forward pass already computed the next distribution. So you sample a bonus token, for free. Speculation never loses ground.",
+      "book_section": "s-the-algorithm",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "accept-rule",
+      "title": "Accept a guess with probability min(1, p/q)",
+      "start": 110.767,
+      "end": 146.4,
+      "slide": "slides/05-accept-rule.webp",
+      "notes": "Here's the rule. At one position, the target's distribution is p, the draft's is q, and the draft proposed x. Draw u uniformly between zero and one, and accept x if u is at most min of one and p of x over q of x. So if the target likes x at least as much as the draft does, you always accept. Otherwise, you accept with probability p over q. On a rejection, you sample from the residual: the positive part of p minus q, renormalized.",
+      "book_section": "s-the-acceptance-rule-and-its-proof",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "three-tokens",
+      "title": "A three-token vocabulary, by hand",
+      "start": 146.4,
+      "end": 179.5,
+      "slide": "slides/06-three-tokens.webp",
+      "notes": "Take the lab's three-token vocabulary. The target puts 0.5 on token zero, 0.3 on token one, and 0.2 on token two. The draft puts 0.25, 0.6, and 0.15 on them. Tokens zero and two are under-proposed, so a guess of either is always accepted. Token one is over-proposed: the draft gives it 0.6, and the target only 0.3. So the rule accepts token one half the time.",
+      "book_section": "s-the-acceptance-rule-and-its-proof",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "accept-path",
+      "title": "The accept path keeps min(p, q)",
+      "start": 179.5,
+      "end": 211.8,
+      "slide": "slides/07-accept-path.webp",
+      "notes": "Now prove that the rule is exact. A token comes out on one of two paths. On the accept path, the draft draws x with probability q, and keeps it with probability min of one and p over q. Multiply, and q cancels, leaving the smaller of p and q. On the chart, the draft's bar for token one is cut down to the target's height. The kept pieces sum to 0.7, the acceptance rate α. So a rejection happens 0.3 of the time.",
+      "book_section": "s-the-acceptance-rule-and-its-proof",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "residual-refills",
+      "title": "The rejected mass refills exactly the shortfall",
+      "start": 211.8,
+      "end": 250.367,
+      "slide": "slides/08-residual-refills.webp",
+      "notes": "On the reject path, the residual supplies the rest. Its unnormalized weights are 0.25 for token zero, and 0.05 for token two. They sum to 0.3, exactly the rejection probability, and that's no coincidence. So multiplying the residual by the rejection probability cancels its normalizer. Each token gets back exactly its shortfall. Add the two paths, and every token comes out with probability p. This holds for any draft. A terrible draft makes speculation slow, never wrong.",
+      "book_section": "s-the-acceptance-rule-and-its-proof",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "alpha-tv",
+      "title": "The acceptance rate is one minus total variation distance",
+      "start": 250.367,
+      "end": 281.667,
+      "slide": "slides/09-alpha-tv.webp",
+      "notes": "The proof also tells you how often a guess survives. Start from α as the sum of the minimums. The minimum of two numbers is half their sum, minus half their gap. Both distributions sum to one, so α is one minus the total variation distance. In the example, half the summed gap is 0.3, so α is 0.7, as before. So no sampler trick raises acceptance; only a closer draft can.",
+      "book_section": "s-the-acceptance-rule-and-its-proof",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "in-code",
+      "title": "Clamp, then guard the zero sum",
+      "start": 281.667,
+      "end": 316.733,
+      "slide": "slides/10-in-code.webp",
+      "notes": "In code, each piece is a few lines. The accept probability is the minimum of one and the ratio. The residual clamps p minus q at zero, then normalizes. Two details cause most bugs. Clamp before you normalize, or negative entries reach the sampler. And guard the zero sum: when p equals q, the residual sums to zero. That branch is never taken, but it mustn't divide by zero. Finally, give the draft and the target the same sampling settings, or acceptance collapses.",
+      "book_section": "s-the-acceptance-rule-and-its-proof",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "expected-tokens",
+      "title": "Getting past position i takes i acceptances in a row",
+      "start": 316.733,
+      "end": 356.767,
+      "slide": "slides/11-expected-tokens.webp",
+      "notes": "Next, how many tokens does a round give you? Model each guess as accepted independently, with probability α. Passing i positions takes i acceptances in a row: probability α to the i. Here α is 0.8, and γ is 4. The bars shrink geometrically: 1, then 0.8, then 0.64, and so on. A round emits one more token than it accepts, so the expected count is the sum of these bars. At these settings, that's 3.36 tokens per target pass.",
+      "book_section": "s-expected-tokens-per-round",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "saturation",
+      "title": "Acceptance beats length",
+      "start": 356.767,
+      "end": 393.933,
+      "slide": "slides/12-saturation.webp",
+      "notes": "Plot that count against the draft length. At α = 0.5, the curve flattens almost at once: going from 3 guesses to 8 gains only 6 percent. One rejection discards everything after it, so the count can never pass one over one minus α. At α = 0.7, that ceiling is about 3.3. At α = 0.9, eight guesses yield 6.13 tokens, and the ceiling is 10. So raise acceptance first, and lengthen the draft second.",
+      "book_section": "s-expected-tokens-per-round",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "net-speedup",
+      "title": "The draft isn't free",
+      "start": 393.933,
+      "end": 426.833,
+      "slide": "slides/13-net-speedup.webp",
+      "notes": "But the draft isn't free. Let c be one draft pass, as a fraction of a target pass. A round costs one target pass, plus γ draft passes. Divide the expected tokens by that cost to get the speedup. At α = 0.8 and γ = 4, a cheap draft with c = 0.05 gives 2.8 times. Raise c to 0.5, and it falls to 1.12. An expensive draft destroys the benefit, however good it is.",
+      "book_section": "s-net-speedup-and-the-optimal-draft-length",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "optimal-length",
+      "title": "The best draft length rises steeply with α",
+      "start": 426.833,
+      "end": 467.933,
+      "slide": "slides/14-optimal-length.webp",
+      "notes": "A longer draft also costs more draft passes, so there's a best length. Here's the speedup at c = 0.05. At α = 0.5, the best is 3 guesses, for 1.63 times. At α = 0.8, it's 8 guesses, for 3.09 times. At α = 0.9, it's 13 guesses, for 4.67 times. The peaks are flat, so a rough choice is fine. And even a free draft can't beat one over one minus α: 5 times, at α = 0.8.",
+      "book_section": "s-net-speedup-and-the-optimal-draft-length",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "choosing-draft",
+      "title": "Judge a draft by its cost and its acceptance",
+      "start": 467.933,
+      "end": 514.9,
+      "slide": "slides/15-choosing-draft.webp",
+      "notes": "Judge any draft by its cost and its acceptance. A small model from the same family is about 1.2 GB in bf16. Its memory floor is 0.94 ms, so c is 0.022. That's 45 times cheaper than the target. This model also ships a multi-token prediction head: one extra layer, with c about 0.016. Trained with the model, it accepts 70 to 85 percent of guesses: the strongest option here. N-gram lookup runs no model, so any acceptance is a win. Medusa heads draft a tree with no sequential latency, but as published, they aren't exact.",
+      "book_section": "s-choosing-a-draft",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "batching",
+      "title": "At batch 32, the idle compute is gone",
+      "start": 514.9,
+      "end": 560.767,
+      "slide": "slides/16-batching.webp",
+      "notes": "At batch 1, speculation gives 2 to 3 times. At batch 32, it often gives nothing. First, the idle compute is gone. A plain step at batch 32 already carries 32 tokens. With γ = 4, verification carries 160, right at the ridge point of 161. Second, acceptance is ragged. Each sequence is verified over five positions, but advances by its own count. The pass pays for the maximum, and delivers the average. At α = 0.8, that's 67 percent. So production engines turn speculation off at large batch sizes.",
+      "book_section": "s-batching-makes-it-worse",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "kv-rollback",
+      "title": "The KV cache rolls back by length",
+      "start": 560.767,
+      "end": 594.867,
+      "slide": "slides/17-kv-rollback.webp",
+      "notes": "Rejected guesses must also be undone in the engine's state. The 16 full-attention layers are the easy part. Here, verification wrote four speculative tokens into the paged cache. The target kept the first guess, and rejected the second. So set the length back to the prefix, plus one accepted token, plus the correction. The last block now holds only rejected tokens, so it returns to the free list. You don't zero anything: attention masks by context length, and the next token overwrites the slot.",
+      "book_section": "s-rolling-back-a-rejected-token",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "state-no-undo",
+      "title": "The recurrent state has no earlier version",
+      "start": 594.867,
+      "end": 631.367,
+      "slide": "slides/18-state-no-undo.webp",
+      "notes": "The 48 linear-attention layers are the wrinkle. Their state is overwritten in place, with no earlier version to return to. You can't defer them, because every fourth layer is full attention, and layers 0, 1, and 2 feed layer 3. Running the gated delta update backward is exact on paper, but each step divides by the gate. Over 8 steps, a slow-forgetting head amplifies rounding error 2.3 times. A fast-forgetting head amplifies it 256 times, which in bf16 destroys the state.",
+      "book_section": "s-rolling-back-a-rejected-token",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "snapshot-cost",
+      "title": "A snapshot is cheap at batch 1, costly at batch 32",
+      "start": 631.367,
+      "end": 666.433,
+      "slide": "slides/19-snapshot-cost.webp",
+      "notes": "Snapshot and restore works, and you can price it. The state is 147.8 MiB per sequence, and a copy reads and writes it. That takes 0.24 ms. At batch 1, that's 0.6 percent of a 42.2 ms step. At batch 32, it's 7.8 ms per round, roughly 19 percent of the step. It also takes 4.6 GiB of memory you wanted for KV cache. The cost grows with batch size.",
+      "book_section": "s-rolling-back-a-rejected-token",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "chunk-commit",
+      "title": "Verify as one chunk, commit only the accepted prefix",
+      "start": 666.433,
+      "end": 695.267,
+      "slide": "slides/20-chunk-commit.webp",
+      "notes": "The chunked form avoids the problem entirely. The chunked delta rule computes a chunk's outputs from its starting state, and updates the state only at the chunk boundary. So treat the γ plus 1 speculative tokens as one chunk. Compute all their outputs against the committed state, without changing it. Once the target decides, apply the update for the accepted tokens only. Nothing was overwritten, so nothing needs a snapshot.",
+      "book_section": "s-rolling-back-a-rejected-token",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "engine-built",
+      "title": "Your engine pulls all three levers",
+      "start": 695.267,
+      "end": 738.733,
+      "slide": "slides/21-engine-built.webp",
+      "notes": "This is the last piece of the course, so step back. You started with a model on disk and one rented A100. Since then, you've built the forward pass, the KV cache, sampling, and your own kernels. Then came FlashAttention, a paged cache, continuous batching, honest benchmarks, quantization, and tensor parallelism. Chapter 0 named three levers against the memory bottleneck. Continuous batching serves more tokens per read of the weights. Grouped-query attention, linear attention, paging, quantization, and tensor parallelism read fewer bytes. And speculative decoding gets more than one token per read.",
+      "book_section": "s-the-engine-you-ve-built",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "where-next",
+      "title": "The end of the course",
+      "start": 738.733,
+      "end": 774.6,
+      "slide": "slides/22-where-next.webp",
+      "notes": "Here's what to keep. Decode is memory bound, so checking γ plus 1 guesses costs one weight read. Accept with probability min of one and p over q, resample from the residual, and the output is exactly the target's. The gain fades at large batch sizes. Roll the KV cache back by length, and commit the recurrent state one chunk at a time. That's the end of the course. Every lever in your engine is code you wrote and a lab tested. So when an engine surprises you, you know which lever to look at.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-11"
+    }
+  ]
+}

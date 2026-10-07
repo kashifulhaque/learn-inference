@@ -1,0 +1,240 @@
+{
+  "course": "learn-inference",
+  "slug": "15-paged-attention",
+  "title": "Paged attention",
+  "version": "9335b1cc3ca4",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/15-paged-attention/9335b1cc3ca4/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 818.533,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "Paged attention",
+      "start": 0.0,
+      "end": 14.667,
+      "slide": "slides/01-title.webp",
+      "notes": "Paged attention. A contiguous KV cache wastes most of the memory you give it. In this lecture, you borrow the operating system's answer: fixed-size blocks, a table per sequence, and a decode kernel that follows the table."
+    },
+    {
+      "id": "pool-budget",
+      "title": "Every sequence draws on one 24,468 MiB pool",
+      "start": 14.667,
+      "end": 49.033,
+      "slide": "slides/02-pool-budget.webp",
+      "notes": "Start with the budget from chapter 2. The card holds 80 GiB. The weights take 53.8 GB. Another 6 GiB goes to the CUDA context, a workspace, and headroom. That leaves 23.9 GiB, or 24,468 MiB, for per-sequence memory. The 16 full-attention layers store 64 KiB of keys and values per token. The other 48 layers keep a fixed recurrent state for each sequence.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "reserve-max",
+      "title": "A contiguous cache reserves 2 GiB per request",
+      "start": 49.033,
+      "end": 84.3,
+      "slide": "slides/03-reserve-max.webp",
+      "notes": "A contiguous cache wastes memory in three ways, and the largest is reservation. A request that might reach 32,768 tokens reserves room for all of them, before you know its length. At 64 KiB per token, that's 2 GiB per sequence. Here are three chat requests. The colored sliver is what each one uses, and the gray is reserved for nobody. The second waste is internal fragmentation: the last unit is only partly filled. The third is external fragmentation.",
+      "book_section": "s-what-a-contiguous-cache-wastes",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "holes",
+      "title": "6 GiB free, and no room for 2 GiB",
+      "start": 84.3,
+      "end": 107.0,
+      "slide": "slides/04-holes.webp",
+      "notes": "The third waste comes from time. Sequences finish at different moments, and each one leaves a hole. Here, six holes add up to 6 GiB of free memory. A new request needs one contiguous run of 2 GiB. Every hole is smaller than that, so the request fails, while 6 GiB sits free.",
+      "book_section": "s-what-a-contiguous-cache-wastes",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "chat-mix",
+      "title": "On a chat trace, 98.45% of the reservation is waste",
+      "start": 107.0,
+      "end": 148.167,
+      "slide": "slides/05-chat-mix.webp",
+      "notes": "Now put numbers on it, with the length mix the lab measures. Ten chat requests, from 5 tokens to 3000, use 5076 tokens in all. A contiguous cache reserves 32,768 slots for each, or 20 GiB. That's 98.45 percent waste. Paged in 16-token blocks, each length rounds up to a multiple of 16. A 5-token request takes 16 slots. The ten need 5152 slots, or 322 MiB. That's 1.48 percent waste.",
+      "book_section": "s-what-a-contiguous-cache-wastes",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "eleven",
+      "title": "Contiguous fits 11 requests; paged fits about 135",
+      "start": 148.167,
+      "end": 186.033,
+      "slide": "slides/06-eleven.webp",
+      "notes": "Each contiguous request costs 2 GiB of KV, plus 147.8 MiB of recurrent state. Ten requests take 21.4 GiB. Eleven take 23.6 GiB, and they still fit. A twelfth brings the total to 25.7 GiB, which doesn't. Under paging, the same requests need about 180 MiB each, state included. The card holds about 135 of them. That twelvefold gap is the difference between a serving engine and a demo.",
+      "book_section": "s-what-a-contiguous-cache-wastes",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "analogy",
+      "title": "The operating system solved this with pages",
+      "start": 186.033,
+      "end": 227.0,
+      "slide": "slides/07-analogy.webp",
+      "notes": "Operating systems solved this in the 1960s with virtual memory. A process sees contiguous memory, backed by physical pages that sit anywhere. A sequence plays the process, and its logical blocks play virtual pages. A block table plays the page table, with 16-token blocks as pages. Shared pages become prefix sharing, and swapping goes to host memory. Two differences matter for your code. No hardware translates addresses, so the kernel reads the table itself. And there are no page faults: the allocator hands out blocks before the write.",
+      "book_section": "s-the-virtual-memory-analogy",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "block-pool",
+      "title": "Any free block can serve any sequence",
+      "start": 227.0,
+      "end": 265.467,
+      "slide": "slides/08-block-pool.webp",
+      "notes": "Paging divides the pool into fixed-size blocks. It's allocated once, at startup. Each sequence keeps a block table, an ordered list of the physical blocks that hold its tokens. Here, sequences A and B grow in turns, so their blocks aren't adjacent, or in order. When B finishes, its blocks go back on the free list, and a new sequence, C, takes them. Every block is interchangeable, so external fragmentation disappears completely. The only waste left is the unused tail of each sequence's last block.",
+      "book_section": "s-blocks-and-the-block-table",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "page-cost",
+      "title": "One 16-token page costs exactly 1 MiB",
+      "start": 265.467,
+      "end": 312.633,
+      "slide": "slides/09-page-cost.webp",
+      "notes": "In one full-attention layer, a token stores a key and a value for each of 4 KV heads. Each is 256 wide, in bf16, so that's 4 KiB. Across the 16 full-attention layers, a token costs 64 KiB. A block of 16 tokens therefore costs exactly 1 MiB. The pool holds 24,468 of them. That's 391,488 tokens of KV. After each sequence's recurrent state, spend it as you like: 60 sequences at 4k, 11 at 32k, or one at 262k.",
+      "book_section": "s-what-a-page-costs-on-this-model",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "slot-map",
+      "title": "Position 37 lives in slot 149",
+      "start": 312.633,
+      "end": 347.467,
+      "slide": "slides/10-slot-map.webp",
+      "notes": "A logical position becomes a slot in the pool through one table lookup. Take position 37, with 16-token blocks. Divide by 16, and it sits in logical block 2, at offset 5. The table says logical block 2 lives in physical block 9. Multiply 9 by 16 to jump to that block's first slot, then add the offset. The slot is 149. In code, that's a gather into the table, a multiply, and an add, over every position at once.",
+      "book_section": "s-mapping-positions-to-slots",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "page-size",
+      "title": "The page size barely matters for memory",
+      "start": 347.467,
+      "end": 391.967,
+      "slide": "slides/11-page-size.webp",
+      "notes": "The block size trades two costs. Smaller blocks waste less: on average, about half a block per sequence. Larger blocks need fewer table entries, and fewer loads per decode step. At 32k context, a 16-token block wastes 7.5 tokens on average, or 480 KiB. Even at 256, the waste is 0.4 percent of the sequence. The table isn't a bandwidth problem either: 4 bytes of it locate 1 MiB of keys and values. It's a latency problem. Each table read is a dependent load, so the memory system can't run ahead.",
+      "book_section": "s-choosing-the-page-size",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "alloc-code",
+      "title": "The allocator counts blocks before it pops",
+      "start": 391.967,
+      "end": 426.933,
+      "slide": "slides/12-alloc-code.webp",
+      "notes": "In the allocator, the function that counts blocks is the piece worth reading twice. First, it finds the capacity the sequence already holds, in tokens. The shortfall is the current length plus the new tokens, minus that capacity. Floor division of a negated number is a ceiling, so this rounds the shortfall up to whole blocks. Allocation asks that question first, and raises if the free list is short. Then it pops one free block per block needed, and appends it to the table. Last, the length accumulates.",
+      "book_section": "s-the-free-list",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "decode-growth",
+      "title": "Fifteen decode steps in sixteen allocate nothing",
+      "start": 426.933,
+      "end": 462.333,
+      "slide": "slides/13-decode-growth.webp",
+      "notes": "Watch a sequence decode, one token per step. Inside its tail block, the shortfall is negative, so the count is zero, and nothing is allocated. That's fifteen steps out of sixteen. Meanwhile, another sequence finishes, and its block goes back on the end of the free list. When a token crosses the block boundary, the allocator pops from that same end. So the free list is last in, first out. A block freed a moment ago is the next one handed out, which suits the L2 cache and the TLB.",
+      "book_section": "s-the-free-list",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "out-of-blocks",
+      "title": "Fail before the write, and rarely",
+      "start": 462.333,
+      "end": 501.7,
+      "slide": "slides/14-out-of-blocks.webp",
+      "notes": "A sequence that has run for 500 steps crosses a block boundary on its 501st token, and the free list is empty. The allocator raises, with nothing half allocated, and the scheduler preempts someone. Because counting blocks is a pure query, the scheduler can ask before it commits a write. And because recovery is expensive, it keeps a watermark free: 2 percent of the pool, about 489 pages. Releasing is the reverse, and it must return every block. A leaked block doesn't crash anything. It shrinks capacity until the engine preempts constantly.",
+      "book_section": "s-the-free-list",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "kernel-walk",
+      "title": "The decode kernel follows the table",
+      "start": 501.7,
+      "end": 543.767,
+      "slide": "slides/15-kernel-walk.webp",
+      "notes": "Decode attends one query token against the cached prefix. One program handles one sequence and one head. It loads the query once, and sets up the running state: a maximum, a sum, and an accumulator. Then it loops over the sequence's logical blocks. For each one, it reads the physical block number from the table. Every address after that is computed from it, in software. It loads that block's keys and values, scores them, and updates the running state. In the last block, a mask drops the slots past the context length. At the end come one division and one store.",
+      "book_section": "s-the-kernel",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "kernel-code",
+      "title": "Only where the keys come from has changed",
+      "start": 543.767,
+      "end": 577.367,
+      "slide": "slides/16-kernel-code.webp",
+      "notes": "Here's that loop in Triton. It runs to a compile-time maximum with a runtime guard, because Triton needs a static trip count. This load is the indirection, in one line: the physical block number from the table. The mask removes the tail of the last block. The scores are a broadcast multiply and a sum, not a matmul, because there's only one query row. Past that line, it's chapter 14's online softmax, verbatim. The only thing that changed is where the keys came from.",
+      "book_section": "s-the-kernel",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "prefix-share",
+      "title": "Two sequences, one copy of the prefix",
+      "start": 577.367,
+      "end": 614.567,
+      "slide": "slides/17-prefix-share.webp",
+      "notes": "Once addressing is indirect, two sequences can point at the same physical block. It's how two processes share a page after fork, with three rules. Keep a reference count per block. Free a block only when its count reaches zero. Copy a block before writing to it if its count is above one. Sharing is page-aligned. A 500-token system prompt is 31 full blocks, plus 4 tokens in a partial block. Only the full blocks are shared. The partial one is copied, because each sequence writes its own next token into it.",
+      "book_section": "s-prefix-sharing-and-copy-on-write",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "prefix-savings",
+      "title": "Sharing saves memory and skips prefill",
+      "start": 614.567,
+      "end": 662.467,
+      "slide": "slides/18-prefix-savings.webp",
+      "notes": "Say every request carries the same 500-token system prompt. Each copy of that prefix costs 31.25 MiB. With 64 concurrent requests, 63 of them stop paying it. That saves 1.92 GiB, about 8 percent of the pool. The shared prefix also skips prefill. Prefill costs about 2 FLOPs per token for each of the 26.9 billion parameters. So 500 tokens cost 26.9 TFLOP, per request. That's 86 ms of tensor-core time at 312 TFLOP/s. Every later request skips it, which cuts time to first token.",
+      "book_section": "s-prefix-sharing-and-copy-on-write",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "fixed-state",
+      "title": "The recurrent state doesn't page",
+      "start": 662.467,
+      "end": 705.633,
+      "slide": "slides/19-fixed-state.webp",
+      "notes": "The other 48 layers keep a recurrent state per sequence: 147.8 MiB, whatever the context length. A KV entry is written once and read forever, so it can live anywhere. The state is overwritten in full every step, so no part of it can be paged or shared. In the pool's units, admitting a sequence costs as much as 2365 tokens of KV. At a batch of 64, the state holds 9.24 GiB, or 39 percent of the pool. And the state alone caps the batch at 165 sequences, with zero context each.",
+      "book_section": "s-the-48-layers-that-don-t-page",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "preemption",
+      "title": "Swap wins the arithmetic; the reference recomputes",
+      "start": 705.633,
+      "end": 755.167,
+      "slide": "slides/20-preemption.webp",
+      "notes": "When the pool runs dry, a sequence must give way. You can swap its blocks to host memory, or drop them and redo the prefill later. Swap moves 273 MiB, state included. Over PCIe at 21 GB/s, that's about 13 ms out, and 13 back. Recompute costs 107.6 TFLOP, which is 345 ms at peak. On paper, swapping wins by an order of magnitude. The reference still recomputes. Scattered blocks make many small transfers, and the swap-in sits on the critical path. Pinned host memory is a global resource. And recompute is a few lines, while swap is a subsystem.",
+      "book_section": "s-preemption-recompute-or-swap",
+      "book_anchor": "s-12"
+    },
+    {
+      "id": "what-goes-wrong",
+      "title": "Five bugs that don't crash",
+      "start": 755.167,
+      "end": 784.2,
+      "slide": "slides/21-what-goes-wrong.webp",
+      "notes": "These bugs don't crash, so the lab checks each one. Exactly 16 tokens must take one block, and 17 must take two. Ignore the current length, and every decode step reallocates, and exhausts the pool in seconds. Release a sequence twice, and two sequences write the same block. Assume block order, and you break the first time blocks are reused. And pass a stale context length, and the model ignores its newest token.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-13"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 784.2,
+      "end": 818.533,
+      "slide": "slides/22-where-next.webp",
+      "notes": "Here's what to keep. On the lab's chat mix, a contiguous cache wastes 98.45 percent of its reservation, and 16-token pages waste 1.48 percent. On this model, one page is 1 MiB, and the pool holds 391,488 tokens of KV. The kernel is chapter 14's online softmax, plus one table load per block. And the recurrent state doesn't page, so it caps the batch at 165.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-13"
+    }
+  ]
+}

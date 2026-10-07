@@ -1,0 +1,238 @@
+{
+  "course": "learn-inference",
+  "slug": "08-the-forward-pass",
+  "title": "The forward pass",
+  "version": "ab3660fc411a",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/08-the-forward-pass/ab3660fc411a/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 834.433,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "The forward pass",
+      "start": 0.0,
+      "end": 10.033,
+      "slide": "slides/01-title.webp",
+      "notes": "The forward pass. In this lecture, you assemble the whole 64-layer model, derive its MLP, and prove its outputs match the reference."
+    },
+    {
+      "id": "why-thorough",
+      "title": "Every later test compares you against you",
+      "start": 10.033,
+      "end": 40.6,
+      "slide": "slides/02-why-thorough.webp",
+      "notes": "This chapter runs the whole model for the first time. From chapter 10 onward, every optimization is checked against the model you finish today. A fused kernel against your unfused one. A paged attention kernel against your contiguous one. A quantized matmul against your bf16 one. If this model is wrong, every later test still passes, and nothing tells you. Hugging Face transformers is the last independent check you get, so use it properly."
+    },
+    {
+      "id": "whole-model",
+      "title": "One prompt's path through the model",
+      "start": 40.6,
+      "end": 77.133,
+      "slide": "slides/03-whole-model.webp",
+      "notes": "Here's the whole journey of one prompt. The embedding table from chapter 3 turns each token id into a 5120-wide vector. That vector starts the token's residual stream: the running vector every layer reads and adds to. Sixty-four decoder layers each add two updates to it. Then a final RMSNorm and one large matrix multiply turn the last vector into a score per vocabulary token. This chapter adds the two missing parts: the MLP, and the output head.",
+      "book_section": "s-the-whole-model-in-order",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "decoder-block",
+      "title": "Two pre-norm sublayers, each added back",
+      "start": 77.133,
+      "end": 117.233,
+      "slide": "slides/04-decoder-block.webp",
+      "notes": "Every one of the 64 layers has the same skeleton. First, it normalizes the stream, and runs the mixer, which moves information between positions. The result is added back to the stream. Then it normalizes again, runs the MLP, and adds that result back too. This is pre-norm: each normalization sits inside its branch, not after the addition. Now look at the straight path along the bottom: the residual stream itself is never normalized. So a signal can cross all 64 layers without a single scaling operation. Every modern decoder is pre-norm.",
+      "book_section": "s-the-decoder-block",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "full-attention",
+      "title": "Sixteen layers mix with full attention",
+      "start": 117.233,
+      "end": 169.933,
+      "slide": "slides/05-full-attention.webp",
+      "notes": "Follow the shapes through a full-attention layer. B is the batch, T is the tokens in this pass, and L is the context length. The input is 5120 wide per token. The query projection is twice as wide as the query heads need. The second half is chapter 7's output gate, which lets a head switch itself off. The first half splits into 24 query heads of width 256. Keys and values are much narrower: 4 KV heads, each shared by six query heads. After per-head norms and RoPE, they join the cache, which holds all L context tokens. Attention's output is multiplied by the sigmoid of the gate. The output projection brings it back to the stream's width.",
+      "book_section": "s-the-decoder-block",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "linear-attention",
+      "title": "Forty-eight layers mix with the delta rule",
+      "start": 169.933,
+      "end": 217.667,
+      "slide": "slides/06-linear-attention.webp",
+      "notes": "The other 48 layers use the gated delta rule, where the past lives in a fixed-size state. One projection produces the inputs for every head. They split into queries, keys, values, and a gate called z. A causal convolution mixes each channel with its previous three steps. Queries and keys form 16 heads, and values form 48. So each query and key head repeats 3 times to match. The delta rule updates a 128 by 128 state per head, gated by alpha and beta. z gates the output through an RMSNorm, and the output projection closes the layer. Both mixers take the same shape in and give it back, so you can swap one for the other freely.",
+      "book_section": "s-the-decoder-block",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "schedule",
+      "title": "Every fourth layer is full attention",
+      "start": 217.667,
+      "end": 253.5,
+      "slide": "slides/07-schedule.webp",
+      "notes": "Which mixer runs where? A layer is full attention when its index plus one is divisible by 4. So the full-attention layers are 3, 7, and so on, up to 63. That's 16 of them, and the other 48 are linear attention. The first three layers aren't full attention, so a bug in that path can't show up before layer 3. A mismatch already at layer 0 is upstream of both mixers: the embedding, or the first norm. And the last layer is full attention, so it sees every past token individually.",
+      "book_section": "s-the-layer-schedule",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "gated-unit",
+      "title": "A gate can switch a channel off",
+      "start": 253.5,
+      "end": 294.833,
+      "slide": "slides/08-gated-unit.webp",
+      "notes": "Now the one piece you haven't built: the MLP. It moves information between channels, at each position on its own. The original feed-forward block widens the vector, applies a nonlinearity, and narrows it back. A gated linear unit replaces that nonlinearity with a product of two projections. The gate passes through the nonlinearity, and the up projection doesn't. Here are eight channels of each: multiply them, channel by channel. Where the gate is near zero, the channel switches off, whatever the up projection carried. A sum of two linear maps can't do that, but a product can.",
+      "book_section": "s-the-swiglu-mlp",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "silu",
+      "title": "SiLU is smooth, dips below zero, then saturates",
+      "start": 294.833,
+      "end": 333.067,
+      "slide": "slides/09-silu.webp",
+      "notes": "SwiGLU is the gated unit whose nonlinearity is SiLU, also called Swish. SiLU multiplies its input by the logistic sigmoid. First, it's smooth everywhere: ReLU has a kink at zero, but SiLU's derivative is continuous. Second, it isn't monotonic. It dips to a minimum of about minus 0.278. So small negative inputs keep a little signal, instead of being erased. Third, it saturates like ReLU: toward zero on the left, and toward z on the right.",
+      "book_section": "s-the-swiglu-mlp",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "swiglu-code",
+      "title": "SwiGLU is three bias-free matrices",
+      "start": 333.067,
+      "end": 362.667,
+      "slide": "slides/10-swiglu-code.webp",
+      "notes": "Here's the whole block, and it's barely longer than the maths. The gate and up projections widen each token's vector to the intermediate size. The down projection narrows them back. In the forward pass, the gate goes through SiLU and multiplies the up projection. The product goes back down to the stream's width. None of the projections has a bias. With a norm right upstream, a bias adds parameters and buys nothing measurable.",
+      "book_section": "s-the-swiglu-mlp",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "mlp-params",
+      "title": "Why 17,408: the gate gets extra parameters",
+      "start": 362.667,
+      "end": 415.933,
+      "slide": "slides/11-mlp-params.webp",
+      "notes": "The usual intermediate size is 4 times h, but this model uses 17,408. Two forces set that number, and the first is the parameter budget. An ungated block has two matrices: about 210 million parameters. A gated block has three, so to keep the count equal, i would shrink to two-thirds of 4 h. The original SwiGLU paper used that rule, and this model ignores it. Its block holds about 267 million parameters, which is 27.5% more. MLP weights are read once per forward pass, so they're cheap to serve. Across 64 layers, the MLP holds 17.1 billion parameters: 64% of the model.",
+      "book_section": "s-the-swiglu-mlp",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "alignment",
+      "title": "Why 17,408: it divides cleanly",
+      "start": 415.933,
+      "end": 450.1,
+      "slide": "slides/12-alignment.webp",
+      "notes": "The second force is hardware alignment. 17,408 is 17 times 1024. So it's divisible by the tile widths tensor cores want for a bf16 GEMM. It also splits evenly across GPUs for tensor parallelism. Across 8 GPUs, each shard is still a multiple of 128. Across 16 GPUs, each shard is a multiple of 64. The two-thirds answer has none of these properties.",
+      "book_section": "s-the-swiglu-mlp",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "output-head",
+      "title": "A final norm, then one large projection",
+      "start": 450.1,
+      "end": 489.067,
+      "slide": "slides/13-output-head.webp",
+      "notes": "After layer 63, the stream gets one more normalization. Sixty-four residual additions can leave it at any magnitude, and the output projection was trained on a normalized input. Then keep only the last position, and project. The output head maps each vector to 248,320 vocabulary scores. That's about 1.27 billion parameters, or 2.54 GB in bf16. The embedding table isn't tied to it, so it's a second matrix of the same size. Together, they're 9.5% of the model.",
+      "book_section": "s-the-output-head",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "slice-first",
+      "title": "Slice to the last position before you project",
+      "start": 489.067,
+      "end": 526.4,
+      "slide": "slides/14-slice-first.webp",
+      "notes": "That slice isn't a micro-optimization. In a 2048-token prefill, you need only the last position's row. Project every position, and you do 2048 times the arithmetic you need. Project only the last one, and it costs 2.54 GFLOPs. The output tensor drops from 1.02 GB to 497 KB. At the A100's peak of 312 TFLOP/s, the full projection takes at least 16.7 ms, as a roofline floor.",
+      "book_section": "s-the-output-head",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "logits",
+      "title": "Only differences between logits carry information",
+      "start": 526.4,
+      "end": 563.7,
+      "slide": "slides/15-logits.webp",
+      "notes": "Each output entry is a logit: an unnormalized log-probability, one raw score per vocabulary token. Exponentiate and normalize, and you get the distribution over the next token. Softmax is shift-invariant. Add the same constant to every logit, and the probabilities don't change. That's why every softmax subtracts the maximum first, which stops the exponentials from overflowing. So only differences carry information. Trained logits typically land between about 10 and 30, but one logit's size means nothing alone.",
+      "book_section": "s-the-output-head",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "loading",
+      "title": "Three checks catch nearly every loading bug",
+      "start": 563.7,
+      "end": 599.433,
+      "slide": "slides/16-loading.webp",
+      "notes": "Now load real weights. The checkpoint's names don't match your modules, so write an explicit mapping, which fails loudly when a name is missing. Three checks catch nearly every loading bug. First, every checkpoint tensor is consumed. Second, every parameter is written. Fill parameters with a not-a-number value before loading, and any left afterward points at the gap. Third, shapes match exactly. Two bugs don't raise at all: a parameter left at its random value, and a transposed square matrix.",
+      "book_section": "s-loading-weights",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "compare-logits",
+      "title": "Compare logits, not generated text",
+      "start": 599.433,
+      "end": 642.333,
+      "slide": "slides/17-compare-logits.webp",
+      "notes": "To check the model, load the same weights into transformers, and run both on the same token ids. Compare logits, not generated text. Greedy decoding keeps only the top of the ranking. Two models can produce the same 200 tokens while disagreeing badly about the distribution underneath. So measure four things, in float32. The max absolute difference should be around 10 to the minus 2. Correlation should be above 0.9999. Top-1 agreement should be 1. KL divergence weights each disagreement by the reference probability. Judge by correlation and KL.",
+      "book_section": "s-validating-against-the-reference",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "bit-exact",
+      "title": "Bit-exact agreement is impossible",
+      "start": 642.333,
+      "end": 688.367,
+      "slide": "slides/18-bit-exact.webp",
+      "notes": "Why can't the two agree exactly? First, floating-point addition isn't associative, because each addition rounds. Each output of a matmul is a sum of 5120 products. The order a kernel adds them depends on its tiles, its split-K strategy, and its warps. Your kernel and cuBLAS choose differently, so they land on different sums of the same numbers. Second, bf16 keeps 8 bits of significand, a relative spacing of about 0.0039. Every matmul rounds to that precision, and both roundings are equally valid. So assert a tolerance chosen from the dtype, never equality.",
+      "book_section": "s-validating-against-the-reference",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "bisect",
+      "title": "Find the first layer where the streams diverge",
+      "start": 688.367,
+      "end": 723.3,
+      "slide": "slides/19-bisect.webp",
+      "notes": "When the logits disagree, don't stare at the logits. Hook every decoder layer in both models, run one prompt, and collect each layer's output. Then walk the two lists, and return the first layer whose difference crosses a tolerance. Everything after it is downstream of one bug. On a stream of order 1, a tolerance of 10 to the minus 2 is about three times bf16's spacing. Here, the walk stops at layer 3, the first full-attention layer. That points at the output gate split, or the mask offset.",
+      "book_section": "s-bisecting-a-mismatch",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "prefill-decode",
+      "title": "Prefill and decode must give the same numbers",
+      "start": 723.3,
+      "end": 769.733,
+      "slide": "slides/20-prefill-decode.webp",
+      "notes": "One question remains: does your model give the same answer however you feed it the tokens? Prefill and decode run the same code with different shapes, so they must agree. First, run a full forward pass with no cache. Then prefill a prefix into a fresh cache, and feed the remaining tokens one at a time. Compare the logits at matching positions. This one test exercises the cache, the state carry, the convolution window, and the mask offset. The reference implementation agrees to 5.96e-07, in float32. One implementation must agree with itself to near machine precision.",
+      "book_section": "s-prefill-and-decode-must-agree",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "what-goes-wrong",
+      "title": "The dangerous bugs still generate English",
+      "start": 769.733,
+      "end": 802.233,
+      "slide": "slides/21-what-goes-wrong.webp",
+      "notes": "The dangerous failures still generate English. A transposed weight gives a model that's fluent and confident, but unrelated to the prompt. RoPE on the wrong axis rotates by head index instead of position, so the model loses its sense of order. A mask off by one is right during prefill and wrong on every decode step, so the model drifts within a few dozen tokens. A norm on the wrong tensor still runs, but it's a different model, and the divergence grows with depth.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 802.233,
+      "end": 834.433,
+      "slide": "slides/22-where-next.webp",
+      "notes": "Here's what to keep. Every layer is two pre-norm residual sublayers, and only the mixer changes, with full attention at every fourth layer. The SwiGLU MLP holds 64% of the parameters. Apply the final norm, slice to the last position, and only then project. Validate logits in float32 with a tolerance, bisect any mismatch to its first layer, and make prefill and decode agree. Next, the KV cache.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-11"
+    }
+  ]
+}

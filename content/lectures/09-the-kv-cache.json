@@ -1,0 +1,240 @@
+{
+  "course": "learn-inference",
+  "slug": "09-the-kv-cache",
+  "title": "The KV cache",
+  "version": "01d68bd846dc",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/09-the-kv-cache/01d68bd846dc/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 930.1,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "The KV cache",
+      "start": 0.0,
+      "end": 12.233,
+      "slide": "slides/01-title.webp",
+      "notes": "The KV cache. In this lecture, you stop recomputing the past. You derive why the work drops from quadratic to linear. Then you pay for it, in two very different data structures."
+    },
+    {
+      "id": "same-work-again",
+      "title": "Each step redoes every step before it",
+      "start": 12.233,
+      "end": 55.1,
+      "slide": "slides/02-same-work-again.webp",
+      "notes": "Picture the model writing the 128th token of a reply to a 512-token prompt. Run the transformer's definition literally, and it pushes all 639 tokens so far through all 64 layers, to get one token. Here's a small version of the same run, with a four-token prompt. Each row is one forward pass. The first pass processes the prompt. Every later pass reprocesses everything before it, and adds one new token at the end. The gray cells compute keys, values, and states identical to the ones from a step ago. The KV cache stores them once, and reads them back.",
+      "book_section": "s-from-quadratic-to-linear",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "uncached-sum",
+      "title": "Without a cache, work grows as n²",
+      "start": 55.1,
+      "end": 103.367,
+      "slide": "slides/03-uncached-sum.webp",
+      "notes": "To count the waste, measure work in token-forward-passes: one token through all 64 layers, once. Without a cache, the first new token needs a pass over the p prompt tokens. The second needs p plus one, and the j-th needs p plus j minus one. Add up the passes, and split the sum in two. The green block is the prompt, re-read once for every generated token: n times p. The blue triangle is the generated tokens re-reading each other: n times n minus one, over two. That triangle grows with the square of n, so uncached generation is quadratic.",
+      "book_section": "s-from-quadratic-to-linear",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "cached-sum",
+      "title": "With a cache, each token is processed once",
+      "start": 103.367,
+      "end": 134.833,
+      "slide": "slides/04-cached-sum.webp",
+      "notes": "Now add the cache, and no token is ever processed twice. The prefill pass handles all p prompt tokens at once, and produces the first new token. Each later step processes exactly one token, and there are n minus one of them. So the cached work is p plus n minus one, which is linear. Divide the two, and for long outputs, the ratio tends to n over two. That's the whole result. The rest of this lecture is about what it costs.",
+      "book_section": "s-from-quadratic-to-linear",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "worked-example",
+      "title": "For 128 new tokens: 73,664 units of work become 639",
+      "start": 134.833,
+      "end": 168.767,
+      "slide": "slides/05-worked-example.webp",
+      "notes": "Plug in the running example: a 512-token prompt, and 128 new tokens. Without a cache, that's 73,664 token-forward-passes. With a cache, it's 639. The cache cuts the work by a factor of 115. One token-forward-pass costs about 53.8 GFLOP. So the uncached run needs 3.96 PFLOP. The cached run needs only 34.4 TFLOP.",
+      "book_section": "s-from-quadratic-to-linear",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "roofline-floors",
+      "title": "Decode waits on memory, not arithmetic",
+      "start": 168.767,
+      "end": 219.833,
+      "slide": "slides/06-roofline-floors.webp",
+      "notes": "Work isn't time, though. The A100's tensor cores peak at 312 TFLOP/s. Its HBM delivers 1935 GB/s. Uncached passes cover hundreds of tokens each, so they run near peak arithmetic. Their floor is 12.7 seconds. Prefill is also compute bound, at 88 ms. A decode step covers one token, but it still reads all 53.8 GB of weights. That takes 27.8 ms, so 127 steps take 3.53 seconds. With the cache, the whole run takes about 3.6 seconds. That's about 3.5 times faster, not 115, because each cached step waits on memory.",
+      "book_section": "s-why-the-wall-clock-gain-is-smaller",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "gain-grows",
+      "title": "The speedup grows with the output length",
+      "start": 219.833,
+      "end": 258.8,
+      "slide": "slides/07-gain-grows.webp",
+      "notes": "The gap closes as the output grows. For long outputs, uncached time is about n² / 2 passes, at 0.172 ms of arithmetic each. Cached time is about n decode steps, at 27.8 ms each. Divide the two, and the speedup grows linearly, at about 0.0031 times n. A 20× speedup needs roughly 6500 generated tokens. These are roofline floors, not measurements. The work ratio is the part that doesn't depend on how good your kernels are.",
+      "book_section": "s-why-the-wall-clock-gain-is-smaller",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "keys-fixed",
+      "title": "A key never changes after it's written",
+      "start": 258.8,
+      "end": 301.133,
+      "slide": "slides/08-keys-fixed.webp",
+      "notes": "The saving only holds if the stored tensors can't change. In a full-attention layer, the score between the query at position m and the key at position n is their dot product, scaled by the square root of the head width. Here, the head width is 256. The key at position n depends only on the residual stream at position n. Causal masking means that stream depends only on tokens zero through n. So once token n is processed, its key and value are fixed forever. The key for token 5 is the same whether the sequence is 6 tokens long, or 6000.",
+      "book_section": "s-what-to-cache",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "append-and-read",
+      "title": "Each step writes one column and reads them all",
+      "start": 301.133,
+      "end": 333.333,
+      "slide": "slides/09-append-and-read.webp",
+      "notes": "Here's one decode step. The new token's key and value are written into the next free column. Then its query reads every key and value in the cache, old and new. The query is used once, by this step, and never read again, so you don't cache it. The attention output is final too, but no later step asks for it. The next step does the same thing: write one column, then read them all. Keys and values are the only things every later step needs.",
+      "book_section": "s-what-to-cache",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "post-rope",
+      "title": "The cache stores keys after RoPE",
+      "start": 333.333,
+      "end": 376.067,
+      "slide": "slides/10-post-rope.webp",
+      "notes": "RoPE marks each key's position by rotating it, by angles that depend on the absolute position. The engine rotates the key before it writes it to the cache. That's safe because of one identity: R m transposed, times R n, equals R of n minus m. So the rotated query and the stored key combine into a rotation by the difference in positions. Position n is fixed the moment the token is written, so the stored, rotated key never changes. Store keys before RoPE instead, and every decode step must rotate the whole prefix again, for nothing. Values are never rotated, so the question doesn't arise for them.",
+      "book_section": "s-what-to-cache",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "linear-layers",
+      "title": "The 48 linear layers keep a fixed state",
+      "start": 376.067,
+      "end": 411.867,
+      "slide": "slides/11-linear-layers.webp",
+      "notes": "Only 16 of the 64 layers use full attention: every fourth one. The other 48 are linear-attention layers, and they don't keep keys and values. Each one keeps a delta-rule state: 48 heads of 128 by 128 values, in float32. Each also keeps a convolution window: the previous 3 steps of a four-tap kernel, in bf16. Neither grows with the sequence, and neither is appended to. Both are overwritten in full on every step.",
+      "book_section": "s-what-to-cache",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "two-structures",
+      "title": "Two data structures that behave nothing alike",
+      "start": 411.867,
+      "end": 458.233,
+      "slide": "slides/12-two-structures.webp",
+      "notes": "So the engine's hybrid cache holds two data structures, keyed by layer index. The KV half grows by 4 KiB per token, in each of its 16 layers. The state half is fixed at 3.08 MiB in each of its 48 layers. Each step, the KV half writes one token's slice, and the state half rewrites the whole tensor. Both read everything they hold, every step. The KV half stays in bf16. The state stays in float32, because the recurrence multiplies it by a decay thousands of times. In bf16, the rounding from that repeated product builds into visible drift.",
+      "book_section": "s-two-data-structures-not-one",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "no-rewind",
+      "title": "Keys and values can rewind; the state can't",
+      "start": 458.233,
+      "end": 493.367,
+      "slide": "slides/13-no-rewind.webp",
+      "notes": "The other difference is rewinding. To drop the last few KV entries, you move the cursor back, and the earlier entries stay untouched. You can't do that to the state. Each position's contribution was added into it, and in floating point, that addition can't be undone. That costs you three times later in the course. Prefix sharing works for KV, but not for state. Preemption by recompute must replay the linear layers from the start. And speculative decoding must snapshot the state before it proposes tokens.",
+      "book_section": "s-two-data-structures-not-one",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "layout",
+      "title": "BHSD streams each head as one block",
+      "start": 493.367,
+      "end": 562.133,
+      "slide": "slides/14-layout.webp",
+      "notes": "Every decode step reads the whole KV cache, so the order of its axes decides how that read streams from memory. The engine uses batch, heads, sequence, dim: BHSD. Here, each color is one of the 4 KV heads. In BHSD, reading one head across the sequence is a single contiguous block. In BSHD, the same read is broken into separate runs. Writing one token is the reverse: BSHD writes one run, and BHSD writes four small pieces. At this head size, BSHD doesn't waste bytes. It loses the long sequential run that DRAM and the L2 prefetcher reward. At 32k context, one decode step in one layer reads 128 MiB of cache. It writes only 4 KiB. That's a ratio of 32,768 to 1, so you optimize the read. BHSD it is.",
+      "book_section": "s-layout",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "no-cat",
+      "title": "torch.cat brings the quadratic back",
+      "start": 562.133,
+      "end": 616.233,
+      "slide": "slides/15-no-cat.webp",
+      "notes": "Next, how the cache grows. The obvious way appends with torch.cat. Every cat allocates a new tensor and copies the whole cache into it. So the copies form the same staircase as before: the quadratic, now in data movement. For the running example, that's 73,664 tokens copied, at 64 KiB each. That's 4.5 GiB read, and another 4.5 GiB written. At the measured 1275 GB/s, it's about 8 ms of copying that accomplishes nothing. Worse, the allocator fills up with blocks it can't reuse, and you run out of memory early. Instead, allocate once, at the maximum length, and write each step into a slice.",
+      "book_section": "s-preallocate-don-t-concatenate",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "append-code",
+      "title": "Allocate once, write into a slice",
+      "start": 616.233,
+      "end": 662.933,
+      "slide": "slides/16-append-code.webp",
+      "notes": "Here's the append method. It computes the slice this call fills, from the current length. If the slice runs past the maximum length, it raises an error, rather than growing. The scheduler decides what to do when capacity runs out, and it can only do that if the cache tells it. The writes go in place, into the preallocated buffers. And the return values are views of the filled prefix, so nothing allocates. The cost is reservation. Picture a batch of 32 sequences that might each reach 32k tokens. It reserves 64 GiB up front, even if every sequence stops at 200 tokens. Chapter 15 fixes that with paging.",
+      "book_section": "s-preallocate-don-t-concatenate",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "memory-budget",
+      "title": "The fixed state is paid per sequence",
+      "start": 662.933,
+      "end": 721.2,
+      "slide": "slides/17-memory-budget.webp",
+      "notes": "How much memory does the cache take? Both terms are per sequence. The KV cache costs 64 KiB per token of context. The recurrent state costs a fixed 147.8 MiB, whatever the context. Chapter 2's budget leaves roughly 19 GiB for the cache. Batch 8 at 32k context needs 17.1 GiB, so it fits, with nothing to spare. Batch 32 at 4k needs 12.6 GiB, and it fits comfortably. Batch 64 at 4k needs 25.2 GiB, and it doesn't fit. Look at the pink part of that bar. At batch 64, the fixed state alone is 9.2 GiB. That's half the budget, spent before a single token of context exists.",
+      "book_section": "s-the-memory-arithmetic",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "break-even",
+      "title": "The hybrid beats full attention above 788 tokens",
+      "start": 721.2,
+      "end": 771.733,
+      "slide": "slides/18-break-even.webp",
+      "notes": "Is the hybrid design worth that fixed state? Compare it with an all-full-attention version of this geometry. That model pays 256 KiB per token, across all 64 layers, and carries no fixed state. The hybrid pays 64 KiB per token, plus the fixed 147.8 MiB. Set the two equal, and the lines cross at 788 tokens. Below that, the fixed state costs more than the KV entries it replaces. Above it, the hybrid wins, by 192 KiB for every further token. At 32k context, the hybrid needs 2.14 GiB per sequence, against 8 GiB.",
+      "book_section": "s-the-memory-arithmetic",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "decode-traffic",
+      "title": "Below 4.7k tokens, the state moves more bytes",
+      "start": 771.733,
+      "end": 818.133,
+      "slide": "slides/19-decode-traffic.webp",
+      "notes": "Footprint isn't traffic. Per decode step, each sequence reads its whole KV cache: 64 KiB per token of context. The recurrent state is read and written in full: about 295.5 MiB per step. The two lines cross at about 4728 tokens. Below about 4.7k context, the 48 linear layers move more bytes per step than the 16 full-attention layers do. At 512 tokens, the state moves about 9 times more. The weights add 53.8 GB per step, shared across the whole batch. The hybrid design shifts memory pressure. It doesn't remove it.",
+      "book_section": "s-the-memory-arithmetic",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "state-carry",
+      "title": "Read the state, then write it back",
+      "start": 818.133,
+      "end": 854.367,
+      "slide": "slides/20-state-carry.webp",
+      "notes": "The last piece is carrying the linear layers' state from step to step. Prefill starts from no state, runs the whole chunked recurrence, and stores the result. Each decode step reads the stored state, runs one step of the recurrence, and writes the new state back. The convolution window works the same way, and it shifts forward every step. Its update comes back with the convolution's output, so store both, or neither. The KV path is append-only, and hard to get subtly wrong. The state path is the opposite.",
+      "book_section": "s-the-state-carry",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "what-goes-wrong",
+      "title": "Advance the cursor once per forward pass",
+      "start": 854.367,
+      "end": 896.867,
+      "slide": "slides/21-what-goes-wrong.webp",
+      "notes": "The cache's bugs produce plausible text. So the prefill-plus-decode equivalence test from chapter 8 is the one that catches them. Forget to read the state, and the model forgets the prompt after about a sentence. Forget to write it, and every step starts from the prefill state, so the model repeats itself. The convolution window has the same structure as the state, and it's easier to overlook. The subtle one is the cursor. Every layer in a pass writes at the same position, so advance the cache once, after all 64 layers. Advance it inside each layer, and the model goes wrong from the second decode step onward.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 896.867,
+      "end": 930.1,
+      "slide": "slides/22-where-next.webp",
+      "notes": "Here's what to keep. Without a cache, work grows with the square of the output, and with one, it grows linearly. Decode waits on memory, so the time saved is much smaller than the work saved. Cache rotated keys and values for the full-attention layers, and a fixed float32 state for the linear ones. Lay the cache out as BHSD, allocate it once, and advance it once per forward pass. Next, the roofline shows exactly where that memory-bound ceiling comes from.",
+      "book_section": "s-the-memory-arithmetic",
+      "book_anchor": "s-8"
+    }
+  ]
+}

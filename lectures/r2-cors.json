@@ -1,0 +1,16 @@
+[
+  {
+    "allowed": {
+      "origins": [
+        "https://qwen.ifkash.dev",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8000"
+      ],
+      "methods": ["GET", "HEAD"],
+      "headers": ["Range"]
+    },
+    "exposeHeaders": ["Content-Length", "Content-Range", "Accept-Ranges"],
+    "maxAgeSeconds": 86400
+  }
+]

@@ -1,0 +1,228 @@
+{
+  "course": "learn-inference",
+  "slug": "19-tensor-parallelism",
+  "title": "Tensor parallelism",
+  "version": "d2bc1ae87bf3",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/19-tensor-parallelism/d2bc1ae87bf3/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 808.033,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "Tensor parallelism",
+      "start": 0.0,
+      "end": 16.167,
+      "slide": "slides/01-title.webp",
+      "notes": "Tensor parallelism. In this lecture, you split every weight matrix across GPUs. You derive the split from block matrix multiplication, count what it costs to communicate, and find where the link between GPUs stops paying."
+    },
+    {
+      "id": "one-gpu-barely",
+      "title": "A second GPU halves what each card holds",
+      "start": 16.167,
+      "end": 63.533,
+      "slide": "slides/02-one-gpu-barely.webp",
+      "notes": "Your engine fits on one A100, but barely. The weights take 53.8 GB in bf16. That leaves about 19 GiB for the KV cache. At 64 KiB per token, that holds about 311,000 tokens. Shared by 32 sequences, that's under 10,000 tokens each. Now add a second GPU. Each card holds 26.9 GB of weights, which frees another 25 GiB for cache. Decode is memory bound, so its floor is reading every weight once. With each GPU reading half, that floor drops from 42.2 ms to 21.1 ms per token."
+    },
+    {
+      "id": "collectives",
+      "title": "Ranks meet in collectives",
+      "start": 63.533,
+      "end": 95.7,
+      "slide": "slides/03-collectives.webp",
+      "notes": "A rank is one GPU's process, and the degree, P, is how many ranks share the model. A collective is a step that every rank joins at once. An all-gather concatenates every rank's tensor. A reduce-scatter leaves each rank its own slice of the sum. A broadcast copies one rank's tensor to the rest. The one you'll meet most is the all-reduce. Each rank starts with a tensor of the same shape. Each ends with the elementwise sum.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "two-cuts",
+      "title": "Cut the weight by columns or by rows",
+      "start": 95.7,
+      "end": 135.633,
+      "slide": "slides/04-two-cuts.webp",
+      "notes": "Think of the weight W as a grid, with one row per input feature and one column per output feature. Cut it vertically, and each GPU holds half the columns. Each needs all of the input, and makes half the output columns, finished. Cut it horizontally, and each GPU holds half the rows. Each needs only the matching half of the input. But each makes a full-size output that's only part of the sum. For one output from four inputs, GPU 0 computes the first two terms, and GPU 1 the last two. Neither number is y, but their sum is.",
+      "book_section": "s-two-ways-to-split-a-matrix",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "column-parallel",
+      "title": "Column parallel needs no communication",
+      "start": 135.633,
+      "end": 166.633,
+      "slide": "slides/05-column-parallel.webp",
+      "notes": "Now the algebra. Write a linear layer as Y equals X times W, for T tokens. Cut W into P blocks of columns. Matrix multiplication works block by block, so the product is X times each block, side by side. Rank p holds one block, receives the whole input, and computes its own output columns. Each output column needs the full input, but only its own column of W. So nothing crosses the link.",
+      "book_section": "s-column-parallel-linear-layers",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "row-parallel",
+      "title": "Row parallel ends in one all-reduce",
+      "start": 166.633,
+      "end": 198.567,
+      "slide": "slides/06-row-parallel.webp",
+      "notes": "The row split works the other way. Cut W into blocks of rows, and cut X into matching blocks of columns. Each output is a sum over the input features. Group that sum by block, and the product becomes a sum of block products. Rank p holds one block of rows, and only its slice of the input. It computes a partial sum with the full output shape. Adding them across ranks is an all-reduce. The partial sums must be added, never concatenated.",
+      "book_section": "s-row-parallel-linear-layers",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "pytorch-code",
+      "title": "In PyTorch, column parallel is dim 0",
+      "start": 198.567,
+      "end": 230.567,
+      "slide": "slides/07-pytorch-code.webp",
+      "notes": "In code, PyTorch flips the layout, the most common source of confusion here. A linear layer stores its weight as output features by input features. So a column split, in the math sense, is a chunk along dimension zero. The row split runs along the input features, which is dimension one. The row-parallel forward pass multiplies each input shard by its weight shard. Then it adds the partial results, and on real GPUs, that sum is the all-reduce.",
+      "book_section": "s-row-parallel-linear-layers",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "pairing",
+      "title": "Column then row: one all-reduce per block",
+      "start": 230.567,
+      "end": 262.167,
+      "slide": "slides/08-pairing.webp",
+      "notes": "Now put the two splits back to back. A column-parallel layer produces an output sharded along its output dimension. A row-parallel layer wants an input sharded along its input dimension. In a two-layer stack, those are the same axis. So the sharded intermediate is never gathered. It goes straight into the next layer, in the form that layer wants. The only communication is one all-reduce at the end, which is what makes tensor parallelism cheap.",
+      "book_section": "s-the-pairing-and-why-one-all-reduce-is-enough",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "ring-all-reduce",
+      "title": "A ring all-reduce sends under twice the tensor",
+      "start": 262.167,
+      "end": 304.5,
+      "slide": "slides/09-ring-all-reduce.webp",
+      "notes": "What does one all-reduce cost? A ring all-reduce arranges the ranks in a ring, and cuts the tensor into P pieces. First comes a reduce-scatter. Each rank passes a piece to its neighbor, which adds its own copy and passes it on. After P minus 1 hops, each rank holds one fully summed piece. Then an all-gather carries the finished pieces around the ring for another P minus 1 hops. So each rank sends the tensor size, times 2, times P minus 1 over P. At 2 ranks, that's exactly one tensor's worth. As P grows, it approaches twice the tensor.",
+      "book_section": "s-the-pairing-and-why-one-all-reduce-is-enough",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "naive-cost",
+      "title": "Gathering the middle costs 2.7 times the bytes",
+      "start": 304.5,
+      "end": 346.433,
+      "slide": "slides/10-naive-cost.webp",
+      "notes": "The naive alternative gathers the intermediate after the first layer, then all-reduces after the second. In the MLP, the intermediate is 17408 wide, against a hidden size of 5120. So it's 3.4 times the size of the output. Add the gather to the all-reduce, and the naive scheme moves 2.7 times the bytes. It also pays a second collective launch, which in decode matters more than the bytes. The pairing pays one all-reduce per sub-block, the attention half or the MLP half of a layer. That's 128 per forward pass.",
+      "book_section": "s-the-pairing-and-why-one-all-reduce-is-enough",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "mlp",
+      "title": "The MLP splits by intermediate channel",
+      "start": 346.433,
+      "end": 387.767,
+      "slide": "slides/11-mlp.webp",
+      "notes": "Now apply the pairing to the MLP, a SwiGLU block. Shard its gate and up projections by column, so each rank gets 8704 of the 17408 channels. The activation and the elementwise product act on each channel on its own. So a rank's block equals that block of the full intermediate, computed without ever forming it. Then shard the down projection by row. Each rank's slice is already in place, and the block ends in one all-reduce. If the activation mixed channels, as a softmax would, you'd need a collective in the middle.",
+      "book_section": "s-the-mlp-shards-by-intermediate-dimension",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "attention-heads",
+      "title": "Attention splits by whole heads",
+      "start": 387.767,
+      "end": 429.9,
+      "slide": "slides/12-attention-heads.webp",
+      "notes": "Attention isn't one matmul, so it needs its own argument. Here, 24 query heads share 4 KV heads, six per group. Each head's output depends only on its own query, and its group's keys and values. So split by head. The query, key, and value projections are column parallel, cut on head boundaries. The output projection takes the concatenated heads, so it's row parallel, with one all-reduce. At 2 GPUs, each rank owns 12 query heads, 2 KV heads, and their cache. The cut must fall between heads, because the softmax normalizes within one head.",
+      "book_section": "s-attention-shards-by-head",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "head-divisibility",
+      "title": "4 KV heads cap the degree at 4",
+      "start": 429.9,
+      "end": 463.767,
+      "slide": "slides/13-head-divisibility.webp",
+      "notes": "A rank must also own every query head of each KV head it holds. So P must divide the number of KV heads, which is 4. At 2 ranks, each gets 12 query heads and 2 KV heads. At 4 ranks, each gets 6 query heads and 1 KV head. At 8 ranks, there's no valid split. The usual workaround replicates KV heads. That doubles the cache from 64 KiB to 128 KiB per token, and gives back the memory you wanted.",
+      "book_section": "s-attention-shards-by-head",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "linear-attention",
+      "title": "The recurrent state shards with its heads",
+      "start": 463.767,
+      "end": 508.8,
+      "slide": "slides/14-linear-attention.webp",
+      "notes": "The other 48 layers run the gated delta rule, with 16 key heads and 48 value heads. Each value head carries its own state, gate, and step size. So these layers shard by value head, as attention shards by query head. The state splits with the heads, and never moves. Per sequence, it's 147.8 MiB on one GPU. At 2 GPUs, that's 73.9 MiB per rank, and at 4, it's 36.9. Every head count must divide evenly, so P must divide their greatest common divisor. That's 4. This model supports 1, 2, or 4 GPUs, and nothing above.",
+      "book_section": "s-the-hybrid-model-s-linear-attention-layers",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "replicated",
+      "title": "Norms stay whole; logits stay sharded",
+      "start": 508.8,
+      "end": 555.767,
+      "slide": "slides/15-replicated.webp",
+      "notes": "Not every weight is worth splitting. A norm reduces over the whole hidden vector, and the previous all-reduce already leaves that vector whole. So norms stay replicated, at 10 KiB each. The input embedding costs 2.54 GB per rank, or you can split it by vocabulary for one more all-reduce. The output projection maps to 248,320 logits, so it's naturally column parallel. Gathering its output would cost 497 KB per token, 48 times the hidden-state all-reduce. So keep the logits sharded. The ranks all-reduce two scalars for the softmax, and broadcast the chosen token.",
+      "book_section": "s-what-stays-replicated",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "comm-volume",
+      "title": "Per-rank traffic never passes 40 KiB",
+      "start": 555.767,
+      "end": 596.0,
+      "slide": "slides/16-comm-volume.webp",
+      "notes": "Now count bytes. Per token, each all-reduce carries the hidden state: 5120 elements at 2 bytes, or 10 KiB. There are two all-reduces per layer, each paying the ring factor. So per token per layer, each rank sends 40960 bytes, times P minus 1 over P. At 2 ranks, that's 20 KiB. At 4, it's 30, and at 8, it's 35. However many ranks you add, it never passes 40 KiB. Tensor parallelism has a latency problem, not a bandwidth one.",
+      "book_section": "s-communication-volume",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "prefill",
+      "title": "Prefill needs NVLink, not PCIe",
+      "start": 596.0,
+      "end": 639.467,
+      "slide": "slides/17-prefill.webp",
+      "notes": "Take a 4096-token prefill on 2 GPUs. Across 64 layers, each rank sends 5.37 GB. Prefill is limited by arithmetic, and on two A100 GPUs, the compute takes 353 ms. Over PCIe, the general-purpose bus, the transfer takes 83.9 ms, 24 percent of the compute. Over NVLink, the direct link between GPUs, it takes 8.95 ms, only 2.5 percent. The sharding that costs nothing over NVLink costs a quarter of your prefill over PCIe.",
+      "book_section": "s-communication-volume",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "decode",
+      "title": "Decode pays a fixed 1 ms per step",
+      "start": 639.467,
+      "end": 689.833,
+      "slide": "slides/18-decode.webp",
+      "notes": "In decode, the tensors are tiny, one token of 10 KiB. But each all-reduce costs 5 to 10 microseconds of latency, whatever its size. There are 128 of them per step, so at about 8 microseconds each, that's 1.02 ms. That barely changes with P, but the weight read shrinks: 42.2 ms, divided by P. At 2 GPUs, a step takes 22.1 ms, so decode is 1.91 times faster, not 2. At 16, the fixed term is 28 percent of the step, and efficiency falls to 73 percent. CUDA graphs shrink that fixed term, which is why production engines capture decode.",
+      "book_section": "s-communication-volume",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "three-ways",
+      "title": "Only tensor parallelism cuts decode latency",
+      "start": 689.833,
+      "end": 738.867,
+      "slide": "slides/19-three-ways.webp",
+      "notes": "There are three ways to use more than one GPU. Data parallelism gives each GPU a full copy and its own requests. It needs no communication, but each GPU still reads all 53.8 GB. Pipeline parallelism splits the layers between GPUs. At a 4096-token prefill, it sends 42 MB once, 128 times less than tensor parallelism. But in decode, each stage idles while the other works. Tensor parallelism alone cuts the bytes each GPU reads per token, so it alone cuts decode latency. So use tensor parallelism within a node, over NVLink, and the others across nodes and replicas.",
+      "book_section": "s-tensor-pipeline-and-data-parallelism",
+      "book_anchor": "s-12"
+    },
+    {
+      "id": "what-goes-wrong",
+      "title": "Test on one device; the bugs are silent",
+      "start": 738.867,
+      "end": 777.167,
+      "slide": "slides/20-what-goes-wrong.webp",
+      "notes": "You don't need two GPUs to test the partitioning. Simulate every rank on one device, combine the shards, and compare with the unsharded layer, within a tolerance. Concatenating partial sums at least raises a shape error. Concatenating in the wrong rank order gives silently wrong results. Splitting by raw feature works at 2 ranks by luck, but at 16, each rank gets one and a half heads. A row-parallel bias added on every rank is added P times. A sharded norm divides by the wrong denominator. And a different random state on each rank picks different tokens.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-14"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 777.167,
+      "end": 808.033,
+      "slide": "slides/21-where-next.webp",
+      "notes": "Here's what to keep. A column split needs no communication, and a row split ends in an all-reduce. Pair them, and a forward pass costs 128 all-reduces. This model's 4 KV heads cap the degree at 4. Traffic stays under 40 KiB per token per layer, and decode on 2 GPUs is 1.91 times faster. Next, speculative decoding spends decode's idle compute on guessed tokens.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-14"
+    }
+  ]
+}

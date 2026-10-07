@@ -1,0 +1,230 @@
+{
+  "course": "learn-inference",
+  "slug": "06-gated-delta-rule",
+  "title": "Linear attention and the gated delta rule",
+  "version": "27006bbe8ab1",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/06-gated-delta-rule/27006bbe8ab1/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 794.933,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "Linear attention and the gated delta rule",
+      "start": 0.0,
+      "end": 19.5,
+      "slide": "slides/01-title.webp",
+      "notes": "Linear attention and the gated delta rule. Three quarters of this model's layers don't keep a KV cache. Each head keeps one fixed 128 by 128 matrix instead. You build its update rule, then the chunked form that makes prefill fast."
+    },
+    {
+      "id": "softmax-keeps-all",
+      "title": "Softmax ties the query to every key",
+      "start": 19.5,
+      "end": 46.267,
+      "slide": "slides/02-softmax-keeps-all.webp",
+      "notes": "Start with what you're replacing. Softmax attention weights every past value by the exponential of a query-key dot product. Look at where the query sits. It's inside the exponential, coupled to every key, so you can't pull it out of the sum. That's why softmax attention keeps every past key and value in the KV cache. And that cache grows with every token.",
+      "book_section": "s-attention-as-a-running-sum",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "running-sum",
+      "title": "Drop the exponential, and the past folds into one matrix",
+      "start": 46.267,
+      "end": 83.7,
+      "slide": "slides/03-running-sum.webp",
+      "notes": "Replace the exponential score with the plain dot product, and drop the denominator. The output becomes a sum of values, weighted by dot products. Move the brackets, and the query comes out of the sum. Call what's left S. It's a running total: each token adds one outer product, its key times its value, transposed. Reading is a matrix-vector product with the query. That's linear attention. S is 128 by 128, its size never changes, and it replaces the whole KV cache for that head.",
+      "book_section": "s-attention-as-a-running-sum",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "constant-read",
+      "title": "A read costs the same at token 10 and token 100,000",
+      "start": 83.7,
+      "end": 121.033,
+      "slide": "slides/04-constant-read.webp",
+      "notes": "One head's read is 32,768 FLOPs, at token 10 and at token 100,000. The state holds 16,384 numbers per head, in float32. Across 48 value heads and 48 linear layers, that's 144 MiB per sequence. Add a small convolution cache, and you get chapter 2's 147.8 MiB, at any context length. It isn't a cheap softmax, though: with no exponential and no normalizer, it's a different operator, trained as itself.",
+      "book_section": "s-attention-as-a-running-sum",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "two-drawers",
+      "title": "A third key has no drawer of its own",
+      "start": 121.033,
+      "end": 163.2,
+      "slide": "slides/05-two-drawers.webp",
+      "notes": "Picture the state as a filing cabinet, where each key labels a drawer. Write the value 1, 2 with the first of two perpendicular keys, and it lands in row 1. Write 3, minus 1 with the second key, and it lands in row 2. Reading with the first key returns exactly 1, 2. Now write a third value, 2, 2, with a key halfway between the two. There's no third drawer, so it lands partly in both rows. Reading with the first key now gives 2.41, 3.41. That's the value you asked for, blurred by 0.707 times one you didn't.",
+      "book_section": "s-why-a-running-sum-can-t-forget",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "interference",
+      "title": "Past about 128 writes, reads come back blurred",
+      "start": 163.2,
+      "end": 201.8,
+      "slide": "slides/06-interference.webp",
+      "notes": "The same thing happens at full size. Read back one of n associations, and you get the value you asked for, plus interference. That's every other value, weighted by how much its key overlaps yours. If the keys were orthogonal, the interference would vanish, but only 128 orthogonal directions fit. For random unit keys, the signal-to-noise ratio is about 128 over n minus 1. Noise matches signal at about 129 writes. After 200 writes, the noise has about 1.6 times the signal's energy.",
+      "book_section": "s-why-a-running-sum-can-t-forget",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "double-write",
+      "title": "Writing the same key twice returns the sum",
+      "start": 201.8,
+      "end": 231.433,
+      "slide": "slides/07-double-write.webp",
+      "notes": "The clearest failure is an overwrite. Say token 3 writes the value 1, 2 under some key. Token 90 writes 3, minus 1 under the same key, meaning this slot now holds the new value. Plain accumulation adds the two. Reading the key returns 4, 1: the sum, not the update. The state has no way to express replacement, so every overwrite makes the entry worse.",
+      "book_section": "s-why-a-running-sum-can-t-forget",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "delta-rule",
+      "title": "The delta rule writes only what's missing",
+      "start": 231.433,
+      "end": 266.1,
+      "slide": "slides/08-delta-rule.webp",
+      "notes": "The delta rule fixes the overwrite. Before writing, it reads what the state already returns for this key. Then it writes back only the difference, scaled by a step size, beta. If the state already returns the right value, nothing is written. Take the squared error of the read as a loss. Its gradient is the key times the residual, transposed. One gradient step of size beta is exactly the delta rule. In the engine, a sigmoid keeps beta between 0 and 1.",
+      "book_section": "s-the-delta-rule-write-only-what-s-missing",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "erase-then-add",
+      "title": "Erase along the key, then add",
+      "start": 266.1,
+      "end": 299.167,
+      "slide": "slides/09-erase-then-add.webp",
+      "notes": "Collect the terms in the old state, and the write becomes two moves. First, multiply by the identity minus beta k k transpose, which erases along the key. Then add beta times the key, times the new value transposed. Replay the overwrite with beta equal to 1. The first write put 1, 2 in the key's row. The second erases that row to zero, then adds 3, minus 1. Reading now returns 3, minus 1: a replacement, not a sum.",
+      "book_section": "s-the-delta-rule-write-only-what-s-missing",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "unit-keys",
+      "title": "Unit-length keys keep the erase stable",
+      "start": 299.167,
+      "end": 343.333,
+      "slide": "slides/10-unit-keys.webp",
+      "notes": "That erase factor behaves only if the key has unit length. With a unit key, it shrinks the key's direction by 1 minus beta, and leaves the other 127 directions alone. At beta equal to 1, the key's direction is wiped. So no eigenvalue is larger than 1 in magnitude, and repeated writes never amplify the state. Now drop the normalization. A key of norm 2, at beta 0.8, gives an eigenvalue of minus 2.2. Each write flips its sign and grows it 2.2 times, until the state overflows to NaN. So the engine normalizes every key to unit length.",
+      "book_section": "s-the-delta-rule-write-only-what-s-missing",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "forget-gate",
+      "title": "A forget gate fades the whole state first",
+      "start": 343.333,
+      "end": 382.333,
+      "slide": "slides/11-forget-gate.webp",
+      "notes": "The delta rule only touches a key when it's written again, so everything else stays forever. The last piece is a forget gate, alpha, a scalar between 0 and 1. It shrinks the whole state before the write. Alpha appears inside the correction too, so the delta rule corrects the decayed state, not the old one. So each token makes three moves: decay, erase along the key, and add. This is the gated delta rule, the whole update this layer runs. Each value head gets its own gate, so a layer's 48 heads fade at 48 different rates.",
+      "book_section": "s-the-forget-gate",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "step-read",
+      "title": "One step by hand: decay, then read",
+      "start": 382.333,
+      "end": 422.533,
+      "slide": "slides/12-step-read.webp",
+      "notes": "Run one step by hand, from the two-drawer state. Take alpha and beta both 0.5, a unit key of 0.6, 0.8, and a new value of 2, 1. First, decay: every entry halves. Next, read the decayed state with the key. That's 0.6 times row 1, plus 0.8 times row 2, which gives 1.5, 0.2. The target is 2, 1, so the state is off by 0.5, 0.8. Scale that by beta, and the correction to write is 0.25, 0.4.",
+      "book_section": "s-the-forget-gate",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "step-write",
+      "title": "The write moves the read halfway to v",
+      "start": 422.533,
+      "end": 459.5,
+      "slide": "slides/13-step-write.webp",
+      "notes": "Now write. The outer product of the key and the correction is a 2 by 2 matrix. Its rows are 0.6 and 0.8 times the correction. Add it to the decayed state to get the new state. Read that with the key, and you get 1.75, 0.6. That's exactly halfway to the target, because beta is 0.5. Along the perpendicular direction, the read is 0.5, minus 1.1, before the write and after. The write disturbs nothing it wasn't aimed at.",
+      "book_section": "s-the-forget-gate",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "time-constant",
+      "title": "One number per head sets its memory in tokens",
+      "start": 459.5,
+      "end": 503.1,
+      "slide": "slides/14-time-constant.webp",
+      "notes": "A gate outside 0 to 1 breaks the layer, so the engine keeps it inside by construction. So the rate r is positive, and alpha, e to the minus r, lands strictly between 0 and 1. After n steps, a write has shrunk by alpha to the n. A tenth survives after the log of 10, over r, steps. Suppose softplus returns 1. At A log of minus 2, the 90% horizon is 17 tokens. At minus 4, it's 126. At minus 8, it's 6864. Every 2 units of A log move the horizon by a factor of 7.4.",
+      "book_section": "s-the-forget-gate",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "sequential",
+      "title": "The sequential form is also the decode path",
+      "start": 503.1,
+      "end": 541.967,
+      "slide": "slides/15-sequential.webp",
+      "notes": "Here's the recurrence as code, one token at a time. It's the reference, and also the decode path. Everything runs in float32, because bf16 would lose the small corrections. First, the read: the state times the key. Then the correction, against the decayed read. Then the state decays, and the outer product is added. The output uses the state after this token's own write. This code is correct, and unusable for prefill. A 2000-token prompt becomes 2000 sequential steps of tiny kernels, and the GPU waits on launch latency.",
+      "book_section": "s-the-sequential-form",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "ledger",
+      "title": "Unroll a chunk into a ledger",
+      "start": 541.967,
+      "end": 588.067,
+      "slide": "slides/16-ledger.webp",
+      "notes": "To process a prompt fast, split it into chunks of 64 tokens, and solve each chunk at once. The cumulative decay, g, is the product of the gates since the chunk began. The correction, u, is what step t writes. Unroll the recurrence: the state at step t is the carried-in state, decayed by g, plus every correction so far. Each correction decays by the gates since it was written. Read it as a ledger: an opening balance and deposits, all shrinking. Here's a six-token chunk with every gate at 0.8. The decay since a deposit is 1 on the diagonal, then 0.8, 0.64, and so on below it.",
+      "book_section": "s-the-chunked-form",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "triangular-solve",
+      "title": "Each chunk is one triangular solve that can't fail",
+      "start": 588.067,
+      "end": 633.733,
+      "slide": "slides/17-triangular-solve.webp",
+      "notes": "Substitute the unrolled state into each correction, and only the carried-in state is left. Each correction is a known vector, minus earlier corrections, weighted by key overlap and decay. Collect those weights into a matrix A, and the system is I plus A, times U, equals R. A is strictly lower triangular, because a correction depends only on earlier ones. So I plus A has ones on its diagonal, and its determinant is exactly 1. No keys, gates, or step sizes can make this solve fail. Forward substitution solves it from the top row down. The chain is 64 steps long, not the length of the sequence.",
+      "book_section": "s-the-chunked-form",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "carried-state",
+      "title": "Only the state crosses a chunk boundary",
+      "start": 633.733,
+      "end": 658.733,
+      "slide": "slides/18-carried-state.webp",
+      "notes": "With the corrections solved, the rest is reading the ledger. Each output is the carried-in state read by the query, plus a masked score matrix times U. Then the state at the end of the chunk carries forward. It's the only value that crosses a chunk boundary. At 2048 tokens and chunks of 64, the loop runs 32 times instead of 2048.",
+      "book_section": "s-the-chunked-form",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "chunk-cost",
+      "title": "More arithmetic, in a shape the GPU likes",
+      "start": 658.733,
+      "end": 710.4,
+      "slide": "slides/19-chunk-cost.webp",
+      "notes": "The chunked form doesn't win by doing less work. Per token, with d of 128, it costs 7 C d, plus 6 d squared. The sequential loop costs 7 d squared. They're equal at a chunk size of about 18. At the engine's chunk size of 64, that's 155,648 FLOPs per token, against 114,688 for the loop. So chunking does about 1.36 times the arithmetic. Yet the lab requires it to run more than 5 times faster on 2048 tokens. The loop's tiny dependent kernels leave the A100's 108 SMs idle, while chunks give the tensor cores dense matmuls.",
+      "book_section": "s-what-the-chunked-form-costs",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "log-space",
+      "title": "Compute decay ratios in log space",
+      "start": 710.4,
+      "end": 764.733,
+      "slide": "slides/20-log-space.webp",
+      "notes": "Decay ratios are the numerical trap: compute g as a running product, then divide, and it underflows. Take a head with alpha 0.5, so g halves every token. Float32 bottoms out near 1.4 times 10 to the minus 45. At token 150, g is exactly zero. Then a ratio is zero over zero, which is NaN, and it spreads to every later chunk. The fix is to keep logarithms. Even with alpha at 10 to the minus 8, a 64-token chunk sums to only minus 1179, an ordinary float32. Subtract the logs, then exponentiate once. The result is at most 1, and a tiny true ratio becomes zero, the right answer.",
+      "book_section": "s-decay-ratios-and-floating-point",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 764.733,
+      "end": 794.933,
+      "slide": "slides/21-where-next.webp",
+      "notes": "Here's what to keep. Each head keeps a fixed 128 by 128 state, so a read costs the same at any length. The delta rule erases along a unit key, then adds, and the gate fades the rest. Chunks solve one triangular system each, with 1.36 times the arithmetic and over 5 times the speed. And decay ratios come from subtracted logarithms, never a quotient.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-13"
+    }
+  ]
+}

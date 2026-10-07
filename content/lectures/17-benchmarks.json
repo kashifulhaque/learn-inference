@@ -1,0 +1,230 @@
+{
+  "course": "learn-inference",
+  "slug": "17-benchmarks",
+  "title": "Benchmarks that mean something",
+  "version": "485641d07c98",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/17-benchmarks/485641d07c98/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 769.2,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "Benchmarks that mean something",
+      "start": 0.0,
+      "end": 16.933,
+      "slide": "slides/01-title.webp",
+      "notes": "Benchmarks that mean something. A thousand tokens per second isn't a number: under what load, at what batch size, and at what latency? In this lecture, you define each serving metric from timestamps, see what each one hides, and learn to measure without fooling yourself."
+    },
+    {
+      "id": "five-timestamps",
+      "title": "Record five values per request",
+      "start": 16.933,
+      "end": 52.933,
+      "slide": "slides/02-five-timestamps.webp",
+      "notes": "Every metric comes from five values per request. Three are timestamps: arrival, first token out, and last token out. Two are counts: prompt tokens and generated tokens. Here's the lab's first record. It arrives at 10.00 seconds, with a prompt of 100 tokens. Its first token leaves at 10.25. It generates 11 tokens, 30 ms apart, so it completes at 10.55. Keep these raw records, because no summary gives them back.",
+      "book_section": "s-the-five-timestamps",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "latency-metrics",
+      "title": "Three latencies split a request at its first token",
+      "start": 52.933,
+      "end": 94.9,
+      "slide": "slides/03-latency-metrics.webp",
+      "notes": "Time to first token is the silence before anything appears: first token minus arrival. Here it's 0.25 seconds, queueing plus prefill. Inter-token latency is the gap between tokens once the stream starts. Count the gaps like fence posts: 11 tokens leave 10 gaps. So divide the streaming time by 10, which gives 30 ms. A one-token reply has no gap, so return nothing, not zero. End-to-end latency is the whole span, 0.55 seconds. It equals the first-token time plus every gap, and your harness should assert that.",
+      "book_section": "s-latency-ttft-itl-and-end-to-end",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "latency-hides",
+      "title": "Each latency metric hides something",
+      "start": 94.9,
+      "end": 139.467,
+      "slide": "slides/04-latency-hides.webp",
+      "notes": "Each metric hides something. Time to first token adds two causes and reports neither. 800 ms could be 780 of queueing and 20 of prefill: a capacity problem. Or it could be 50 of queueing and 750 of prefill: a kernel problem. Record admission time to split them. Inter-token latency is a mean, so it hides jitter. Picture 127 tokens 20 ms apart, then a stall of 1.2 seconds. The mean is about 29 ms, which looks healthy and isn't. End-to-end latency mixes speed with length, so compare the other two instead.",
+      "book_section": "s-latency-ttft-itl-and-end-to-end",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "throughput-span",
+      "title": "Throughput divides by the wall-clock span",
+      "start": 139.467,
+      "end": 177.767,
+      "slide": "slides/05-throughput-span.webp",
+      "notes": "Throughput describes the whole service. Here's the lab's ten-request run. Requests arrive one second apart. Each waits 0.2 seconds for its first token, then streams 11 tokens, 50 ms apart. Divide by that wall-clock span, not by the sum of request durations, which counts overlap twice. So 110 tokens over 9.7 seconds is 11.34 tokens per second, or 1.03 requests per second. Throughput hides all of the latency, so never report it alone.",
+      "book_section": "s-throughput-and-goodput",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "goodput",
+      "title": "Goodput counts only requests that met their targets",
+      "start": 177.767,
+      "end": 214.567,
+      "slide": "slides/06-goodput.webp",
+      "notes": "Goodput asks a sharper question: how many requests were served well enough? A request counts only if it meets both of its latency targets. Add one slow request that waits 5 seconds for its first token. With targets of 1 second and 100 ms, 10 of 11 pass. Goodput is 0.909. Tighten the inter-token target to 1 millisecond, and none pass. Throughput didn't change at all. Goodput can't tell a near miss from a disaster, so report it with a tail percentile.",
+      "book_section": "s-throughput-and-goodput",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "percentile-rule",
+      "title": "A percentile interpolates between sorted samples",
+      "start": 214.567,
+      "end": 250.633,
+      "slide": "slides/07-percentile-rule.webp",
+      "notes": "A percentile asks how slow the slow end is: 99 percent of requests come in at or under the 99th. Interpolate linearly between sorted samples. Compute a fractional rank: q over 100, times n − 1. Split it into a whole index and a fraction, then interpolate between neighbors. Using n − 1 makes the 0th percentile the minimum, and the 100th the maximum. For the samples 0 and 10, the 25th percentile is 2.5.",
+      "book_section": "s-percentiles",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "one-slow-request",
+      "title": "One slow request moves P99 23 times, and P50 not at all",
+      "start": 250.633,
+      "end": 294.1,
+      "slide": "slides/08-one-slow-request.webp",
+      "notes": "Take the eleven-request run: ten waits of 0.2 seconds, and one of 5.0. Sort them. The median has rank 5, exactly on 0.2 seconds. The 99th percentile has rank 9.9: 90 percent of the way from 0.2 to 5.0, or 4.52 seconds. One bad request moved the tail by a factor of 23, and left the median alone. The mean, 0.636 seconds, describes no request at all. Tails also need samples: about 1000 requests for the 99th percentile, and 100 for the 90th.",
+      "book_section": "s-percentiles",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "mixture-tail",
+      "title": "One slow step in twenty triples P99",
+      "start": 294.1,
+      "end": 338.7,
+      "slide": "slides/09-mixture-tail.webp",
+      "notes": "Why does batching hurt the tail so much more than the mean? Most steps carry only decodes, and take 30 ms. Now and then, a step also carries a prefill chunk of 1024 tokens, and takes 90 ms. Let rho be the fraction of mixed steps. The mean is a weighted average, so it moves smoothly. The 99th percentile doesn't. Below 1 percent mixed steps, it stays at 30 ms. Past 1 percent, it jumps to 90. At one mixed step in twenty, the mean is 33 ms, up 10 percent. The tail is up 200 percent: a visible hitch every twentieth token.",
+      "book_section": "s-why-p50-and-p99-diverge-under-batching",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "littles-law",
+      "title": "Little's law: L = λW, for any stable system",
+      "start": 338.7,
+      "end": 378.8,
+      "slide": "slides/10-littles-law.webp",
+      "notes": "Little's law gives you a free consistency check. If 10 customers enter a coffee shop each minute, and each stays 3 minutes, about 30 are inside. The mean number in the system, L, equals the arrival rate, lambda, times the mean time in the system, W. The proof is an area. Count the requests in flight at each moment, and add up that curve over the window. Each request contributes exactly its own time. Divide by the window, and you get L equals lambda W, for any arrivals and any service.",
+      "book_section": "s-little-s-law",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "little-check",
+      "title": "Two of the three numbers fix the third",
+      "start": 378.8,
+      "end": 420.267,
+      "slide": "slides/11-little-check.webp",
+      "notes": "Two of the three quantities fix the third, so you can check any report. Suppose your engine sustains 5.3 requests per second at a mean latency of 6.0 seconds. Then 31.8 requests are resident on average. The scheduler's default maximum batch is 32, so you're at the limit. The fix is a larger batch or a second GPU, not a faster kernel. For tokens, each running sequence emits one token per gap. At batch 32 and 30 ms, that's 1067 tokens per second. Measure 400, and your gap must be 80 ms.",
+      "book_section": "s-little-s-law",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "warmup-code",
+      "title": "Throw away five runs, then time twenty",
+      "start": 420.267,
+      "end": 451.8,
+      "slide": "slides/12-warmup-code.webp",
+      "notes": "Now the clock. Four things happen on the first call and never again. Kernels compile, Triton and cuBLAS autotune, the allocator asks the driver for memory, and the caches are cold. A first call can take hundreds of milliseconds, against a steady state under one. So the benchmark discards five runs of the exact call, then times twenty. Each timed run ends with a synchronize, so the clock includes everything a user waits for.",
+      "book_section": "s-timing-gpu-code",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "sync-trap",
+      "title": "Without a synchronize, you time the queue",
+      "start": 451.8,
+      "end": 486.633,
+      "slide": "slides/13-sync-trap.webp",
+      "notes": "A kernel launch returns to the host almost at once. The work runs later, on the GPU's stream. Without a synchronize, the clock measures only the queueing: a few microseconds, and a bug. With a synchronize, the clock stops when the GPU is done. CUDA events time the device itself, but you still wait for the end event. Check every result against the roofline: a kernel that moves 53.8 GB in 2 ms would need 27 TB/s, so the timing is wrong.",
+      "book_section": "s-timing-gpu-code",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "repeats",
+      "title": "Twenty runs resolve about a 2% difference",
+      "start": 486.633,
+      "end": 524.267,
+      "slide": "slides/14-repeats.webp",
+      "notes": "How many runs does a claim need? Steady-state GPU timings spread by about 3 percent of the mean. The 95 percent confidence interval shrinks with the square root of the run count. At 5 runs, it's 2.6 percent on each side. At 20, it's 1.3 percent, and at 100, 0.6. Comparing two configurations is harder, because both carry error. A 2 percent difference needs 18 runs, and the benchmark does 20. A 1 percent difference needs about 69. And this only covers noise within one process.",
+      "book_section": "s-how-many-repeats-a-claim-needs",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "gpu-variants",
+      "title": "Two A100s differ by more than your speedup",
+      "start": 524.267,
+      "end": 567.467,
+      "slide": "slides/15-gpu-variants.webp",
+      "notes": "A perfect measurement still fails across different hardware. The 80 GB A100 ships in two forms. The SXM4 module is rated at 2039 GB/s, and the PCIe card at 1935. Decode kernels are memory bound, so their time scales inversely with bandwidth. That's a 5.4 percent gap from silicon alone, against the 2 percent that 20 runs resolve. So record the GPU with every result. Clocks matter too: a short benchmark runs at boost clocks, and a run of 10 minutes runs 10 to 15 percent lower.",
+      "book_section": "s-comparing-across-gpu-variants-invalidates-the-comparison",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "poisson-arrivals",
+      "title": "Real users arrive in random clumps",
+      "start": 567.467,
+      "end": 606.7,
+      "slide": "slides/16-poisson-arrivals.webp",
+      "notes": "Sending a hundred requests at once measures a burst, not a service. Queueing only appears when arrivals spread out over time. Real users don't coordinate, so arrivals come in random clumps: mostly short gaps, and the occasional long one. That's a Poisson process, with exponential gaps. Sample each gap as minus the log of a uniform number, over the rate. As a self-check, exponential gaps have a coefficient of variation of exactly 1. Uniform gaps give 0.577, and the lab's test separates them on that number.",
+      "book_section": "s-what-a-load-generator-must-model",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "lognormal-lengths",
+      "title": "Output lengths: mostly short, a few very long",
+      "start": 606.7,
+      "end": 634.933,
+      "slide": "slides/17-lognormal-lengths.webp",
+      "notes": "Lengths matter too. Output length decides how long a sequence holds its batch slot. A log-normal is a reasonable default. Take a median of 128 tokens and a sigma of 1. The mean is 211, pulled up by the long tail. The 99th percentile is 1311 tokens. One request in a hundred runs ten times the median, and that's why continuous batching exists.",
+      "book_section": "s-what-a-load-generator-must-model",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "fixed-length",
+      "title": "Fixed lengths hide four hard problems",
+      "start": 634.933,
+      "end": 668.467,
+      "slide": "slides/18-fixed-length.webp",
+      "notes": "Now see what you lose by skipping realistic load. Fix every prompt at 512 tokens, and every output at 128. A static batch runs until its longest member finishes, so varied lengths leave idle slots. With identical lengths, there's nothing to wait for, and static batching stops looking bad. Cache fragmentation disappears. The scheduler never preempts. And the tail collapses onto the median. That's a fine kernel benchmark, but it isn't a serving benchmark.",
+      "book_section": "s-why-a-fixed-length-benchmark-flatters-an-engine",
+      "book_anchor": "s-12"
+    },
+    {
+      "id": "knee",
+      "title": "Admit requests below the knee",
+      "start": 668.467,
+      "end": 703.067,
+      "slide": "slides/19-knee.webp",
+      "notes": "Sweep the request rate, and record throughput and tail time to first token at each rate. Below the knee, the GPU is nearly idle, so throughput rises and latency stays flat. At the knee, bursts form a queue that drains between them. That's the operating point you want. Past the knee, the queue never drains, throughput plateaus, and latency grows without bound. Goodput finds the knee cleanly. Plotted against the rate, it peaks, and that peak is the rate to admit at.",
+      "book_section": "s-the-latency-throughput-curve",
+      "book_anchor": "s-13"
+    },
+    {
+      "id": "what-goes-wrong",
+      "title": "Five mistakes that look reasonable",
+      "start": 703.067,
+      "end": 739.867,
+      "slide": "slides/20-what-goes-wrong.webp",
+      "notes": "Each of these mistakes produces a number that looks reasonable. Time without a synchronize, and you beat the roofline floor, which is impossible. Count every token as a gap, and inter-token latency reads low, by half at 2 tokens. Sum request durations, and throughput falls as batch size rises. Report the mean of a skewed tail, and it lands between the median and the 90th percentile, describing neither. Compare different cards, and nothing looks wrong. Against a production engine, match every condition, and expect to be 2 to 5 times slower at first.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-15"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 739.867,
+      "end": 769.2,
+      "slide": "slides/21-where-next.webp",
+      "notes": "Here's what to keep. Derive every metric from five values per request, and divide by gaps, not tokens. Report throughput with its latency, and goodput with a tail percentile. Little's law catches numbers that can't all be true. Time GPU code after warmup, with a synchronize, on one card, with enough repeats. Next, quantization shrinks the weights, and these benchmarks tell you whether it helped.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-15"
+    }
+  ]
+}

@@ -1,0 +1,240 @@
+{
+  "course": "learn-inference",
+  "slug": "05-rotary-embeddings",
+  "title": "Rotary position embeddings",
+  "version": "9f88c2de6957",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/05-rotary-embeddings/9f88c2de6957/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 809.067,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "Rotary position embeddings",
+      "start": 0.0,
+      "end": 18.433,
+      "slide": "slides/01-title.webp",
+      "notes": "Rotary position embeddings. Attention can't see word order on its own. In this lecture, you derive RoPE from one requirement: the score between two tokens should depend only on how far apart they are. Then you meet the two twists this model adds."
+    },
+    {
+      "id": "order-blind",
+      "title": "Attention can't see word order",
+      "start": 18.433,
+      "end": 52.333,
+      "slide": "slides/02-order-blind.webp",
+      "notes": "Attention has no idea what order its inputs are in. Each query weights the values by a softmax over its dot products with the keys. Nothing in that formula mentions a position, only the vectors themselves. So swap two tokens, and their outputs swap with them, unchanged. The cat sat on the mat, and the mat sat on the cat, give the same set of outputs, reordered. The causal mask decides which tokens are visible, but not how far apart they are. Position has to be put in on purpose.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "rotations",
+      "title": "Rotations compose, invert, and keep length",
+      "start": 52.333,
+      "end": 86.3,
+      "slide": "slides/03-rotations.webp",
+      "notes": "You need one tool: the rotation matrix. R of alpha turns any vector in the plane by the angle alpha. It has three properties you'll use again and again. First, they compose: turn by alpha, then by beta, and you've turned by their sum. Second, the transpose undoes a rotation: it's a rotation by minus alpha. Third, a rotation never changes a vector's length. As a complex number, multiplying by e to the i alpha makes the same turn.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "where-it-sits",
+      "title": "RoPE runs after the norm, before the cache",
+      "start": 86.3,
+      "end": 118.4,
+      "slide": "slides/04-where-it-sits.webp",
+      "notes": "Where does RoPE run? Right after the per-head RMSNorm on queries and keys, from chapter 4. And right before the key and value go into the KV cache. Lines 2 and 3 rotate the query and the key. Line 5 appends the key and value to the cache. That order means the cache stores keys that are already rotated, with their absolute positions baked in. Chapter 15 comes back to this when it reuses a prefix.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "clock-hands",
+      "title": "Only the angle between the hands matters",
+      "start": 118.4,
+      "end": 154.767,
+      "slide": "slides/05-clock-hands.webp",
+      "notes": "Before any formula, pin down what you want. Picture every vector as a clock hand. Each step along the sequence turns the hand by the same small angle. A query at position 10 has turned 10 steps, and a key at position 15 has turned 15. The extra angle between them is 5 steps' worth. Now move both tokens to positions 1010 and 1015. Both hands spin a long way, but the angle between them doesn't change. The model sees how far apart two tokens are, not where they sit.",
+      "book_section": "s-the-requirement",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "requirement",
+      "title": "The score may depend only on the gap",
+      "start": 154.767,
+      "end": 191.533,
+      "slide": "slides/06-requirement.webp",
+      "notes": "Now say it precisely. Write f of x and p for the vector attention uses at position p. The score between a query at m and a key at n must depend on the two vectors, and on the gap, m minus n. Nothing else is allowed. That rules out the obvious approach. Add a learned vector for each position, and expand the score. The middle terms depend on m and n separately, not on their difference. The requirement asks the absolute positions to cancel exactly, for every query and key.",
+      "book_section": "s-the-requirement",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "complex-solution",
+      "title": "A rotation makes the absolute angles cancel",
+      "start": 191.533,
+      "end": 226.067,
+      "slide": "slides/07-complex-solution.webp",
+      "notes": "The clock picture already holds the answer. Start with two dimensions, and treat the query and the key as complex numbers. Rotate each one by its position times a fixed frequency, theta. Take the real inner product. Conjugating the key's rotation flips the sign of its angle. So the two exponentials merge into one, with angle m minus n, times theta. The absolute positions have cancelled, which is exactly the requirement. This two-dimensional answer turns out to be the whole problem.",
+      "book_section": "s-the-two-dimensional-solution",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "score-demo",
+      "title": "Slide both tokens along: the score holds still",
+      "start": 226.067,
+      "end": 266.267,
+      "slide": "slides/08-score-demo.webp",
+      "notes": "Here's the same result as matrices, which is what the code uses. Rotate the query by m theta, and the key by n theta. The score mixes the ordinary dot product of q and k with the signed area they span. The cosine and sine of the gap set the mix. Start with the query at 10 and the key at 5. Now slide both along, to 300 and 295. The hands spin, but the score never moves. Open the gap to 10, and the score changes. The rotation is orthogonal, so it keeps the norms that chapter 4 set, and it has no learned parameters.",
+      "book_section": "s-the-two-dimensional-solution",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "full-head",
+      "title": "A head is many pairs, each rotating on its own",
+      "start": 266.267,
+      "end": 303.433,
+      "slide": "slides/09-full-head.webp",
+      "notes": "A real head isn't two channels wide. So split it into pairs of channels, and give each pair its own frequency, theta i. Each pair rotates on its own, which makes the full transform block-diagonal. There's one small rotation per pair, and zeros everywhere else. A block-diagonal matrix of rotations is still orthogonal, so the identity carries over to the whole head. The score splits into one term per pair. Every term depends only on m minus n, so the sum does too. The requirement holds for a head of any width.",
+      "book_section": "s-extending-to-a-full-head",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "frequencies",
+      "title": "Fast pairs see nearby, slow pairs see far",
+      "start": 303.433,
+      "end": 341.533,
+      "slide": "slides/10-frequencies.webp",
+      "notes": "Why give each pair a different speed? Think of a clock. The second hand resolves seconds, and the hour hand resolves hours. One hyperparameter, rope theta, sets the speeds as a geometric sequence. With 64 rotary channels, there are 32 frequencies. Pair 0 always turns one radian per position, a full turn every 6.3 positions. Watch 100 positions go by. Pair 0 spins again and again, and pair 31 barely moves. Fast pairs resolve nearby positions, and slow pairs resolve distant ones.",
+      "book_section": "s-extending-to-a-full-head",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "wavelengths",
+      "title": "Θ stretches the slow end, not the fast end",
+      "start": 341.533,
+      "end": 384.367,
+      "slide": "slides/11-wavelengths.webp",
+      "notes": "Read each frequency as a wavelength: the positions it takes to complete one full turn. On a log scale, the wavelengths climb in a straight line. Theta sets how steep that line is. The fast end stays at 2 pi, about 6.3 positions, whatever theta is. The design constraint is at the slow end. The slowest wavelength has to outlast the context you intend to serve, here 262,144 positions. At theta of 10,000, the slowest pair turns once every 47,000 positions or so, well short of that. At 10 million, it takes about 38 million positions.",
+      "book_section": "s-what-theta-controls-and-why-long-context-raises-it",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "slowest-pair",
+      "title": "A small Θ lets the slowest hand lap itself",
+      "start": 384.367,
+      "end": 426.567,
+      "slide": "slides/12-slowest-pair.webp",
+      "notes": "Now spin the slowest pair across the whole context. At theta of 10,000, it completes more than five full turns. Position 1,000 and position 48,000 land at nearly the same angle. Every faster pair wraps even more, so the model loses its coarse sense of where it is. At 10 million, the slowest pair covers less than 1 percent of a turn, about 2.5 degrees. It has become a steady, coarse position signal. That's why long-context models raise theta. It only changes a precomputed table, but a model must be served at the theta it was trained with.",
+      "book_section": "s-what-theta-controls-and-why-long-context-raises-it",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "tables",
+      "title": "Build the angle tables once",
+      "start": 426.567,
+      "end": 467.033,
+      "slide": "slides/13-tables.webp",
+      "notes": "The angles depend only on position, never on activations. So they're the same for every layer, every head, and every request, and you build them once. The inverse frequencies are theta to the minus i over 32, falling from 1. Their outer product with the positions gives every angle, p times theta i. Take the cosine and sine, then cast to the working precision. The engine builds 32,768 positions by default, so each table is 4.19 MB. Against 53.8 GB of weights, that's nothing.",
+      "book_section": "s-implementation",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "float32-angles",
+      "title": "In bfloat16, nearby positions collapse",
+      "start": 467.033,
+      "end": 505.333,
+      "slide": "slides/14-float32-angles.webp",
+      "notes": "Compute those angles in float32. For pair 0, the angle at position p is p radians. Near position 100,000, neighboring bfloat16 values sit 512 apart. So every position there rounds to the nearest multiple of 512. Whole blocks of neighboring positions collapse onto one angle, and the model can't tell them apart. Instead, compute the angles in float32, then take the cosine and sine. Those land between minus one and one, where bfloat16 is comfortable, so cast after.",
+      "book_section": "s-implementation",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "half-split",
+      "title": "Half split: channel j pairs with channel j + 32",
+      "start": 505.333,
+      "end": 547.1,
+      "slide": "slides/15-half-split.webp",
+      "notes": "The derivation paired neighboring channels: 2 i with 2 i plus 1. Implementations mostly use the half split instead. Within the rotary block, channel j pairs with channel j plus 32. The helper splits the block in halves, and returns minus the second half, then the first. Multiply and add, and each pair gets exactly R of p theta j. The half split is faster, because both halves are contiguous slices. Both pairings give identical scores, but the pairing is a contract with the checkpoint. Get it wrong, and the model writes fluent text with no idea of word order.",
+      "book_section": "s-implementation",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "partial-rotary",
+      "title": "Only the first 64 of 256 channels rotate",
+      "start": 547.1,
+      "end": 589.333,
+      "slide": "slides/16-partial-rotary.webp",
+      "notes": "This model departs from textbook RoPE in two ways. First, it rotates only a quarter of each head. The partial rotary factor is 0.25, and a head is 256 channels wide, so the rotary dimension is 64. Only the first 64 channels rotate, in 32 pairs. The other 192 pass through untouched. One table serves all 24 query heads and all 4 KV heads, by broadcasting. Check that boundary against the config. Splitting at 128, half the head, gives a model that runs, writes fluent text, and ignores word order.",
+      "book_section": "s-partial-rotary",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "score-split",
+      "title": "Each head adds a score that ignores distance",
+      "start": 589.333,
+      "end": 631.633,
+      "slide": "slides/17-score-split.webp",
+      "notes": "Why leave three quarters of each head unrotated? Look at the score. The transform is a rotation on the first 64 channels, and the identity on the other 192. The rotated part depends on the gap. The passthrough part is a pure content match, with no position at all. Here's the rotated part for a query and key that match in every pair. Summed over pairs at different speeds, it fades as the gap grows. That suits local syntax, but not a head hunting for a definition 80,000 tokens back. The passthrough channels give that head a retrieval path that distance doesn't weaken.",
+      "book_section": "s-partial-rotary",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "no-saving",
+      "title": "Partial rotary saves arithmetic, not memory",
+      "start": 631.633,
+      "end": 670.3,
+      "slide": "slides/18-no-saving.webp",
+      "notes": "What does partial rotary save? Not memory. The cache still stores all 256 channels of every KV head, because the passthrough channels are part of the key. It saves arithmetic, and arithmetic was never the bottleneck. The rotation costs about 3 FLOPs per channel. Skipping 192 channels across 28 heads saves about 16,000 FLOPs per token, per full-attention layer. The output projection alone costs 2.54 GFLOP per token. Treat partial rotary as an architectural choice, not an optimization.",
+      "book_section": "s-partial-rotary",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "mrope",
+      "title": "Three coordinates, one rotation",
+      "start": 670.3,
+      "end": 712.867,
+      "slide": "slides/19-mrope.webp",
+      "notes": "The second departure is multimodal RoPE. This model accepts images, and an image patch has three coordinates: time, height, and width. So multimodal RoPE keeps the same rotation, and changes where each pair reads its angle. The 32 pairs split into three sections. The first 11 read time. The next 11 read height. The last 10 read width. For a text token, all three coordinates hold the same number, so every pair reads the same position. That's standard RoPE exactly, with no special case. An image patch at row 7, column 12 keeps its place in the picture.",
+      "book_section": "s-multimodal-rope",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "decode-positions",
+      "title": "Decode passes the cache length as its position",
+      "start": 712.867,
+      "end": 750.3,
+      "slide": "slides/20-decode-positions.webp",
+      "notes": "Prefill processes the whole prompt at once, so it passes positions 0 through n minus 1. Decode generates one token per step, and passes a single position: the current cache length. One expression covers both phases. The trap is passing position 0 on every decode step. Then every generated token behaves as if it's the first, and its gap to every cached key is wrong by a growing amount. Output degenerates into repetition after a few dozen tokens. It looks like a sampling bug. It isn't.",
+      "book_section": "s-positions-during-decode",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "what-goes-wrong",
+      "title": "Most RoPE bugs still produce fluent text",
+      "start": 750.3,
+      "end": 780.8,
+      "slide": "slides/21-what-goes-wrong.webp",
+      "notes": "Most of these bugs produce fluent text, so they hide. Split at the wrong index, and the model ignores word order. Rotate the values, and you rotate the content the model retrieves. Rotate keys that are already in the cache, and the angle applies twice. Build the angle table in bfloat16, and long context quietly stops working. Forget to cast the tables to the query's precision, and prefill slows down several-fold, with nothing in the logs.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 780.8,
+      "end": 809.067,
+      "slide": "slides/22-where-next.webp",
+      "notes": "Here's what to keep. Rotate the query and the key by their positions, and the score depends only on the gap. Theta sets the slowest wavelength, which must outlast the context. Build the angle tables once, in float32, and keep the pairing the checkpoint was trained with. This model rotates 64 of each head's 256 channels, and its multimodal positions reduce to plain RoPE for text.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-10"
+    }
+  ]
+}

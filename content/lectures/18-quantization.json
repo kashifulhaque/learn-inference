@@ -1,0 +1,240 @@
+{
+  "course": "learn-inference",
+  "slug": "18-quantization",
+  "title": "Quantization on Ampere",
+  "version": "e72fe1fe28bc",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/18-quantization/e72fe1fe28bc/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 766.133,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "Quantization on Ampere",
+      "start": 0.0,
+      "end": 12.133,
+      "slide": "slides/01-title.webp",
+      "notes": "Quantization on Ampere. In this lecture, you derive the error of rounding to a shared scale, see why one outlier wrecks it, and count what int8 buys you on an A100."
+    },
+    {
+      "id": "decode-floor",
+      "title": "Decode's floor is the weight bytes",
+      "start": 12.133,
+      "end": 45.733,
+      "slide": "slides/02-decode-floor.webp",
+      "notes": "Every decode step reads all 53.8 GB of the model's weights. At the A100's measured copy bandwidth of 1275 GB/s, that takes 42.2 ms. So the floor is 23.7 tokens per second, before a single FLOP. Halve the bytes, and you halve the floor. That makes quantization the most direct speedup this engine has. It's also the easiest way to wreck the model without noticing.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "bits",
+      "title": "Floats space levels by octave; integers evenly",
+      "start": 45.733,
+      "end": 83.567,
+      "slide": "slides/03-bits.webp",
+      "notes": "A floating-point number splits its bits into a sign, an exponent, and a mantissa. In bfloat16, 8 bits are exponent and 7 are mantissa. FP8 E4M3 has 4 and 3. An integer format has no exponent: int8 holds minus 128 to 127. A float puts the same number of levels in every octave, so the gap grows with the value. An integer spaces its levels evenly. So a float has constant relative precision, and an integer has constant absolute precision.",
+      "book_section": "s-what-the-bits-hold",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "four-weights",
+      "title": "A shared scale turns integers into weights",
+      "start": 83.567,
+      "end": 124.567,
+      "slide": "slides/04-four-weights.webp",
+      "notes": "An int8 alone holds only an integer, so you pair it with a scale: how much one integer step is worth. Take these four weights. The largest magnitude is 1.27, so the scale is 1.27 / 127, which is 0.01. Divide each weight by the scale, and round. Then multiply back. Up close, 0.834 snaps to the nearer level. Every error is at most 0.005, half a step. And since many weights share one scale, storage is about one byte per weight.",
+      "book_section": "s-what-the-bits-hold",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "affine",
+      "title": "Affine quantization maps a range onto integers",
+      "start": 124.567,
+      "end": 157.5,
+      "slide": "slides/05-affine.webp",
+      "notes": "Now make the recipe general. An affine map sends a range of reals onto a range of integers. Dequantization is s times, q minus z. The zero point z is the integer that means exactly zero. Pin the two ends of the real range to the two ends of the integer range. Solving gives the scale and the zero point. Quantizing inverts the map: divide, round, add z, and clamp. Skip the clamp, and an out-of-range value silently wraps around.",
+      "book_section": "s-affine-quantization-derived",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "symmetric",
+      "title": "Symmetric quantization: no zero point, one multiply",
+      "start": 157.5,
+      "end": 190.433,
+      "slide": "slides/06-symmetric.webp",
+      "notes": "Weights sit close to symmetric around zero, so they drop the zero point. Set the range to plus or minus beta, the largest magnitude. Then z is zero, and dequantization is one multiply. You use minus 127 to 127, because minus 128 has no positive partner. The lab's quantizer is three lines, with one scale per output row. Round before you clamp, or you lose a level at each end.",
+      "book_section": "s-symmetric-quantization",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "error-bound",
+      "title": "The error is at most half a step",
+      "start": 190.433,
+      "end": 218.567,
+      "slide": "slides/07-error-bound.webp",
+      "notes": "How wrong can a quantized weight be? The error is the rounding residual, scaled up by s. Rounding is never off by more than one half. So the error is at most half a step, whatever the weight's size. That's what makes outliers so damaging. For the typical error, treat the residual as uniform. Its root-mean-square is s over the square root of 12. Every later choice is an attempt to make s smaller.",
+      "book_section": "s-the-error-bound",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "bound-predicts",
+      "title": "More weights per scale, a coarser step",
+      "start": 218.567,
+      "end": 255.7,
+      "slide": "slides/08-bound-predicts.webp",
+      "notes": "The bound also predicts the error before you run anything. For n normal weights, the largest magnitude grows like the square root of the log of n. That gives this formula. Per group of 128, it predicts 0.76 percent. Per output row, 0.89 percent. Per tensor, 1.2 percent. The group figure is under the lab's 1 percent threshold. The whole spread is only a factor of 1.6. If weights were Gaussian, per-tensor would be almost fine. They aren't.",
+      "book_section": "s-what-the-bound-predicts",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "outlier-four",
+      "title": "One outlier stretches the step for everyone",
+      "start": 255.7,
+      "end": 292.133,
+      "slide": "slides/09-outlier-four.webp",
+      "notes": "Real weight matrices hold a few entries far outside the bulk. Go back to the four weights, where the scale was 0.01. Now make the last one ten times larger, minus 12.7. The scale becomes 0.1. The outlier itself is exact. But 0.834 now rounds to 0.8, an error of 0.034. And 0.027 rounds to zero. It's gone. A single outlier ruins every weight that shares its scale.",
+      "book_section": "s-why-per-tensor-scaling-collapses",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "outlier-500",
+      "title": "An outlier of 500 zeroes 95% of the matrix",
+      "start": 292.133,
+      "end": 337.067,
+      "slide": "slides/10-outlier-500.webp",
+      "notes": "The lab's outlier case is a 512 by 1024 matrix of standard normals, with one entry set to 500. One scale for the whole tensor makes the step 500 / 127, about 3.94. Anything smaller than half a step rounds to zero. That's 95 percent of the matrix. The rest collapse onto a handful of levels. The relative error comes out near 0.76. Per group of 128, it stays near 0.013. That's a ratio of about 58, caused by a weight that is itself stored exactly.",
+      "book_section": "s-why-per-tensor-scaling-collapses",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "granularity",
+      "title": "Shrink the set of weights that share a scale",
+      "start": 337.067,
+      "end": 367.733,
+      "slide": "slides/11-granularity.webp",
+      "notes": "So shrink the set of weights that share a scale. Each band of color here is one scale, and the red cell is an outlier. Per tensor, the outlier damages all half a million weights. Per channel gives each output row its own scale, so the damage stays in one row. Per group gives each block of 128 weights its own scale: a 512 by 8 grid of scales for the lab. Now the outlier damages only its 127 neighbors.",
+      "book_section": "s-per-channel-and-group-wise-scaling",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "metadata",
+      "title": "Scales cost 1.56% at a group size of 128",
+      "start": 367.733,
+      "end": 405.4,
+      "slide": "slides/12-metadata.webp",
+      "notes": "Scales cost bytes too. With int8 weights and 2-byte scales, each weight costs 1 byte, plus 2 over g. At a group size of 128, the scales add 1.56 percent. The total is 50.78 percent of bfloat16. Groups of 32 would add 6.25 percent, four times the metadata, for a small gain in error. That's why 128 is the standard. The lab's weight comes to 532,480 bytes, exactly that fraction.",
+      "book_section": "s-per-channel-and-group-wise-scaling",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "decode-halves",
+      "title": "Weight-only int8 halves decode time",
+      "start": 405.4,
+      "end": 444.833,
+      "slide": "slides/13-decode-halves.webp",
+      "notes": "Weight-only quantization, W8A16, stores int8 weights and dequantizes them to bfloat16 in registers. W8A8 quantizes the activations too, and multiplies in int8. Decode at batch 1 reads every weight once, so its time is bytes over bandwidth. In bfloat16, that's 42.2 ms per token. In int8 with groups of 128, the floor drops to 21.4 ms. That's 1.97 times faster, because nothing else was the bottleneck.",
+      "book_section": "s-weight-only-against-weight-and-activation",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "roofline",
+      "title": "Dequantization is free; prefill gains nothing",
+      "start": 444.833,
+      "end": 481.633,
+      "slide": "slides/14-roofline.webp",
+      "notes": "Dequantizing adds work, but not enough to matter. The bfloat16 kernel does 1 FLOP per byte. The int8 kernel reads 1 byte per weight and does 3 FLOPs: one multiply to dequantize, then the multiply-add. That's still 54 times below the ridge point of 161, so the extra multiply is free. Prefill sits around 2000, far past the ridge. It's compute bound, and its FLOPs don't change. One warning: dequantize inside the matmul kernel, never the whole tensor first.",
+      "book_section": "s-weight-only-against-weight-and-activation",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "int8-cores",
+      "title": "Integer matmuls need the scales outside the sum",
+      "start": 481.633,
+      "end": 522.5,
+      "slide": "slides/15-int8-cores.webp",
+      "notes": "Ampere's tensor cores have an integer mode: int8 inputs, int32 accumulation. To use it, the whole sum must be integers. Give the activations one scale, and each weight column its own. Neither depends on k, so both leave the sum. What remains is a pure integer dot product. Even in the worst case, it stays 26 times below the int32 limit. Group-wise scales break this. They change every 128 steps, so the loop must stop and rescale. Group-wise scaling is a weight-only technique.",
+      "book_section": "s-what-ampere-s-int8-tensor-cores-do",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "no-fp8",
+      "title": "The A100 has no FP8 tensor cores",
+      "start": 522.5,
+      "end": 559.367,
+      "slide": "slides/16-no-fp8.webp",
+      "notes": "FP8 would suit outliers well. Its precision is relative: E4M3's worst-case rounding error is 6.25 percent at every magnitude. But the A100 is Ampere, compute capability 8.0, with no FP8 tensor cores. Ada and Hopper have them. You can store FP8 weights and unpack them in software, but the math stays in bfloat16. On Ampere, int8 gives the same saving with a faster unpack. Check the capability in code first.",
+      "book_section": "s-ampere-has-no-fp8",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "activation-outliers",
+      "title": "Activation outliers sit in a few channels",
+      "start": 559.367,
+      "end": 593.133,
+      "slide": "slides/17-activation-outliers.webp",
+      "notes": "Activations are much harder to quantize than weights. They hold outliers up to 100 times the typical size. But the outliers sit in a few channels, the same ones for every token. SmoothQuant divides each activation channel by a factor c, and multiplies the matching weight row by c. The product doesn't change. The loud channels shrink, and both tensors become quantizable. AWQ uses the same statistics to protect the weights that multiply large activations.",
+      "book_section": "s-activation-outliers",
+      "book_anchor": "s-12"
+    },
+    {
+      "id": "calibration",
+      "title": "Calibrate the clip, not the maximum",
+      "start": 593.133,
+      "end": 620.8,
+      "slide": "slides/18-calibration.webp",
+      "notes": "An activation's range is known only once you run data through the model. Calibration runs a few hundred representative sequences. Using the observed maximum lets one outlier set the scale forever. Instead, pick the clipping threshold that minimizes the error. Raising it clips less, but rounds more coarsely. The best threshold balances the two, below the maximum. And calibrate on what you serve.",
+      "book_section": "s-calibration",
+      "book_anchor": "s-13"
+    },
+    {
+      "id": "kv-cache",
+      "title": "Keys need more precision than values",
+      "start": 620.8,
+      "end": 661.367,
+      "slide": "slides/19-kv-cache.webp",
+      "notes": "Quantize the KV cache with one scale per vector, and a token drops from 64 KiB to 32.25 KiB. But keys and values need different treatment. Keys feed a softmax, so a score error is exponentiated. An error of 0.1 changes a token's weight by 10.5 percent. An error of 0.3 changes it by 35 percent. Values are averaged, so their errors shrink. Spread attention over 100 tokens, and the value error falls tenfold. So keep keys in bfloat16, and put values in int8.",
+      "book_section": "s-quantizing-the-kv-cache",
+      "book_anchor": "s-14"
+    },
+    {
+      "id": "three-precisions",
+      "title": "int4 is four times smaller, and costs quality",
+      "start": 661.367,
+      "end": 706.767,
+      "slide": "slides/20-three-precisions.webp",
+      "notes": "Scale it up to the whole model. In bfloat16, the weights are 53.8 GB, with a 42.2 ms floor. At int8, they're 27.3 GB, at 21.4 ms. At int4, they're 13.9 GB, at 10.9 ms. Moving to int8 frees 26.5 GB, room for about 404,000 more tokens of KV cache. But int4 costs quality. Its step is 18.1 times larger, so the predicted error jumps to about 13.7 percent. That's where round-to-nearest stops working, and GPTQ or AWQ take over.",
+      "book_section": "s-the-model-at-three-precisions",
+      "book_anchor": "s-15"
+    },
+    {
+      "id": "measuring",
+      "title": "Judge a scheme by perplexity, not weight error",
+      "start": 706.767,
+      "end": 735.133,
+      "slide": "slides/21-measuring.webp",
+      "notes": "Weight error is only a proxy. Check the output three ways, in increasing cost. First, one layer's output error, under 1 percent. With independent errors, it equals the weight error. Second, the logits: correlation above 0.999, and top-1 agreement above 0.98. Third, perplexity on held-out text, the real test. Doing only the first check is how broken schemes ship.",
+      "book_section": "s-measuring-the-damage",
+      "book_anchor": "s-16"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 735.133,
+      "end": 766.133,
+      "slide": "slides/22-where-next.webp",
+      "notes": "Here's what to keep. Symmetric int8's error is at most half a step. One outlier stretches every step it shares, so give each group of 128 weights its own scale. That costs 1.56 percent. Weight-only int8 halves the decode floor, and leaves prefill flat. Ampere has no FP8, and keys need more precision than values. Next, you split the model across GPUs.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-17"
+    }
+  ]
+}

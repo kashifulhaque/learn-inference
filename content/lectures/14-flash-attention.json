@@ -1,0 +1,240 @@
+{
+  "course": "learn-inference",
+  "slug": "14-flash-attention",
+  "title": "FlashAttention",
+  "version": "ea85fdc63506",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/14-flash-attention/ea85fdc63506/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 934.567,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "FlashAttention",
+      "start": 0.0,
+      "end": 14.8,
+      "slide": "slides/01-title.webp",
+      "notes": "FlashAttention. Ordinary attention builds a table of scores, one for every pair of tokens. In this lecture, you build the online softmax from four numbers, and then follow the tiled kernel that never writes that table to memory."
+    },
+    {
+      "id": "score-matrix",
+      "title": "The score table grows with the square of L",
+      "start": 14.8,
+      "end": 65.433,
+      "slide": "slides/02-score-matrix.webp",
+      "notes": "Attention is the one operation whose intermediate result is larger than the model. Every query scores against every key, so the scores form a square table. Take this model's geometry: 24 query heads, head dimension 256, and 8192 tokens. One head's table holds about 67 million entries. In bf16, that's 134.2 MB for one head. Across 24 heads, it's 3.22 GB for a single sequence. The reference path computes in float32 and holds the scores and the probabilities at once. That's about 12.9 GB for one sequence, against 53.8 GB of weights.",
+      "book_section": "s-what-the-naive-version-costs",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "four-passes",
+      "title": "Four trips through HBM for one table",
+      "start": 65.433,
+      "end": 98.267,
+      "slide": "slides/03-four-passes.webp",
+      "notes": "The naive path makes four passes over the table. It writes the scores. It reads them back for the softmax. It writes the probabilities. Then it reads those for the value multiply. Per head, that's 537 MB of score traffic, while the inputs are only 12.6 MB. So 97% of the memory traffic serves a table that exists only to be consumed. That's why long-context prefill runs out of memory before it runs out of time.",
+      "book_section": "s-what-the-naive-version-costs",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "softmax-resists",
+      "title": "The softmax needs the whole row",
+      "start": 98.267,
+      "end": 134.167,
+      "slide": "slides/04-softmax-resists.webp",
+      "notes": "Why not cut the score table into tiles, one at a time? The two matmuls tile without trouble, but the softmax between them doesn't. To normalize a row, it needs the row's maximum and the sum of its exponentials. Both are reductions over the whole row, and a tile gives you only 64 columns of it. There are two escapes. You can make two passes, which doubles the reads of K. Or you can make one pass, and repair the running values each time the maximum moves. That's the online softmax, and the repair costs a multiply.",
+      "book_section": "s-why-softmax-resists-tiling",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "four-scores",
+      "title": "Four scores, two blocks, three running numbers",
+      "start": 134.167,
+      "end": 174.3,
+      "slide": "slides/05-four-scores.webp",
+      "notes": "Now run the algorithm by hand. One query has four scores: 1, 2, 4, and 3. They arrive in two blocks of two. Each key carries a value: 10, 20, 30, and 40. The goal is the softmax-weighted average of the values, seeing one block at a time. You keep three running numbers. The running maximum is the largest score so far. The running sum adds up e to the score minus that maximum. The running output adds up the same weights times the values. The maximum starts at minus infinity, and both totals start at zero.",
+      "book_section": "s-the-online-softmax-on-four-scores",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "block-one",
+      "title": "Block 1 sets the maximum to 2",
+      "start": 174.3,
+      "end": 206.0,
+      "slide": "slides/06-block-one.webp",
+      "notes": "Block 1 holds the scores 1 and 2. The larger is 2, so the maximum becomes 2. Measure each score against it. The first weight is e to the minus 1, or 0.368. The second is e to the zero, which is 1. The running sum is their total, 1.368. The running output weights each value: 0.368 times 10, plus 1 times 20. That's 23.68.",
+      "book_section": "s-the-online-softmax-on-four-scores",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "max-moves",
+      "title": "Block 2 moves the maximum to 4",
+      "start": 206.0,
+      "end": 237.633,
+      "slide": "slides/07-max-moves.webp",
+      "notes": "Block 2 holds the scores 4 and 3. Its larger score is 4, so the maximum rises to 4. Measure the new scores against 4. They give 1 and 0.368. So the new block adds 1.368 to the sum, and 44.72 to the output. But you can't add those to the old totals yet. The old totals were measured against a maximum of 2, and the new terms against 4. They're in different units.",
+      "book_section": "s-the-online-softmax-on-four-scores",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "rescale",
+      "title": "One multiply converts the old totals",
+      "start": 237.633,
+      "end": 301.467,
+      "slide": "slides/08-rescale.webp",
+      "notes": "Multiply any old term, e to the score minus 2, by e to the 2 minus 4. You get e to the score minus 4, which is the new unit. That factor is the correction, alpha, and here it's 0.135. On screen, the old weights convert: 0.368 becomes 0.050, and 1 becomes 0.135. The algorithm never touches them one by one. One multiply converts each whole total, no matter how many terms it holds. The sum becomes 0.135 times 1.368, plus 1.368, which is 1.553. The output becomes 0.135 times 23.68, plus 44.72, which is 47.92. Divide once at the end: 47.92 divided by 1.553 is 30.86.",
+      "book_section": "s-the-online-softmax-on-four-scores",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "one-pass-check",
+      "title": "The ordinary softmax gives 30.86 too",
+      "start": 301.467,
+      "end": 341.2,
+      "slide": "slides/09-one-pass-check.webp",
+      "notes": "Now check against the ordinary softmax, with all four scores at once. The maximum is 4. The exponentials are 0.050, 0.135, 1, and 0.368. They sum to 1.553, the same running sum you ended with. The weighted sum of the values is 47.92. Divide, and you get 30.86. It's the same answer. Think of the running totals as kept in units relative to the current maximum. When the maximum rises, alpha is the exchange rate, and it costs one multiply per total.",
+      "book_section": "s-the-online-softmax-on-four-scores",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "streaming-max",
+      "title": "The running maximum never decreases",
+      "start": 341.2,
+      "end": 368.133,
+      "slide": "slides/10-streaming-max.webp",
+      "notes": "Now the general algebra, in four stages. Stage 1 tracks the maximum one block at a time. The new maximum is the larger of the old maximum and the new block's maximum. Start at minus infinity, so the first block sets it outright. In the example, it went from minus infinity to 2 to 4. The maximum never decreases, and that's what makes the rest safe.",
+      "book_section": "s-stage-1-the-streaming-maximum",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "rescaling-identity",
+      "title": "One scalar moves a row to a new shift",
+      "start": 368.133,
+      "end": 406.2,
+      "slide": "slides/11-rescaling-identity.webp",
+      "notes": "Stage 2 turns the exchange rate into one line of algebra. Add and subtract the old maximum in the exponent. Then split the exponential of a sum into a product. The second factor is the correction, alpha. It doesn't depend on j, so one scalar converts a whole row of exponentials. Because the maximum only rises, alpha sits between 0 and 1. So the correction only ever shrinks the totals, and it can't overflow. If the maximum jumps a long way, alpha underflows to zero. That's right, because the old terms were negligible anyway.",
+      "book_section": "s-stage-2-the-rescaling-identity",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "corrected-totals",
+      "title": "The sum and the output share one correction",
+      "start": 406.2,
+      "end": 442.867,
+      "slide": "slides/12-corrected-totals.webp",
+      "notes": "Stages 3 and 4 apply that identity to the two totals. Split the running sum into old terms and new terms. The old terms are stored under the old shift, so multiply them by alpha. Then add the new block's terms, computed directly under the new shift. The output updates the same way, because each term is linear in its exponential. Its new term is a small matmul: a row of probabilities against a block of values. That's the whole algorithm. Three running quantities per query row, and one correction shared by two of them.",
+      "book_section": "s-stage-3-correcting-the-running-sum",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "exact",
+      "title": "Exact, not approximate",
+      "start": 442.867,
+      "end": 478.733,
+      "slide": "slides/13-exact.webp",
+      "notes": "This streaming algorithm is exact, and the proof is two lines. After the last block, divide the output by the sum. The first equality is the definition, which every update preserves. The second is the softmax's shift invariance, at the true row maximum. No term is dropped, and only the order of floating-point additions changes. In float32, the labs see agreement to about 10 to the minus 5. In bfloat16, it's about 10 to the minus 2. That's rounding, not approximation.",
+      "book_section": "s-why-the-result-is-exact",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "tiled-loop",
+      "title": "Keys and values stream past a resident query tile",
+      "start": 478.733,
+      "end": 531.9,
+      "slide": "slides/14-tiled-loop.webp",
+      "notes": "Now turn the four stages into a loop over tiles. Each program owns a tile of 128 query rows. It loads that tile into registers once, and it stays there for the whole pass. It sets the maximum to minus infinity, and both totals to zero. Then it walks over the keys, 64 at a time, staging each key and value block in shared memory. The tile's scores, 128 by 64, are computed in registers. They update the maximum, the sum, and the output, and then they're thrown away. The output accumulator never leaves registers. After the last block, the program divides once and writes its output to HBM, exactly once. The outer loop is the launch grid: one program per query tile, all running at once.",
+      "book_section": "s-the-tiled-algorithm",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "what-lives-where",
+      "title": "Every tensor has a level, except the scores",
+      "start": 531.9,
+      "end": 589.4,
+      "slide": "slides/15-what-lives-where.webp",
+      "notes": "Here's where each tensor lives, with the lab's geometry: 128 query rows, 64 keys per block, and head dimension 128. In registers, the query tile takes 32 KiB. The float32 accumulator takes 64 KiB. The maximum and the sum take 1 KiB together. The score and probability tiles are 32 KiB each, and they're transient. At this model's head dimension of 256, the accumulator doubles to 128 KiB. In shared memory, four pipeline stages of key and value tiles take 128 KiB, under the 160 KB budget. In HBM, the kernel keeps Q, K, V, and O. Nothing else. The score matrix has no address.",
+      "book_section": "s-what-lives-where",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "kernel-loop",
+      "title": "The loop body is stages 1 to 4, in order",
+      "start": 589.4,
+      "end": 631.567,
+      "slide": "slides/16-kernel-loop.webp",
+      "notes": "Here's the loop body from the Triton kernel. First, the tile's scores, computed on the tensor cores. Then stage 1: the new maximum for each row. Stage 2: the correction factor, one per row. Then the probabilities, under the new shift. Stages 3 and 4: the sum and the accumulator, each rescaled, then extended. Axis 1 reduces along the keys; get the axis wrong, and nothing crashes, but you get plausible garbage. All three running values are float32, even with bfloat16 inputs. After the loop, there's one division and one store.",
+      "book_section": "s-the-kernel-line-by-line",
+      "book_anchor": "s-12"
+    },
+    {
+      "id": "causal-blocks",
+      "title": "Causal attention skips half the blocks",
+      "start": 631.567,
+      "end": 687.033,
+      "slide": "slides/17-causal-blocks.webp",
+      "notes": "Causal attention lets a query see only keys at or before its own position. Masking after the matmul saves nothing, because you already paid for it. The saving comes from never launching the blocks above the diagonal. At 8192 tokens, there are 64 query tiles and 128 key blocks, so a full pass is 8192 block pairs. Each query tile runs only up to its own diagonal, two key blocks further than the tile before. Summed over all 64 tiles, that's 4160 block pairs, or 50.8% of the full count. The extra 0.8% is the diagonal blocks, which still need the elementwise mask. During decode, the query length is 1, so the kernel must offset the query to the end of the cache.",
+      "book_section": "s-causal-masking-and-the-blocks-you-can-skip",
+      "book_anchor": "s-13"
+    },
+    {
+      "id": "gqa",
+      "title": "Six query heads read one KV head",
+      "start": 687.033,
+      "end": 728.4,
+      "slide": "slides/18-gqa.webp",
+      "notes": "The model has 24 query heads and 4 KV heads, so six query heads share each KV head. The naive reference copies K and V six times with repeat interleave. The kernel indexes the shared head instead: the head number, divided by six. Six programs now read the same key and value bytes. They run close together, so the reads mostly hit L2, the GPU's 40 MB on-chip cache. The bandwidth needed for the KV read drops by a factor of six. A kernel that duplicates the heads gets the cache savings, and none of the bandwidth savings.",
+      "book_section": "s-grouped-queries-in-the-kernel",
+      "book_anchor": "s-14"
+    },
+    {
+      "id": "io-complexity",
+      "title": "Traffic stays quadratic, and L2 absorbs it",
+      "start": 728.4,
+      "end": 785.4,
+      "slide": "slides/19-io-complexity.webp",
+      "notes": "The naive path moves the score matrix a constant number of times, so its traffic grows with L squared. The tiled path re-reads all of K and V once per query tile. That's still quadratic in L, divided by M, the number of key rows that fit on the chip. So FlashAttention makes peak memory linear, not traffic. On an A100, about 320 key and value row pairs fit in 160 KB. Against a head dimension of 128, that predicts only a 2.5 times saving in traffic. The gap is L2. One head's keys and values are 4.2 MB, and the lab's two KV heads are 8.4 MB. That's well under the 40 MB L2, so most re-reads never reach HBM.",
+      "book_section": "s-the-io-complexity-result",
+      "book_anchor": "s-15"
+    },
+    {
+      "id": "speed",
+      "title": "0.63× the vendor kernel, and why",
+      "start": 785.4,
+      "end": 850.033,
+      "slide": "slides/20-speed.webp",
+      "notes": "Now speed. At 8192 tokens, 8 heads, head dimension 128, and causal masking, the two matmuls cost 137 GFLOP. At the A100's 312 TFLOP/s, the floor is 0.44 ms. This kernel takes 1.64 ms, about 27% of peak. The vendor kernel lands near 1 ms, about 43%. The exponentials, 268 million of them, run on the special function units, not the tensor cores. The rescale touches the whole accumulator every iteration. And vendor kernels use warp specialization and tile sizes tuned per shape. One tile size alone matters a lot: at 64 by 64, this kernel takes 3.35 ms, twice as long. Within 2 times of a vendor kernel, with 40 readable lines, is a good result.",
+      "book_section": "s-speed-0-63x-and-why",
+      "book_anchor": "s-16"
+    },
+    {
+      "id": "memory",
+      "title": "27.5× less peak memory",
+      "start": 850.033,
+      "end": 896.5,
+      "slide": "slides/21-memory.webp",
+      "notes": "The memory result is the one that changes what you can serve. The lab measures peak allocation at 4096 tokens, 8 heads, and head dimension 128. The naive path holds the scores in float32, which is 512 MiB. FlashAttention's live set is Q, K, V, and O, which is 20 MiB. Add the 38 MiB of float32 input copies the reference makes, and the ratio is 27.5. Peak memory, not clock time, is why every serving stack uses FlashAttention. It's the difference between 8k context and 200k context on the same card.",
+      "book_section": "s-memory-27-5x",
+      "book_anchor": "s-17"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 896.5,
+      "end": 934.567,
+      "slide": "slides/22-where-next.webp",
+      "notes": "Here's what to keep. Naive attention pushes a square score table through HBM four times, which is 97% of its traffic at 8192 tokens. The online softmax keeps a maximum, a sum, and an output per row, and rescales the last two by alpha whenever the maximum rises. The result is exact up to rounding, and only Q, K, V, and O ever live in HBM. The teaching kernel runs at 0.63 times the vendor's speed, with 27.5 times less peak memory.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-18"
+    }
+  ]
+}

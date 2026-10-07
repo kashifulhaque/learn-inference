@@ -1,0 +1,240 @@
+{
+  "course": "learn-inference",
+  "slug": "13-fusion-in-triton",
+  "title": "Fusion in Triton",
+  "version": "4b453ad368c6",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/13-fusion-in-triton/4b453ad368c6/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 781.033,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "Fusion in Triton",
+      "start": 0.0,
+      "end": 14.567,
+      "slide": "slides/01-title.webp",
+      "notes": "Fusion in Triton. In this lecture, you write GPU kernels one block at a time, and fuse two of them to move fewer bytes. Then you find out why the byte count over-promises when the data fits in the cache."
+    },
+    {
+      "id": "fewer-bytes",
+      "title": "Fewer bytes should mean faster",
+      "start": 14.567,
+      "end": 52.6,
+      "slide": "slides/02-fewer-bytes.webp",
+      "notes": "A memory-bound kernel at full bandwidth only gets faster by moving fewer bytes. Fusion merges two kernels into one, so the result passed between them never leaves the chip. Counting bytes says that fusing RMSNorm with its residual add runs 1.25 times faster. On the A100, with a 42 MB tensor, it runs at 0.92 times, which is slower. With a 168 MB tensor, it runs at 1.10 times. The gap comes from the GPU's cache, which holds 40 MB.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "block-not-thread",
+      "title": "In Triton, you write what one block does",
+      "start": 52.6,
+      "end": 86.033,
+      "slide": "slides/03-block-not-thread.webp",
+      "notes": "The two languages differ in the unit you describe. In CUDA, you write what one thread does. The block exists only in your index arithmetic, and the barriers are yours to place. In Triton, you write what one block does. Your code works on whole vectors, of a length fixed at compile time. The compiler then assigns lanes and picks vector widths. It allocates registers, stages shared memory, and inserts the barriers. Triton hides the thread level, but not the hardware.",
+      "book_section": "s-the-triton-programming-model",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "softmax-kernel",
+      "title": "A whole softmax, with no threads in sight",
+      "start": 86.033,
+      "end": 122.033,
+      "slide": "slides/04-softmax-kernel.webp",
+      "notes": "Here's a complete softmax kernel. It has no thread index, no shared memory, and no barrier, and it handles any row width. The program ID is CUDA's block index, so each program owns one row. The next line builds a vector of column indices. Adding it to a pointer gives a vector of pointers, one per column. The load reads the whole row, and the cast moves it to float32. A max and a sum each reduce the vector to a scalar. The store writes the row out, under the same mask.",
+      "book_section": "s-the-triton-programming-model",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "programs-over-rows",
+      "title": "The grid launches one program per row",
+      "start": 122.033,
+      "end": 148.867,
+      "slide": "slides/05-programs-over-rows.webp",
+      "notes": "You choose the grid at launch, in square brackets. One entry per row launches one program per row, numbered from zero. Each program finds its row by multiplying its ID by the row stride. You pass strides in yourself, because the kernel does its own address arithmetic. Inside a program, every value is a scalar or a vector of the block's length. A reduction turns the vector into a scalar.",
+      "book_section": "s-the-triton-programming-model",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "ragged-edge",
+      "title": "Masks guard the ragged edge",
+      "start": 148.867,
+      "end": 186.7,
+      "slide": "slides/06-ragged-edge.webp",
+      "notes": "The block size must be a power of two. This model's rows are 5120 wide, so the block rounds up to 8192. That leaves 3072 lanes past the end of the row. Without a mask, they read the next row, and nothing faults. A missing mask on the store corrupts it. The mask switches those lanes off: they skip memory and take a fill value. Make the fill the identity of the reduction that follows. That's minus infinity for a maximum, and zero for a sum.",
+      "book_section": "s-the-triton-programming-model",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "compile-time-block",
+      "title": "The block size is fixed when the kernel compiles",
+      "start": 186.7,
+      "end": 225.233,
+      "slide": "slides/07-compile-time-block.webp",
+      "notes": "A compile-time block size lets the compiler size registers exactly, at one compile per value. Rounding up to the next power of two puts every width from 4097 to 8192 on one compile. The number of warps sets each lane's share of the block. With 8 warps, each lane handles 32 elements. More warps add parallelism inside a row, but fewer rows fit on an SM. Autotune when shapes vary; the engine runs one size, so it hardcodes 8 warps.",
+      "book_section": "s-the-triton-programming-model",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "triton-trade",
+      "title": "Triton gives up the last 10% for brevity",
+      "start": 225.233,
+      "end": 251.233,
+      "slide": "slides/08-triton-trade.webp",
+      "notes": "Triton isn't magic, so here's the trade. Tails become masks, and reductions become one call each. The compiler places barriers, and warp-level primitives aren't exposed. The RMSNorm from chapter 12 took about 35 lines of CUDA. The Triton version takes 12, and handles any width. What you lose is the last 10 percent, and the means to diagnose it.",
+      "book_section": "s-the-triton-programming-model",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "unfused-traffic",
+      "title": "Unfused, the sum makes a round trip",
+      "start": 251.233,
+      "end": 282.9,
+      "slide": "slides/09-unfused-traffic.webp",
+      "notes": "Now count bytes. Write S for one activation tensor: rows, times hidden size, times 2 bytes. At 4096 rows, S is 41.9 MB. Unfused, PyTorch runs two kernels. The add reads x and the residual, and writes their sum: 3S. The norm reads the sum back and writes the output: 2S. That's 5S in total. The sum goes out to memory, and the next kernel reads it straight back.",
+      "book_section": "s-the-prediction-fusion-saves-a-fifth-of-the-bytes",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "fused-traffic",
+      "title": "Fused, the sum stays in registers",
+      "start": 282.9,
+      "end": 309.767,
+      "slide": "slides/10-fused-traffic.webp",
+      "notes": "Fuse them, and one kernel does the same work. It still writes the sum, because the next layer's residual needs it. What disappears is the read back: the sum stays in registers for the normalization. That's 4S instead of 5S. The weight vector is only 10 KB, too small to count. So the prediction is 1.25 times faster, at every size.",
+      "book_section": "s-the-prediction-fusion-saves-a-fifth-of-the-bytes",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "fused-kernel",
+      "title": "One line in the fused kernel does the saving",
+      "start": 309.767,
+      "end": 347.633,
+      "slide": "slides/11-fused-kernel.webp",
+      "notes": "Here's the body of the fused kernel. Each program owns one row, and the mask keeps 5120 of the 8192 lanes live. Both loads fill with zero, the identity for a sum. This line is the fusion: the add runs in float32 registers, and nothing after it fetches the sum from memory. The first store publishes the new residual, which the kernel never reads back. The variance divides by the real width, not the block size. Divide by the block, and every output is off by 26.5 percent.",
+      "book_section": "s-the-fused-kernel-line-by-line",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "measurement",
+      "title": "The A100 disagrees with the byte count",
+      "start": 347.633,
+      "end": 387.6,
+      "slide": "slides/12-measurement.webp",
+      "notes": "Here's the measurement, on an A100 with bfloat16 rows. The byte count predicted 1.25 times at every size. The lab measures 0.92 times at 4096 rows: a fifth fewer bytes, and slower. A finer sweep shows the shape. Mid-sized tensors fall below break even. From there, the speedup rises with every step, and crosses 1 between 4096 and 8192 rows. Now look at where it turns: around 40 MB, the size of the A100's L2.",
+      "book_section": "s-the-measurement-fusion-loses-on-small-tensors",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "l2-absorbs",
+      "title": "L2 was already absorbing the round trip",
+      "start": 387.6,
+      "end": 422.367,
+      "slide": "slides/13-l2-absorbs.webp",
+      "notes": "The cache explains the gap. The A100's 40 MB of L2 is shared by all its SMs, and it's write-back. Follow the sum through the unfused pair. The add kernel writes it, and the write lands in L2, not in HBM. The norm kernel runs straight afterward and reads it back. If those bytes are still in L2, the read never reaches HBM. The cache had already fused the pair, in effect. At four times L2, the sum is evicted before the read, and the round trip is real.",
+      "book_section": "s-what-the-byte-count-misses-the-l2-cache",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "two-number-model",
+      "title": "Two numbers explain every measurement",
+      "start": 422.367,
+      "end": 475.433,
+      "slide": "slides/14-two-number-model.webp",
+      "notes": "To turn that into predictions, you need two numbers. Phi is the share of the sum that really goes through HBM: zero if the cache absorbs it, one if not. The second, e, is the fused kernel's efficiency per byte. It holds a whole row in float32 registers, so fewer rows fit on an SM. At 4096 rows, phi is near zero, and e comes out at 0.92. At 16384 rows, phi is near one, and e is 0.88. At the largest size, it's 0.93. All three sit near 0.90, a stable property of the kernel. So fusion here buys 0.90 times inside the cache, and 1.13 times past it.",
+      "book_section": "s-what-the-byte-count-misses-the-l2-cache",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "crossover",
+      "title": "Fusion breaks even between one and two times L2",
+      "start": 475.433,
+      "end": 516.3,
+      "slide": "slides/15-crossover.webp",
+      "notes": "The model also says where fusion starts to pay. The traffic term has to cover the 10 percent efficiency loss. That takes phi of at least 0.44: nearly half the sum must reach HBM. In the sweep, that happens between one and two times L2, or about 4000 to 8000 rows. It isn't exactly one times L2, because the sum doesn't get the cache to itself. At 42 MB, the add kernel alone pushes 126 MB through it. Late writes survive and early ones don't, so the curve is a smooth ramp, not a step.",
+      "book_section": "s-what-the-byte-count-misses-the-l2-cache",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "swiglu-traffic",
+      "title": "SwiGLU's intermediate is dead, so both trips go",
+      "start": 516.3,
+      "end": 556.8,
+      "slide": "slides/16-swiglu-traffic.webp",
+      "notes": "The lab also fuses the MLP's activation, SwiGLU, and measures 1.52 times. Unfused, it's two kernels. The first reads gate and writes the activation: 2S. The second reads that and up, and writes the output: 3S. Fused, it's 3S. Nothing else needs the activation, so both of its trips disappear, and the prediction is 1.667. The measurement lands at 0.91 of that, the same efficiency as before. And each tensor is 142.6 MB, far past L2.",
+      "book_section": "s-why-the-swiglu-fusion-pays-more",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "swiglu-kernel",
+      "title": "A flat kernel walks the tensor in blocks",
+      "start": 556.8,
+      "end": 595.0,
+      "slide": "slides/17-swiglu-kernel.webp",
+      "notes": "The SwiGLU kernel is a flat elementwise stream. Its grid runs over elements, not rows, so the shape doesn't matter. Each program takes the next 1024 elements: the global index from chapter 12, one block at a time. At 4096 tokens, that's 71.3 million elements. That's 69,632 programs, or 645 per SM. With no reduction and no wide row in registers, occupancy stays high.",
+      "book_section": "s-why-the-swiglu-fusion-pays-more",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "one-block-per-row",
+      "title": "A second pass over a row costs 1%, not 50%",
+      "start": 595.0,
+      "end": 634.5,
+      "slide": "slides/18-one-block-per-row.webp",
+      "notes": "Both RMSNorm kernels give one program a whole row, which stays in registers between the reduction and the scaling. Past 16384 columns, the engine falls back to a tiled kernel. It walks the row in chunks of 2048, once for the sum of squares, and again to scale. That's 3S of traffic instead of 2S. Yet the two land within 1 percent of each other. The re-read row is only 10 KB, touched moments earlier, so it's still in cache. On these rows, 8 warps also beat 16 and 32.",
+      "book_section": "s-one-block-per-row",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "honest-measurement",
+      "title": "Time the kernel, and judge it against the copy",
+      "start": 634.5,
+      "end": 674.433,
+      "slide": "slides/19-honest-measurement.webp",
+      "notes": "Two things keep a measurement honest. First, allocation. Allocating two outputs of 42 MB each on every call costs about as much as the kernels, so pass in buffers. Second, the yardstick. The RMSNorm kernel moves 945 GB/s. A plain copy reaches 1275, and no kernel beats it. The card is rated at 1935. Against the copy, the kernel reaches 74 percent. Against the rated peak, it's 49 percent, which makes a good kernel look broken.",
+      "book_section": "s-measure-against-what-is-reachable",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "when-not-to-fuse",
+      "title": "Six cases where fusion doesn't pay",
+      "start": 674.433,
+      "end": 711.167,
+      "slide": "slides/20-when-not-to-fuse.webp",
+      "notes": "Fusion loses in six cases. A compute-bound operation, like a large GEMM, gains almost nothing. If anything outside reads the intermediate, you still write it, and the saving halves. Every fused kernel brings new bugs, so test it against the unfused path. Too much state per lane spills registers to HBM. Fusing a row-wise pass with a column-wise one gives one of them the wrong access pattern. And when the working set fits in L2, as in small-batch decode, fusion buys nothing.",
+      "book_section": "s-when-not-to-fuse",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "correctness",
+      "title": "Test the width that isn't a power of two",
+      "start": 711.167,
+      "end": 747.733,
+      "slide": "slides/21-correctness.webp",
+      "notes": "Check correctness before speed: a small error compounds over every layer. Compare in float32 against the PyTorch reference, on shapes that exercise the tails. A single row tests a grid of one program. A big batch fills every SM several times over. The important one is 13 rows of width 4097. Its block rounds up to 8192, so nearly half the lanes are masked. A kernel with a missing mask passes the other shapes, and fails this one.",
+      "book_section": "s-correctness-first",
+      "book_anchor": "s-12"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 747.733,
+      "end": 781.033,
+      "slide": "slides/22-where-next.webp",
+      "notes": "Here's what to keep. A Triton kernel describes one block, and every load and store needs a mask. Fusing RMSNorm with its residual add cuts traffic from 5S to 4S. The measured speedup is about 0.90 times the traffic term, and the cache decides how much of the round trip was real. SwiGLU's intermediate is dead, so it pays 1.52 times. Next, FlashAttention fuses attention so the score table never reaches memory at all.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-13"
+    }
+  ]
+}

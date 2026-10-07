@@ -1,0 +1,238 @@
+{
+  "course": "learn-inference",
+  "slug": "04-rmsnorm-and-residuals",
+  "title": "RMSNorm and the residual stream",
+  "version": "44dd6d008e28",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/04-rmsnorm-and-residuals/44dd6d008e28/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 800.1,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "RMSNorm and the residual stream",
+      "start": 0.0,
+      "end": 15.633,
+      "slide": "slides/01-title.webp",
+      "notes": "RMSNorm and the residual stream. You learn the normalization every layer uses, and why its one sum must run in float32. Then you follow the residual stream, the running total that keeps a deep model stable."
+    },
+    {
+      "id": "norms-everywhere",
+      "title": "Every forward pass runs 129 norms",
+      "start": 15.633,
+      "end": 48.0,
+      "slide": "slides/02-norms-everywhere.webp",
+      "notes": "This model has 64 layers, and each one normalizes its input twice. The first norm sits before the token mixer, the sublayer that moves information between tokens. The second sits before the MLP. One more norm sits at the top of the stack. That's 129 norms per forward pass. Each one does 4 operations per element, and one sum over 5120 terms, at 8 bits of precision. That's enough to break it."
+    },
+    {
+      "id": "three-four",
+      "title": "Normalizing the row (3, 4), step by step",
+      "start": 48.0,
+      "end": 86.833,
+      "slide": "slides/03-three-four.webp",
+      "notes": "RMSNorm takes one token's vector, measures the typical size of its entries, and divides by it. Take a row with two entries, 3 and 4. Square each entry, to get 9 and 16. Their mean is 12.5. Its square root, the root mean square, is about 3.536. Divide each entry by it, and you get about 0.849 and 1.131. The root mean square of that result is exactly 1. Every token leaves with the same typical size, whatever size it arrived with.",
+      "book_section": "s-the-operation",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "the-formula",
+      "title": "Divide by the root mean square, then apply a gain",
+      "start": 86.833,
+      "end": 113.5,
+      "slide": "slides/04-the-formula.webp",
+      "notes": "As a formula, divide each element by the root of the mean square plus a small constant. Then multiply by a gain. The mean of squares runs over d channels. For the residual-stream norms, d is 5120. The constant epsilon is 1e-6 in this config. The gain w is a learned vector, one value per channel, initialized to all ones.",
+      "book_section": "s-the-operation",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "scale-not-shift",
+      "title": "A scale changes nothing; a shift changes the output",
+      "start": 113.5,
+      "end": 139.6,
+      "slide": "slides/05-scale-not-shift.webp",
+      "notes": "Three properties follow. First, it's scale invariant. Multiply the row by 10, and the output doesn't change, up to epsilon. Whatever magnitude the previous layer produced is discarded. Second, it's not shift invariant. Add 1 to every entry, and the output moves. Third, it's row-local. Rows are independent, so the kernel runs one row per thread block.",
+      "book_section": "s-the-operation",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "layernorm",
+      "title": "LayerNorm also subtracts the mean and adds a shift",
+      "start": 139.6,
+      "end": 186.367,
+      "slide": "slides/06-layernorm.webp",
+      "notes": "LayerNorm, from older models, does more. LayerNorm subtracts the row's mean, divides by the standard deviation, and adds a learned shift. Set the mean and the shift to zero, and you get RMSNorm. The variance is the mean of squares minus the squared mean, so the two agree when the mean is zero. Dropping the shift saves about 0.0025 percent of the parameters, and one accumulator. The kernel is bandwidth bound, so RMSNorm is simpler and no slower, not much faster. What it costs is an invariance: a constant offset now survives, and models use it. The measured quality difference is nil, as an empirical finding.",
+      "book_section": "s-layernorm-versus-rmsnorm",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "epsilon",
+      "title": "Epsilon keeps an all-zero row finite",
+      "start": 186.367,
+      "end": 222.733,
+      "slide": "slides/07-epsilon.webp",
+      "notes": "Epsilon keeps the reciprocal square root finite when a row is all zeros. That happens more than you'd expect: padding, masked tokens, and channels a dead head never writes. Without epsilon, the mean of squares is zero, and you divide by zero. The row becomes not a number. It flows through every later layer and into the logits. The reference adds epsilon inside the square root. Adding it outside the root, or scaling it by d, is also finite. Only the first matches the checkpoint.",
+      "book_section": "s-layernorm-versus-rmsnorm",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "addend-vanishes",
+      "title": "An addend vanishes once the sum is 256 times larger",
+      "start": 222.733,
+      "end": 264.933,
+      "slide": "slides/08-addend-vanishes.webp",
+      "notes": "Now the numerics. Picture a calculator with three significant digits. Ask it for 1000 plus 1, and it shows 1000. bfloat16 is about that coarse. It has 7 stored significand bits, so 8 bits of precision with the implicit one. Between 256 and 512, neighboring values are 2 apart. Add 1 to 256, and the exact answer sits halfway between two of them. Rounding returns 256, and the addend is gone. In general, an addend can vanish once the sum is 256 times larger.",
+      "book_section": "s-why-the-reduction-runs-in-float32",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "the-stall",
+      "title": "A left-to-right bf16 sum stalls at 256 terms",
+      "start": 264.933,
+      "end": 309.767,
+      "slide": "slides/09-the-stall.webp",
+      "notes": "Apply that to the sum inside RMSNorm. Run it left to right over 5120 squared activations, each about the same size, s. After k additions, the sum is about k times s. At 256 terms, it reaches the threshold. From then on, every addend rounds away, and the sum stalls. The mean of squares comes out 20 times too small. So the output is about 4.5 times too large. Dropping a positive addend only makes the sum smaller, so averaging never cancels it. And it depends on length: 256 channels are fine, 5120 are crippled.",
+      "book_section": "s-why-the-reduction-runs-in-float32",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "tree-reduction",
+      "title": "A tree reduction rescues most of it",
+      "start": 309.767,
+      "end": 354.333,
+      "slide": "slides/10-tree-reduction.webp",
+      "notes": "So why does the lab measure an error near 1e-2, and not 4.5 times? Because GPU reductions don't run left to right. They sum separate slices, then add the partial sums in pairs, like a tournament bracket. A sequential sum's error bound in bfloat16 is no bound at all. A tree cuts it to about 0.048. In float32, it's about 7.3e-7. What survives in bfloat16 is a few percent of low bias, enough to flip an argmax. The float32 bound is far below the lab's tolerance, so the reference upcasts.",
+      "book_section": "s-why-the-reduction-runs-in-float32",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "reference-code",
+      "title": "Widen to float32, reduce, round back once",
+      "start": 354.333,
+      "end": 390.7,
+      "slide": "slides/11-reference-code.webp",
+      "notes": "The reference code is short. It remembers the input's data type. It widens the row to float32. It reduces in float32, and keeps the last axis, so the result broadcasts. The variable called variance isn't one: it's the mean of squares. Then comes one reciprocal square root per row, and the gain. It rounds back to bfloat16 once, at the end. The bytes that cross to and from HBM stay bfloat16, so the upcast costs registers, not bandwidth.",
+      "book_section": "s-why-the-reduction-runs-in-float32",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "residual-layer",
+      "title": "Each sublayer reads a normalized copy and adds back",
+      "start": 390.7,
+      "end": 420.367,
+      "slide": "slides/12-residual-layer.webp",
+      "notes": "Now, what RMSNorm normalizes. Here's one layer of the model. The tensor x passes through untouched by anything except addition. The mixer reads a normalized copy, computes something, and adds its result back. Then the MLP does the same, with its own norm. That running sum is the residual stream. It's the model's working memory, and it's the reason a 64-layer network trains at all.",
+      "book_section": "s-the-residual-stream",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "running-sum",
+      "title": "The stream is the embedding plus 128 contributions",
+      "start": 420.367,
+      "end": 462.867,
+      "slide": "slides/13-running-sum.webp",
+      "notes": "Write the stream after l sublayers as x of l. Each sublayer adds its contribution, delta, computed from a normalized copy. Here's a stream with four channels, starting from the embedding. The first sublayer adds its delta, and the stream updates. The second and third do the same. Nothing is ever overwritten, only accumulated. Unroll it, and the final state is the embedding plus every contribution. With 64 layers of two sublayers each, that's 128 contributions. Think of the stream as a shared bus, 5120 channels wide, that 128 writers append to.",
+      "book_section": "s-the-residual-stream",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "stream-grows",
+      "title": "The stream grows like the square root of depth",
+      "start": 462.867,
+      "end": 503.233,
+      "slide": "slides/14-stream-grows.webp",
+      "notes": "Because nothing subtracts, the stream tends to grow as it climbs the stack. Suppose the contributions are uncorrelated, and each has root mean square sigma. Then variances add. The dots are a simulation with independent random contributions, and the curve is the square-root rule. If the embedding also has size sigma, then after 128 contributions the stream is about 11.4 times larger. That's a heuristic, not a measurement, but the direction holds in practice. Later layers see larger inputs, which is why each sublayer normalizes its own input.",
+      "book_section": "s-the-residual-stream",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "final-norm",
+      "title": "The final norm pins the scale of the logits",
+      "start": 503.233,
+      "end": 538.4,
+      "slide": "slides/15-final-norm.webp",
+      "notes": "The final norm runs once, before the head that turns the last hidden state into logits. Softmax cares about the logits' absolute scale. Take logits 2, 1, and 0. The top token gets about 0.67 of the probability. Double the logits, and it gets about 0.87. Doubling every logit halves the temperature, so a drifting stream means a drifting temperature. Skip the final norm, and greedy decoding still looks fine, because argmax ignores a rescale. Sampling with temperature won't.",
+      "book_section": "s-the-residual-stream",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "pre-vs-post",
+      "title": "Pre-norm keeps an identity path for the gradient",
+      "start": 538.4,
+      "end": 578.5,
+      "slide": "slides/16-pre-vs-post.webp",
+      "notes": "Why does the norm sit before each sublayer? This model uses pre-norm: it normalizes the sublayer's input, and leaves the stream alone. The original transformer used post-norm, which normalizes after the add. The difference shows up in the gradient through the stack. For pre-norm, each layer contributes the identity plus its sublayer's Jacobian. Expand the product, and the leading term is the identity, whatever the depth. There's always a path to every layer whose gradient is exactly 1. For post-norm, every factor carries the norm's Jacobian, so no identity term survives.",
+      "book_section": "s-pre-norm-versus-post-norm",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "c-to-the-64",
+      "title": "Post-norm's gradient scales like c⁶⁴",
+      "start": 578.5,
+      "end": 613.467,
+      "slide": "slides/17-c-to-the-64.webp",
+      "notes": "If a typical post-norm factor has gain c, the gradient over 64 layers scales like c to the 64th. Take a 5 percent error in either direction. At 0.95 per layer, the gradient shrinks to about 0.038. At 1.05 per layer, it grows to about 22.7. That's why post-norm transformers need warmup and careful initialization. Pre-norm's cost is the growing stream, and the final norm handles that.",
+      "book_section": "s-pre-norm-versus-post-norm",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "qk-norm",
+      "title": "Per-head norms cap every attention logit at 16",
+      "start": 613.467,
+      "end": 656.5,
+      "slide": "slides/18-qk-norm.webp",
+      "notes": "RMSNorm runs in one more place. This model normalizes each attention head's queries and keys over the 256-wide head dimension. There are 24 query heads and 4 key heads. An attention logit is q dot k over 16. After the norm, each vector has length 16. By Cauchy-Schwarz, q dot k is at most 256 in magnitude. Divide by 16, and every logit is at most 16, so softmax can't overflow or collapse by accident. These norms add about 17 percent to normalization traffic.",
+      "book_section": "s-the-per-head-query-and-key-norm",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "bandwidth-bound",
+      "title": "At 1 FLOP per byte, RMSNorm waits on memory",
+      "start": 656.5,
+      "end": 696.067,
+      "slide": "slides/19-bandwidth-bound.webp",
+      "notes": "Where does the time go? Per element, RMSNorm moves 4 bytes and does about 4 FLOPs. That's 1 FLOP per byte. The A100's ridge point is 161, so RMSNorm sits far down the memory slope. At the rated bandwidth, it reaches 0.6 percent of peak arithmetic. For scale, take 128 norms over a 4096-token prefill. At the copy ceiling, they take 8.4 ms. The Triton kernel from chapter 13 takes 11.4 ms.",
+      "book_section": "s-where-the-time-goes",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "fusion",
+      "title": "Fusion pays only when the sum spills out of L2",
+      "start": 696.067,
+      "end": 735.8,
+      "slide": "slides/20-fusion.webp",
+      "notes": "If bytes are the only lever, stop writing intermediates. Unfused, the residual add and the norm make five trips. They read two inputs, write the sum, read it back, and write the result. Fused, the sum stays in registers: four trips. That predicts a 20 percent saving. The measurement disagrees, because the sum, 41.9 MB, barely passes the 40 MB L2. There, the fusion is 1.1 times faster. When the sum fits in L2, the fused kernel is slower.",
+      "book_section": "s-where-the-time-goes",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "what-goes-wrong",
+      "title": "Six bugs the lab is built to catch",
+      "start": 735.8,
+      "end": 769.2,
+      "slide": "slides/21-what-goes-wrong.webp",
+      "notes": "Here's what the lab is likely to provoke. Reduce over the wrong axis, and you normalize across the batch, silently. Drop the keep-dimension flag, and the multiply broadcasts against the wrong axis. PyTorch's variance subtracts the mean, which RMSNorm doesn't want. Mix float32 and bfloat16, and PyTorch promotes silently. Forget to cast back, and the next matmul runs off the tensor cores. Drop epsilon, and a zero row turns into not-a-number.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 769.2,
+      "end": 800.1,
+      "slide": "slides/22-where-next.webp",
+      "notes": "Here's what to keep. RMSNorm divides each row by its root mean square, and applies a gain. Its sum runs in float32, because a bfloat16 sum stalls near 256 terms. The residual stream is a running sum, and pre-norm keeps an identity path through it. RMSNorm is bandwidth bound, so only fewer bytes make it faster. Next, rotary embeddings put position into the queries and keys.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-9"
+    }
+  ]
+}

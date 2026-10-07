@@ -1,0 +1,240 @@
+{
+  "course": "learn-inference",
+  "slug": "01-the-model-on-disk",
+  "title": "The model on disk",
+  "version": "23ec1a7c8611",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/01-the-model-on-disk/23ec1a7c8611/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 795.4,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "The model on disk",
+      "start": 0.0,
+      "end": 11.9,
+      "slide": "slides/01-title.webp",
+      "notes": "The model on disk. In this lecture, you parse a safetensors header by hand, and find any tensor through the index. Then you read the architecture from the tensor names and shapes alone."
+    },
+    {
+      "id": "folder-of-files",
+      "title": "The model ships as a folder of files",
+      "start": 11.9,
+      "end": 42.467,
+      "slide": "slides/02-folder-of-files.webp",
+      "notes": "The model this course serves ships as a folder of files. The weights are split across 18 shards of about 3 GB each. A small index file says which shard holds each tensor. A config file holds the exact numbers, and a tokenizer sits alongside. Together, they come to about 54 GB. Inside the shards, the tensor names are the most honest description of the architecture you can get. They often disagree with the model card.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "bytes-and-layout",
+      "title": "A tensor is a run of bytes, last index fastest",
+      "start": 42.467,
+      "end": 85.5,
+      "slide": "slides/03-bytes-and-layout.webp",
+      "notes": "Three ideas carry this chapter. First, a tensor is a contiguous run of bytes in a file. Its data type fixes how many bytes each element takes. Multiply the shape out, times the element size, and you have its length. Nothing else is stored. Second, the order is row-major: the last index moves fastest. Row 0's values go first, then row 1's, then row 2's. In a tensor 5120 wide, element i, j sits at i times 5120, plus j, times the element size. This is C order, the only layout safetensors stores.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "memory-mapping",
+      "title": "Memory mapping reads only the pages you touch",
+      "start": 85.5,
+      "end": 118.8,
+      "slide": "slides/04-memory-mapping.webp",
+      "notes": "Third, memory mapping. The mmap system call asks the kernel to reserve a range of addresses backed by a file, not by RAM. At that moment, it reads nothing. When your program touches an address in that range, the kernel fetches the 4 KB page that contains it. That page comes from disk, or from the page cache, the kernel's in-RAM copy of recently read files. Touch a hundred bytes of a 3 GB file, and you've read a hundred bytes, not 3 GB.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "three-parts",
+      "title": "A safetensors file has three parts",
+      "start": 118.8,
+      "end": 152.967,
+      "slide": "slides/05-three-parts.webp",
+      "notes": "Now the format itself. A safetensors file has three parts, in this order. The first 8 bytes hold one number, N: the length of the header. It's stored as an unsigned 64-bit integer, least significant byte first. The next N bytes are the header, written as UTF-8 JSON. Everything after that is a flat buffer of tensor data. There are no separators, no padding between tensors, and no metadata of any kind.",
+      "book_section": "s-the-safetensors-format",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "header-entry",
+      "title": "The header is a table of contents in JSON",
+      "start": 152.967,
+      "end": 186.0,
+      "slide": "slides/06-header-entry.webp",
+      "notes": "The header maps each tensor name to three fields. Here's the entry for layer 3's key projection. Its data type is bf16, which takes 2 bytes per element. Its shape is 1024 by 5120. Its data offsets give a byte range that includes begin, and stops just before end. That range is measured from the end of the header, not from the start of the file. One key is reserved for metadata: a flat map of strings, with no tensor data.",
+      "book_section": "s-the-safetensors-format",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "absolute-offset",
+      "title": "A tensor's first byte is at 8 + N + begin",
+      "start": 186.0,
+      "end": 222.0,
+      "slide": "slides/07-absolute-offset.webp",
+      "notes": "So where does a tensor's first byte live? Skip the 8-byte length prefix. Skip the N-byte header. Then count forward by begin. Because nothing else is stored, the range's length has to match the shape and the type exactly. The key projection has 1024 times 5120 elements, at 2 bytes each. That's 10,485,760 bytes, exactly end minus begin. Checking this identity is how you catch a truncated or corrupt file.",
+      "book_section": "s-the-safetensors-format",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "why-bare",
+      "title": "Four properties of a bare format",
+      "start": 222.0,
+      "end": 260.133,
+      "slide": "slides/08-why-bare.webp",
+      "notes": "Each property of this bare layout is something your engine relies on. First, listing tensors is one small read. Read 8 bytes, read N more, and parse the JSON, without touching weight data. Second, there are no strides. Every tensor is stored contiguous, so the shape in the header is the shape in memory. Third, reading a tensor maps the file, rather than copying it. Fourth, nothing executes. PyTorch's own save format uses pickle, so reading it can run a stranger's code. This model's weights are all bf16.",
+      "book_section": "s-why-the-format-looks-like-this",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "layer-by-layer",
+      "title": "Peak host memory is one layer, not 54 GB",
+      "start": 260.133,
+      "end": 293.133,
+      "slide": "slides/09-layer-by-layer.webp",
+      "notes": "How do you get 54 GB onto the GPU without first needing 54 GB of CPU RAM? The naive way reads the whole checkpoint into host memory, then copies it across. That needs 54 GB of RAM you might not have. With a mapped file, you go layer by layer instead. Each layer pages in, crosses PCIe to the GPU, and the kernel reclaims its pages behind you. Peak host memory is now one layer, about 0.8 GB.",
+      "book_section": "s-why-memory-mapping-matters-here",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "load-loop",
+      "title": "Pages from an earlier run come back for free",
+      "start": 293.133,
+      "end": 326.233,
+      "slide": "slides/10-load-loop.webp",
+      "notes": "In code, the loop runs over the layers, then over each layer's tensors. Each fetch pages the tensor in, then copies it to the GPU over PCIe. Pages still in the page cache from a previous run come back for free. Two gotchas. Mapped pages are shared, so writing to one either faults or dirties the page cache. And a mapped tensor still reads from disk on first touch. If a load looks instant, you timed the mapping, not the read.",
+      "book_section": "s-why-memory-mapping-matters-here",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "shards-index",
+      "title": "The index maps every tensor name to its shard",
+      "start": 326.233,
+      "end": 367.8,
+      "slide": "slides/11-shards-index.webp",
+      "notes": "With 18 files, how do you know which one to open? A single 54 GB file is awkward to download and impossible to resume, so the model is split. The index file maps each tensor name to the shard that holds it. Look up the name, open that shard, and read the byte range. The index also records a total size of about 53.97 GB, counting tensor bytes but not headers. Chapter 2 counts 53.79 GB for the language model alone. The checkpoint also carries tensors outside the text path.",
+      "book_section": "s-shards-and-the-index",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "weight-index",
+      "title": "One map from name to shard, either way",
+      "start": 367.8,
+      "end": 399.733,
+      "slide": "slides/12-weight-index.webp",
+      "notes": "The engine's weight index class does exactly this lookup. If the index file exists, it reads the weight map from it. Small models ship as one file with no index. For those, it opens the single file, and maps every tensor name in it to that file. Either way, the rest of the class has one code path instead of two. It also caches the open file handles. That way, loading 64 layers doesn't reopen 18 files 64 times.",
+      "book_section": "s-shards-and-the-index",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "get-copies",
+      "title": "Only a dtype or device change copies",
+      "start": 399.733,
+      "end": 437.7,
+      "slide": "slides/13-get-copies.webp",
+      "notes": "To fetch one tensor, look up its shard, then ask that shard's mapping for the tensor. That returns a view into the mapping, so it copies nothing. The two conversion calls are where real work happens. A data type change copies the tensor, so keep the engine in bf16 end to end. A device change copies it across PCIe. Ask for the GPU with no type change, and you get the cheap path: one copy, from the page cache. To inspect a tensor without loading it, the slice handle reads only its header entry.",
+      "book_section": "s-shards-and-the-index",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "two-layers",
+      "title": "Layer 0 and layer 3 hold different tensors",
+      "start": 437.7,
+      "end": 469.8,
+      "slide": "slides/14-two-layers.webp",
+      "notes": "Now, what does the model look like inside? Group the tensor names by layer, and the model describes itself. Every layer has a token mixer, which lets each position look at earlier ones, then an MLP. Layer 0's mixer is linear attention. It replaces comparing queries with keys by a fixed-size running summary. Layer 3's mixer is full attention, the standard kind, split across several heads. The two layers hold different tensors.",
+      "book_section": "s-reading-the-architecture-from-the-names",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "head-counts",
+      "title": "Six query heads share each KV head",
+      "start": 469.8,
+      "end": 512.033,
+      "slide": "slides/15-head-counts.webp",
+      "notes": "Start with the full-attention layer. PyTorch stores a linear weight output first, so the second dimension is the input width. Here it's 5120, the hidden size. The key projection has 1024 output channels. One head is 256 wide, so that's 4 key heads, and the values match. The output projection maps 6144 channels back to the hidden size. Divide by 256, and that's 24 query heads. So six query heads share each key head. That's grouped-query attention, GQA, the subject of chapter 7.",
+      "book_section": "s-reading-the-architecture-from-the-names",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "output-gate",
+      "title": "The query projection is twice the width you'd expect",
+      "start": 512.033,
+      "end": 550.467,
+      "slide": "slides/16-output-gate.webp",
+      "notes": "The query projection is a surprise. With 24 heads of width 256, you'd expect 6144 output channels. The file says 12,288, exactly double. That's the output gate. The projection emits the queries and a gate side by side, and the layer splits them apart. The config confirms it with its attention output gate flag. Trust the file, not the shape arithmetic. Size it from the head counts, and your layer loads fine, then produces nonsense.",
+      "book_section": "s-reading-the-architecture-from-the-names",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "qkvz",
+      "title": "One fused matrix holds q, k, v, and z",
+      "start": 550.467,
+      "end": 596.0,
+      "slide": "slides/17-qkvz.webp",
+      "notes": "The linear-attention layer takes more decoding. The config gives 16 key heads and 48 value heads, all 128 wide. The fused input projection's name lists four blocks: queries, keys, values, and a gate, z. Queries and keys get one block per key head: 2048 rows each. Values and the gate get one per value head: 6144 rows each. Add them up, and you get the file's 16,384. Fusing them means one GEMM instead of four. The shape alone doesn't fix the split, though. Four blocks of 4096 fit too, and the config's head counts decide.",
+      "book_section": "s-the-linear-attention-layer",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "linear-shapes",
+      "title": "Every other shape factors into the heads",
+      "start": 596.0,
+      "end": 640.333,
+      "slide": "slides/18-linear-shapes.webp",
+      "notes": "The other shapes decompose the same way. A small projection holds one write strength, beta, and one forget gate, a, per value head. The convolution covers the query, key, and value channels, with a kernel 4 wide. Its middle dimension is 1, and that's the tell: it's depthwise. Each channel has its own filter, and channels never mix. Two tensors hold one number per value head. They're state-space parameters, so these layers run a recurrence, not attention. One stores the log of a decay rate, which keeps the rate between 0 and 1. The output projection maps the value channels back to the hidden size.",
+      "book_section": "s-the-linear-attention-layer",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "layer-types",
+      "title": "Full attention ends each group of four layers",
+      "start": 640.333,
+      "end": 676.567,
+      "slide": "slides/19-layer-types.webp",
+      "notes": "The config gives the exact numbers. This model is multimodal, so its config nests the language model in a text section, beside a vision tower. It also builds the list of layer types when the config omits it. Note the i plus one. Full attention lands on layers 3, 7, 11, and so on: the last layer of each group of four. That gives 16 full-attention layers and 48 linear ones. Get it off by one, and every KV cache entry goes to the wrong layer, and the model still runs.",
+      "book_section": "s-the-config-that-matters",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "config-fields",
+      "title": "Read the head width; don't derive it",
+      "start": 676.567,
+      "end": 722.167,
+      "slide": "slides/20-config-fields.webp",
+      "notes": "Here are the fields to know before chapter 2. The hidden size, the residual stream's width, is 5120. There are 64 layers. Full-attention layers have 24 query heads and 4 KV heads. The MLP width holds most of the parameters. The vocabulary is so large that the embedding alone is 1.27 billion parameters. Only a quarter of each head's channels get rotated. The head width is the one that catches people. Here, 24 heads times 256 is 6144, not 5120. Derive it by division instead, and every shape downstream is wrong.",
+      "book_section": "s-the-config-that-matters",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "what-goes-wrong",
+      "title": "Four loading bugs that fail quietly",
+      "start": 722.167,
+      "end": 766.633,
+      "slide": "slides/21-what-goes-wrong.webp",
+      "notes": "These loading mistakes fail quietly, with no error. A truncated shard still parses, and its front tensors still load. The last ones read past the end, or read zeros, and the model degenerates after a few fluent tokens. Checking the repository's checksums rules this out in minutes. Some checkpoints use a different name prefix, and a loader that knows only one loads nothing. Every shape is right, and every output is noise. Asking for float32 doubles a tensor's memory, and over 64 layers, mapping's advantage disappears. Finally, this model doesn't tie its embeddings, so chapter 2 counts the embedding twice.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 766.633,
+      "end": 795.4,
+      "slide": "slides/22-where-next.webp",
+      "notes": "Here's what to keep. A tensor starts at 8 plus N plus begin, and its byte range must match its shape. Headers and the index give you every name, type, and shape without reading a weight. Memory mapping keeps host memory near one layer. The query projection is double width, the head width comes from the config, and full attention starts at layer 3. Next, you'll turn these shapes into a memory budget.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-9"
+    }
+  ]
+}

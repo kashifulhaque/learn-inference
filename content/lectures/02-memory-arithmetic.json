@@ -1,0 +1,240 @@
+{
+  "course": "learn-inference",
+  "slug": "02-memory-arithmetic",
+  "title": "Memory arithmetic",
+  "version": "d0679389647a",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/02-memory-arithmetic/d0679389647a/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 939.0,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "Memory arithmetic",
+      "start": 0.0,
+      "end": 13.133,
+      "slide": "slides/01-title.webp",
+      "notes": "Memory arithmetic. How many users can you serve at once on one GPU? This lecture answers that by counting bytes: the weights, the KV cache, the recurrent state, and the batch that fits."
+    },
+    {
+      "id": "budget-question",
+      "title": "Everything has to fit in 80 GiB",
+      "start": 13.133,
+      "end": 56.233,
+      "slide": "slides/02-budget-question.webp",
+      "notes": "Suppose you're about to serve this model to real users. The first question anyone asks is how many of them you can serve at once. The answer comes from one budget: the 80 GiB of memory on an A100. Everything the engine needs has to fit inside it. Every number in this lecture is arithmetic, not measurement. Two conventions first. Weights are quoted in decimal GB, a billion bytes each. Caches are quoted in binary GiB, two to the thirtieth bytes each. The two differ by 7 percent, which is enough to matter in a budget. And every parameter is stored in bfloat16, at 2 bytes each.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "layer-split",
+      "title": "Only every fourth layer is full attention",
+      "start": 56.233,
+      "end": 107.6,
+      "slide": "slides/03-layer-split.webp",
+      "notes": "Everything in this chapter comes from a handful of config fields. The hidden size, d, is 5120. There are 64 layers. Queries have 24 heads, but keys and values have only 4, each 256 wide. The MLP is 17408 wide, and the vocabulary holds 248,320 entries. Chapter 1 showed that this model mixes two kinds of layer. Full-attention layers look back at every earlier token. Linear-attention layers keep a fixed-size running summary instead. Full attention lands on every fourth layer. So 16 layers are full attention, and the other 48 are linear.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "memory-map",
+      "title": "Four things compete for the card",
+      "start": 107.6,
+      "end": 143.267,
+      "slide": "slides/04-memory-map.webp",
+      "notes": "Before any counting, here's the map. Besides a fixed overhead for the driver, four things compete for the card. The weights are fixed for the model, and they stay for the whole run. The KV cache grows with every token of every sequence. The recurrent state grows with the number of sequences, but not with their length. Activations grow with the tokens in one forward pass, and they live only for that pass. The lecture works through them in that order: the weights first, then the two per-sequence costs, then the batch they allow.",
+      "book_section": "s-where-the-memory-goes",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "embeddings",
+      "title": "The vocabulary alone costs 2.54B parameters",
+      "start": 143.267,
+      "end": 190.233,
+      "slide": "slides/05-embeddings.webp",
+      "notes": "Now count the weights, since they're the one cost you pay before serving anyone. The method is the same for every component. Multiply out each matrix's shape, add up one layer, then multiply by how many layers have it. Start with the embedding. It turns each token id into a vector of width d, with one row per vocabulary entry. That's 248,320 times 5120, about 1.27 billion parameters. The output projection at the other end is a separate matrix of the same shape. Together they hold about 2.54 billion. That's 9.5 percent of the model, spent on the vocabulary, and none of it does any reasoning.",
+      "book_section": "s-counting-the-parameters",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "mlp",
+      "title": "The MLP is 64% of the model",
+      "start": 190.233,
+      "end": 235.7,
+      "slide": "slides/06-mlp.webp",
+      "notes": "Every layer ends in an MLP, the feed-forward block. This model's MLP is SwiGLU, which needs three matrices. A gate projection and an up projection each map d to 17408. A down projection maps back. Each is about 89.1 million parameters, so one MLP holds about 267.4 million. Every one of the 64 layers has an MLP, whichever kind of attention it uses. That's 17.11 billion parameters, 64 percent of the whole model. For the engine, the MLP is the biggest single target.",
+      "book_section": "s-counting-the-parameters",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "attention-blocks",
+      "title": "Linear attention saves state, not parameters",
+      "start": 235.7,
+      "end": 288.033,
+      "slide": "slides/07-attention-blocks.webp",
+      "notes": "The attention blocks come next, and there are two kinds. A full-attention block has four projections. Its query projection is double width, because it emits queries and an output gate side by side. Keys and values have only 4 heads, so their projections are small. The block holds about 104.9 million parameters, and the gate accounts for 31.5 million of them. A linear-attention block also has four weight tensors. Its input projection stacks queries, keys, values, and a gate. It totals about 115.9 million parameters. So a linear-attention block is 11 million larger, not smaller. What it saves is state, the memory it keeps per conversation, and that's the point of the design.",
+      "book_section": "s-counting-the-parameters",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "total-params",
+      "title": "26.9 billion parameters in all",
+      "start": 288.033,
+      "end": 323.7,
+      "slide": "slides/08-total-params.webp",
+      "notes": "Now add up the pieces. The 16 full-attention layers, with their MLPs, hold about 5.96 billion parameters. The 48 linear-attention layers hold about 18.4 billion. The embedding and output projection add 2.54 billion. The norms add only 660,480, which is rounding error. The total is about 26.9 billion parameters, which matches the name on the box. Cut the same total another way, and the MLP alone is 64 percent of it.",
+      "book_section": "s-counting-the-parameters",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "weights-on-card",
+      "title": "The weights leave about 30 GiB",
+      "start": 323.7,
+      "end": 353.167,
+      "slide": "slides/09-weights-on-card.webp",
+      "notes": "Convert the count to bytes. At 2 bytes per parameter, the weights take 53.8 GB. In binary units that's 50.1 GiB. Place them on the 80 GiB card, and roughly 30 GiB is left before anything else is allocated. That's the first and largest line in the budget. Now try an A100 with 40 GB. The weights alone are bigger than the card, so it can't serve this model at all.",
+      "book_section": "s-counting-the-parameters",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "kv-per-token",
+      "title": "Each token adds 64 KiB of KV cache",
+      "start": 353.167,
+      "end": 402.233,
+      "slide": "slides/10-kv-per-token.webp",
+      "notes": "With the weights placed, the next question is what each conversation costs as it grows. When the model generates a token, each full-attention layer compares its query against the key of every earlier token, then mixes their values. Recomputing those keys and values on every step would redo the whole conversation. So the engine computes them once and stores them. That store is the KV cache. Each new token adds one key and one value per KV head, and each is 256 values wide. At 2 bytes a value, that's 4096 bytes in one layer. Only the 16 full-attention layers pay it. So every token costs 64 KiB.",
+      "book_section": "s-kv-cache",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "cache-grows",
+      "title": "The cache grows one column per token",
+      "start": 402.233,
+      "end": 434.567,
+      "slide": "slides/11-cache-grows.webp",
+      "notes": "Picture the cache as a grid. Each row is one of the 16 full-attention layers. Each column is one token. Every token you generate fills one more column, 64 KiB at a time. The 48 linear layers add nothing per token, because their state doesn't grow with the sequence. After 4096 tokens, one conversation holds 0.25 GiB of KV cache. Every further 4k tokens adds the same amount again.",
+      "book_section": "s-kv-cache",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "gqa",
+      "title": "Grouped-query attention makes it six times smaller",
+      "start": 434.567,
+      "end": 465.4,
+      "slide": "slides/12-gqa.webp",
+      "notes": "Grouped-query attention is already doing heavy lifting here. Several query heads share one KV head. Each of the 4 KV heads serves 24 / 4 = 6 query heads. So the cache stores 4 heads instead of 24. Give every query head its own KV head, and the same 16 layers cost 384 KiB per token. That's six times larger, for the same model.",
+      "book_section": "s-kv-cache",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "cache-table",
+      "title": "Batch and context multiply the cache",
+      "start": 465.4,
+      "end": 504.033,
+      "slide": "slides/13-cache-table.webp",
+      "notes": "The cache's size scales with batch size and context length, and with nothing else. Multiply 64 KiB by the tokens per sequence and by the number of sequences. One sequence at 4k context holds 0.25 GiB. Eight sequences at 32k hold 16 GiB. Now read the bottom-right cell. 32 sequences at 128k context need 256 GiB of cache, on a card with 80. The cache, not the weights, sets your maximum batch size.",
+      "book_section": "s-kv-cache",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "recurrent-state",
+      "title": "Linear layers keep a fixed 147.8 MiB",
+      "start": 504.033,
+      "end": 559.0,
+      "slide": "slides/14-recurrent-state.webp",
+      "notes": "The other 48 layers need a matching answer. Full attention keeps a transcript, and appends to it every token. Linear attention keeps a fixed-size summary, and overwrites it every token. So its size never changes. The summary has two parts. Each of the 48 value heads keeps a 128 by 128 matrix. It's stored in float32, 4 bytes per element, for numerical stability. That's 3 MiB per layer. A short convolution also keeps its last 4 steps, which adds 80 KiB. Every one of the 48 linear layers keeps its own copy, for 147.8 MiB per sequence. A sequence at 128k context carries exactly as much as one ten tokens long.",
+      "book_section": "s-recurrent-state",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "break-even",
+      "title": "The hybrid wins past 788 tokens",
+      "start": 559.0,
+      "end": 626.7,
+      "slide": "slides/15-break-even.webp",
+      "notes": "You now have two per-sequence costs, one that grows and one that's fixed. Was the trade worth it? Compare with a hypothetical dense model, where all 64 layers use full attention. It pays 256 KiB per token, and nothing fixed. The hybrid pays 64 KiB per token, plus its fixed 147.8 MiB. The hybrid starts higher but climbs more slowly, so the two lines cross exactly once. Every token saves the hybrid 192 KiB. Divide the fixed state by that saving, and the lines cross at 788 tokens. Above that, the hybrid wins, and the margin keeps growing. At 128k context, the dense model needs 32 GiB per sequence, and the hybrid about 8. The ratio tends to 4, the layer ratio of 64 to 16. Almost every real request is longer than 788 tokens, so in practice the hybrid always wins.",
+      "book_section": "s-the-break-even-point",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "batch-formula",
+      "title": "Weights first, then equal slots",
+      "start": 626.7,
+      "end": 658.467,
+      "slide": "slides/16-batch-formula.webp",
+      "notes": "Now the question the chapter opened with: how many conversations fit at once? Picture packing a suitcase. The weights go in first, at 53.8 GB. Then a fixed overhead of 6 GiB, for the CUDA context, the driver, and an activation workspace. That leaves about 23.9 GiB. One sequence costs its recurrent state, plus 64 KiB per token. Divide the space left by that cost, and round down to whole sequences.",
+      "book_section": "s-the-largest-batch-that-fits",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "batch-fits",
+      "title": "11 sequences at 32k, 60 at 4k",
+      "start": 658.467,
+      "end": 691.9,
+      "slide": "slides/17-batch-fits.webp",
+      "notes": "At 32k context, one sequence costs 2.14 GiB. The space left holds 11.14 of those. Memory comes in whole sequences, so 11 fit. At 4k context, one sequence costs only 0.39 GiB. Now 60 fit. On a 40 GiB card, the numerator is negative before you divide anything. The weights alone are bigger than the card, so the answer is 0 at every context length.",
+      "book_section": "s-the-largest-batch-that-fits",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "batch-levers",
+      "title": "Three things follow from the formula",
+      "start": 691.9,
+      "end": 741.0,
+      "slide": "slides/18-batch-levers.webp",
+      "notes": "Three things follow from that formula. First, the floor matters. Memory is allocated in whole sequences, so 11.14 sequences is 11. Chapter 15's paged cache is what lets you stop rounding down so aggressively. Second, the fixed state is 7 percent of a 32k sequence. At 4k, it's 37 percent. The hybrid's constant hurts most exactly where you want large batches, which is short requests. Third, every term is a lever. With int8 quantization, each weight takes 1 byte instead of 2. That moves the space left from 23.9 GiB to 48.9 GiB, which roughly doubles the batch.",
+      "book_section": "s-the-largest-batch-that-fits",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "activations",
+      "title": "Activations are transient, but not small",
+      "start": 741.0,
+      "end": 794.167,
+      "slide": "slides/19-activations.webp",
+      "notes": "The weights and the caches stay on the card while a sequence lives. Activations, the intermediate tensors a forward pass creates and then frees, don't. They're transient, but not small. During prefill, the engine can push a 4096-token chunk through the MLP at once. Its hidden activation then takes 136 MiB. SwiGLU holds two of those at once. Attention scores are worse, if you materialize them. There's one score for every pair of positions, in every head. At 8k context with 24 heads, that's 3.0 GiB for one sequence. Double the context, and the scores grow four times. Not materializing them is exactly what FlashAttention is for, in chapter 14.",
+      "book_section": "s-activations",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "budget",
+      "title": "A budget that works",
+      "start": 794.167,
+      "end": 835.167,
+      "slide": "slides/20-budget.webp",
+      "notes": "Now you can put the whole card on one page. The weights take 50.1 GiB. The CUDA context and driver take about 1 GiB. The activation workspace takes about 3 GiB. Fragmentation headroom takes about 2 GiB more. That leaves about 23.9 GiB for caches. If it held only KV cache, that would store about 391k tokens. Once you subtract each sequence's recurrent state, it holds batch 11 at 32k context, batch 60 at 4k, or any mix in between.",
+      "book_section": "s-a-budget-that-works",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "what-goes-wrong",
+      "title": "Four ways a budget breaks",
+      "start": 835.167,
+      "end": 889.233,
+      "slide": "slides/21-what-goes-wrong.webp",
+      "notes": "These mistakes turn a budget that fits on paper into an out-of-memory error. First, confusing GB with GiB. 53.8 GB of weights is 50.1 GiB. Treat both as GiB, and you lose 3.7 GiB, which is two more sequences at 32k. Second, forgetting that the KV cache is per sequence. Batch 8 at 32k is 16 GiB, not 2. Third, sizing the cache for the average request. An engine that assumes 4k and meets a 32k prompt must preempt another sequence, or run out of memory in the middle of a forward pass. Fourth, ignoring fragmentation. An allocator that has served many sizes can fail a large request, even when the free total is enough.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 889.233,
+      "end": 939.0,
+      "slide": "slides/22-where-next.webp",
+      "notes": "Here's what to keep. The model holds 26.9 billion parameters, 53.8 GB in bfloat16, and the MLP is 64 percent of them. The KV cache costs 64 KiB per token, from the 16 full-attention layers only. The recurrent state is a fixed 147.8 MiB per sequence. The break-even is the fixed state divided by the KV bytes saved per token: 788 tokens. And the card fits 11 sequences at 32k context, 60 at 4k, and none on a 40 GB card. Next, you'll open the tokenizer and the embedding table that cost those first 2.54 billion parameters.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-10"
+    }
+  ]
+}

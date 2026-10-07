@@ -1,0 +1,230 @@
+{
+  "course": "learn-inference",
+  "slug": "00-what-you-are-building",
+  "title": "What you are building",
+  "version": "9e3b890232ac",
+  "base_url": "https://learn-inference-media.ifkash.dev/lectures/00-what-you-are-building/9e3b890232ac/",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 819.767,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "narration": {
+    "mode": "remote",
+    "model": "vibevoice-1.5b",
+    "voice": "en-Maya_woman"
+  },
+  "sections": [
+    {
+      "id": "title",
+      "title": "What you are building",
+      "start": 0.0,
+      "end": 12.0,
+      "slide": "slides/01-title.webp",
+      "notes": "What you are building. You follow one prompt through an inference engine. You see why decode waits on memory while prefill keeps the GPU busy, and how a lab reaches the GPU."
+    },
+    {
+      "id": "engine-intro",
+      "title": "You build the engine behind a streamed reply",
+      "start": 12.0,
+      "end": 55.967,
+      "slide": "slides/02-engine-intro.webp",
+      "notes": "You type a question, and the reply streams back a few characters at a time. Behind each piece, a program read tens of gigabytes of numbers. It did tens of billions of multiplications. Then it picked one winner from about a quarter of a million candidates, and did it all again. That program is an inference engine, and in this course, you write one. It runs Qwen 3.8, a 27-billion-parameter open model, on one rented A100 with 80 GB. You write the kernels, the cache, the scheduler, and the server, and import nothing from vLLM. You need linear algebra, calculus, and PyTorch, but no CUDA.",
+      "book_section": "s-before-you-start",
+      "book_anchor": "s-1"
+    },
+    {
+      "id": "five-steps",
+      "title": "Five steps from prompt to reply",
+      "start": 55.967,
+      "end": 97.833,
+      "slide": "slides/03-five-steps.webp",
+      "notes": "What happens between pressing Enter and the first piece of the reply? First, it splits the text into tokens, short pieces of words, each with an integer ID. The running example is a 2000-token prompt. Second, prefill runs the model once over the whole prompt, scoring every possible next token. Third, the sampler turns those scores into one token ID. Fourth, the engine turns that ID back into text, and streams it. Fifth, decode appends the token and runs the model again, until an end-of-sequence token or a length limit. Steps 2 and 5 take almost all the time.",
+      "book_section": "s-from-prompt-to-reply",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "forward-pass",
+      "title": "One function: token IDs in, scores out",
+      "start": 97.833,
+      "end": 146.967,
+      "slide": "slides/04-forward-pass.webp",
+      "notes": "The engine is built around one function, the forward pass. It takes token IDs, and returns a score for every vocabulary entry, at every position. First, each ID indexes a row of a V by d embedding table. V is the vocabulary size, 248,320. And d is the hidden size, 5120. The result is the residual stream: one vector per token, which every layer reads and adds to. Then 64 layers refine it. Finally, a d by V matrix turns each vector into 248,320 scores, called logits. A higher logit means a likelier next token.",
+      "book_section": "s-what-a-forward-pass-computes",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "one-layer",
+      "title": "Each layer adds a correction to the stream",
+      "start": 146.967,
+      "end": 184.233,
+      "slide": "slides/05-one-layer.webp",
+      "notes": "Look inside one layer. It reads the residual stream, computes a correction, and adds it back. The first half is the token mixer, the only place where positions exchange information. Usually it's attention: a weighted blend of what earlier positions hold. In this model, it's sometimes a recurrence instead. The second half is the MLP: matrix multiplies around a nonlinearity. It transforms each position on its own. Both halves are wrapped in normalization. And both add to the stream, rather than replacing it.",
+      "book_section": "s-what-a-forward-pass-computes",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "causal",
+      "title": "Position t reads only positions at or before t",
+      "start": 184.233,
+      "end": 220.1,
+      "slide": "slides/06-causal.webp",
+      "notes": "Only the token mixer is sequential across tokens, and even there, the dependency runs one way. Each row here is one position, and the shaded cells are what it may read. Position t reads positions at or before t, never the future. That's causal masking, and it's what makes the cache possible. Notice what the forward pass doesn't have: a memory of its own. It's a pure function of the token IDs you hand it. All the state in a chat is the token sequence, plus caches that avoid recomputing.",
+      "book_section": "s-what-a-forward-pass-computes",
+      "book_anchor": "s-3"
+    },
+    {
+      "id": "loop-code",
+      "title": "Generation is a loop around the forward pass",
+      "start": 220.1,
+      "end": 249.233,
+      "slide": "slides/07-loop-code.webp",
+      "notes": "Why does a reply take one model call per token? Generation is a loop around the forward pass. Encode the prompt into token IDs. Then, every iteration, run the model over all the tokens so far. Only the last position's logits describe what comes next, so you sample from the last row. Append the token, and stop at end-of-sequence. Read this loop carefully, because its cost structure is the whole course.",
+      "book_section": "s-what-autoregressive-means",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "quadratic",
+      "title": "500 new tokens cost 1.1 million token positions",
+      "start": 249.233,
+      "end": 284.067,
+      "slide": "slides/08-quadratic.webp",
+      "notes": "The first iteration processes 2000 tokens. Every iteration after it processes 2001, then 2002, and so on. Each one recomputes from scratch everything it already computed. Generate 500 tokens this way, and the model runs over 1,124,750 token positions. That's roughly 1.1 million positions, to produce 500 useful ones. This is the O(n²) loop that chapter 9 replaces.",
+      "book_section": "s-what-autoregressive-means",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "two-phases",
+      "title": "Cache keys and values, then decode one token per step",
+      "start": 284.067,
+      "end": 330.633,
+      "slide": "slides/09-two-phases.webp",
+      "notes": "The fix follows from causal masking. Position t depends only on earlier positions, and those haven't changed. In attention, each position computes a key, which later positions match against, and a value, which it hands over. Neither changes once computed. So you keep them in a KV cache, and feed the loop one new token per step. Prefill is the first iteration: the whole prompt, at once. Decode is every iteration after it: one token, against the cache. That's what autoregressive means: the output is fed back as input. So a 500-token reply takes 500 sequential steps, however large your GPU is.",
+      "book_section": "s-what-autoregressive-means",
+      "book_anchor": "s-4"
+    },
+    {
+      "id": "chef",
+      "title": "A GPU computes faster than memory can feed it",
+      "start": 330.633,
+      "end": 379.433,
+      "slide": "slides/10-chef.webp",
+      "notes": "A GPU computes far faster than its memory can feed it. Picture a chef who chops faster than an assistant can carry ingredients through the pantry door. HBM, the GPU's main memory, is the pantry: 80 GB, holding the weights and the KV cache. Memory bandwidth is the door: 1935 GB/s, as rated. The tensor cores are the chef, peaking at 312 TFLOP/s in bfloat16. A FLOP is one add or one multiply. If each ingredient gets one chop, the chef mostly waits. Arithmetic intensity counts chops per ingredient: the FLOPs a piece of work does per byte it moves.",
+      "book_section": "s-why-the-gpu-waits-on-memory",
+      "book_anchor": "s-5"
+    },
+    {
+      "id": "ridge-point",
+      "title": "The ridge point: about 161 FLOPs per byte",
+      "start": 379.433,
+      "end": 421.267,
+      "slide": "slides/11-ridge-point.webp",
+      "notes": "How much work per byte does an operation need before memory stops holding it back? Divide the FLOPs an operation performs by the bytes it moves. That's its arithmetic intensity. Now divide the A100's peak FLOPs per second by its rated bandwidth, in base units. You get the ridge point: about 161 FLOPs per byte. It's how many FLOPs the chip can do while it reads one byte. Below 161, an operation is memory bound, and bandwidth sets its speed. Above it, the operation is compute bound. Below the ridge, no kernel cleverness helps. Only moving fewer bytes does.",
+      "book_section": "s-arithmetic-intensity-and-the-ridge-point",
+      "book_anchor": "s-6"
+    },
+    {
+      "id": "decode-intensity",
+      "title": "Decode at batch 1 does one FLOP per byte",
+      "start": 421.267,
+      "end": 460.767,
+      "slide": "slides/12-decode-intensity.webp",
+      "notes": "Where does decode land? At batch 1, almost all of decode's work multiplies a weight matrix by a single vector. Each weight costs one multiply and one add, so the FLOPs are 2 × n × m. Each bfloat16 weight is 2 bytes, so the bytes are also 2 × n × m. They cancel: decode's intensity is 1 FLOP per byte. Every weight is read, used for one multiply-add, and discarded. Against a ridge of 161, that's under 1 percent of the A100's arithmetic.",
+      "book_section": "s-decode-one-token-per-weight-read",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "decode-step",
+      "title": "One decode step: 42 ms of memory, 0.17 ms of math",
+      "start": 460.767,
+      "end": 503.3,
+      "slide": "slides/13-decode-step.webp",
+      "notes": "Chapter 2 counts 26.9 billion parameters, which is 53.8 GB in bfloat16. Each step reads all of them, and does 53.8 GFLOP. Divide by the 1275 GB/s a copy actually measures, and memory takes about 42 ms. The arithmetic, at peak, takes about 0.17 ms. Decode spends about 250 times longer waiting for weights than using them. These are lower bounds, not benchmarks. At batch 1, that caps one conversation at about 24 tokens per second.",
+      "book_section": "s-decode-one-token-per-weight-read",
+      "book_anchor": "s-7"
+    },
+    {
+      "id": "prefill",
+      "title": "Prefill shares one weight read across the prompt",
+      "start": 503.3,
+      "end": 551.867,
+      "slide": "slides/14-prefill.webp",
+      "notes": "The same weight matrix multiplies T vectors at once. The FLOPs grow with T, but one read of the weights serves all T tokens. Add the activations to the bytes, and the intensity is n T, over n plus T. That's about T, while T is small against n. For a 2000-token prompt, use the exact form. It gives about 1440, roughly nine times past the ridge, so prefill saturates the tensor cores. On the plot, one token sits at 1. At 16 tokens, it's still memory bound, by about 10 times. Around 161 tokens, it reaches the ridge. Same matrices, same hardware: only the tokens per weight read changed.",
+      "book_section": "s-prefill-many-tokens-per-weight-read",
+      "book_anchor": "s-8"
+    },
+    {
+      "id": "levers",
+      "title": "Every optimization moves one term of the fraction",
+      "start": 551.867,
+      "end": 589.9,
+      "slide": "slides/15-levers.webp",
+      "notes": "If one fraction sets the bottleneck, how do you beat it? Each family of optimizations attacks a different term. First, raise T. One weight read serves many sequences: that's continuous batching, the largest throughput lever. Second, shrink the bytes. Reading half as much runs twice as fast: grouped-query attention, quantization, paged caches, and linear attention. Third, get more than one token per read, with speculative decoding. Nothing in the course is arbitrary: each technique moves one term of one fraction.",
+      "book_section": "s-what-follows-from-the-ratio",
+      "book_anchor": "s-9"
+    },
+    {
+      "id": "hybrid",
+      "title": "48 of the 64 layers keep a fixed-size state",
+      "start": 589.9,
+      "end": 640.6,
+      "slide": "slides/16-hybrid.webp",
+      "notes": "Why does the token mixer decide how much memory a conversation needs? Every fourth layer is full attention, 16 in all, and their KV cache grows by 4 KiB per token in each. The other 48 use gated delta linear attention. They keep a fixed recurrent state instead: 147.8 MiB per sequence, whatever the context. Full attention everywhere would cost 256 KiB per token. This hybrid costs 64 KiB, plus that fixed state. Past about 788 tokens, the hybrid is ahead, and the gap keeps widening. At 32k context, it needs 2.14 GiB per sequence, against 8.",
+      "book_section": "s-the-model-is-a-hybrid-and-that-matters",
+      "book_anchor": "s-10"
+    },
+    {
+      "id": "course-map",
+      "title": "Six parts, each ending in something that works",
+      "start": 640.6,
+      "end": 676.267,
+      "slide": "slides/17-course-map.webp",
+      "notes": "It has six parts, and each ends with something that works. Part 1 is ground truth: read the weights, and do the arithmetic. Part 2 builds a forward pass, and checks its logits against Hugging Face transformers, your last free ground truth. Part 3 makes it fast: the cache, the roofline, and sampling. Part 4 replaces library calls with your own CUDA and Triton kernels. Part 5 serves many users at once. Part 6 scales past one card and one token per step.",
+      "book_section": "s-what-you-build",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "engine-step",
+      "title": "By the end, one step that repeats",
+      "start": 676.267,
+      "end": 712.433,
+      "slide": "slides/18-engine-step.webp",
+      "notes": "By the end, the pieces form one step that repeats. A request arrives at the server. The scheduler decides whether it joins the batch, and whether its prompt is chunked. The model runner walks the 64 layers. It reads each sequence's KV blocks from the paged cache, and its recurrent state from a fixed slot. The sampler turns the final logits into one token per sequence. The scheduler appends those tokens, frees finished sequences, admits waiting ones, and runs the next step. Every chapter builds one of those nouns.",
+      "book_section": "s-what-you-build",
+      "book_anchor": "s-11"
+    },
+    {
+      "id": "lab-run",
+      "title": "A lab run: your file goes to an A100 and back",
+      "start": 712.433,
+      "end": 747.033,
+      "slide": "slides/19-lab-run.webp",
+      "notes": "What happens when you run a lab? When you click Run, the backend packages your file with the lab's test harness. It ships both to a RunPod serverless endpoint. There, a container with an A100 imports your file, and calls the harness's run function. Output streams back line by line, so a long benchmark shows its progress. The harness prints one pass or fail line per check. Correctness comes before speed, always. A fast kernel with wrong answers fails, and that happens to everyone.",
+      "book_section": "s-how-a-lab-run-reaches-the-gpu",
+      "book_anchor": "s-12"
+    },
+    {
+      "id": "what-goes-wrong",
+      "title": "Three ways to get the ridge point wrong",
+      "start": 747.033,
+      "end": 790.1,
+      "slide": "slides/20-what-goes-wrong.webp",
+      "notes": "The lab wants a device report, and a ridge point within 2 of 161.2. First, comparing against the rated bandwidth. Judge kernels against the 1275 GB/s a copy measures, or good kernels look broken. Second, mixing units. Divide 312 by 1935 without base units, and you get 0.161 instead of 161. Third, assuming every run gets the same card. The SXM4 module is rated at 2039 GB/s, so its ridge point is 153.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-13"
+    },
+    {
+      "id": "where-next",
+      "title": "Where next",
+      "start": 790.1,
+      "end": 819.767,
+      "slide": "slides/21-where-next.webp",
+      "notes": "Here's what to keep. Prefill runs the prompt once, and decode runs one token per step against a cache. The ridge point is about 161 FLOPs per byte. Decode at batch 1 sits at 1, and prefill at about T. So one decode step spends about 42 ms on memory, and only 0.17 on compute. Next, a reference page for the notation and GPU vocabulary ahead.",
+      "book_section": "s-what-goes-wrong",
+      "book_anchor": "s-13"
+    }
+  ]
+}
