@@ -1,4 +1,7 @@
 [
+  ["\\bLM\\b", "L M"],
+  ["\\bp99\\b", "P ninety-nine"],
+  ["\\bSJF\\b", "shortest job first"],
   ["\\bPTX\\b", "P T X"],
   ["\\bnvcc\\b", "N V C C"],
   ["\\bargmax\\b", "arg max"],

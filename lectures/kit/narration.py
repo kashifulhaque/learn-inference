@@ -422,7 +422,9 @@ class Voice:
         if say is None:
             voiced = [spoken(s) for s in captions]
         else:
-            voiced = split_sentences(say)
+            # The override goes through the same rules, so its numbers are
+            # spelled out too.
+            voiced = [spoken(s) for s in split_sentences(say)]
             if len(voiced) != len(captions):
                 raise ValueError(
                     f"`say` has {len(voiced)} sentences but the text has {len(captions)}; "
