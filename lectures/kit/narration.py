@@ -169,11 +169,74 @@ def split_sentences(text: str) -> list[str]:
     return [s for s in _SENTENCE_END.split(text) if s]
 
 
+_ONES = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+         "fifteen sixteen seventeen eighteen nineteen").split()
+_TENS = "_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()
+_SCALES = ((10**12, "trillion"), (10**9, "billion"), (10**6, "million"), (1000, "thousand"))
+_ORDINAL = {"one": "first", "two": "second", "three": "third", "five": "fifth", "eight": "eighth",
+            "nine": "ninth", "twelve": "twelfth"}
+
+
+def number_words(n: int) -> str:
+    """Spells a whole number the way a narrator says it: 4096 is "four thousand ninety-six"."""
+    if n < 20:
+        return _ONES[n]
+    if n < 100:
+        return _TENS[n // 10] + ("-" + _ONES[n % 10] if n % 10 else "")
+    if n < 1000:
+        rest = n % 100
+        return _ONES[n // 100] + " hundred" + (" " + number_words(rest) if rest else "")
+    for size, name in _SCALES:
+        if n >= size:
+            rest = n % size
+            return number_words(n // size) + " " + name + (" " + number_words(rest) if rest else "")
+    raise ValueError(n)
+
+
+def _ordinal_words(n: int) -> str:
+    words = number_words(n)
+    head, _, last = words.rpartition(" ")
+    if "-" in last:
+        h2, _, last = last.rpartition("-")
+        head, sep = (f"{head} {h2}".strip(), "-")
+    else:
+        sep = " "
+    if last in _ORDINAL:
+        last = _ORDINAL[last]
+    elif last.endswith("y"):
+        last = last[:-1] + "ieth"
+    else:
+        last += "th"
+    return f"{head}{sep}{last}" if head else last
+
+
+def _say_number(m: re.Match) -> str:
+    whole, frac, suffix = m.group(1).replace(",", ""), m.group(2), m.group(3)
+    if suffix:
+        return " " + _ordinal_words(int(whole)) + " "
+    out = number_words(int(whole))
+    if frac:
+        out += " point " + " ".join(_ONES[int(d)] for d in frac)
+    return f" {out} "
+
+
+# A number with optional thousands commas and decimals, or an ordinal such
+# as 30th. It must not touch identifiers like H100 or bf16 (a letter before
+# the digits), which read better as they are.
+_NUMBER = re.compile(r"(?<![A-Za-z_\d.])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(st|nd|rd|th)?(?![\d])")
+
+
 def spoken(text: str) -> str:
-    """Returns the text the synthesiser reads for a caption sentence."""
+    """Returns the text the synthesiser reads for a caption sentence.
+
+    Rules apply first; then every number becomes words, because the voice
+    misreads long digit strings ("5120" came out as "5,1-serven-ox-ter").
+    """
     out = text
     for pattern, repl in RULES:
         out = re.sub(pattern, repl, out)
+    out = _NUMBER.sub(_say_number, out)
+    out = re.sub(r"\s+([.,;:!?])", r"\1", out)
     return " ".join(out.split())
 
 
