@@ -1,4 +1,5 @@
 [
+  ["\\bSmoothQuant\\b", "smooth quant"],
   ["\\bLM\\b", "L M"],
   ["\\bp99\\b", "P ninety-nine"],
   ["\\bSJF\\b", "shortest job first"],
