@@ -78,5 +78,9 @@
   ["\\bBHSD\\b", "B H S D"],
   ["\\bBSHD\\b", "B S H D"],
   ["(\\d)\\s*/\\s*(\\d)", "\\1 over \\2"],
-  ["\\s+/\\s+", " over "]
+  ["\\s+/\\s+", " over "],
+  ["\\bFlashAttention\\b", "flash attention"],
+  ["\\b[Mm]atmuls\\b", "mat-muls"],
+  ["\\b[Mm]atmul\\b", "mat-mul"],
+  ["\\bInt8\\b", "int eight"]
 ]

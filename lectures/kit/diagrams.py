@@ -25,6 +25,7 @@ from manim import (
     Rectangle,
     RoundedRectangle,
     VGroup,
+    VMobject,
 )
 
 from . import theme as th
@@ -198,6 +199,10 @@ class Grid(VGroup):
             return VGroup(*[c.square for row in self.cells for c in row])
         if hasattr(cells, "square"):
             return VGroup(cells.square)
+        # A bare square, such as one from `squares()`. Iterating a mobject
+        # with no submobjects yields the mobject itself, so stop here.
+        if isinstance(cells, VMobject) and not cells.submobjects:
+            return VGroup(cells)
         items = cells.submobjects if isinstance(cells, VGroup) else list(cells)
         return VGroup(*[sq for item in items for sq in self.squares(item)])
 
