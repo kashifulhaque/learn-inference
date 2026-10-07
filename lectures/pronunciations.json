@@ -1,4 +1,8 @@
 [
+  ["\\bbfloat16\\b", "bf16"],
+  ["\\bO\\(([^()]*)\\)", "big O of \\1"],
+  ["\\b1e[−-](\\d+)\\b", "ten to the minus \\1"],
+  ["\\b(\\d+(?:\\.\\d+)?)e[−-](\\d+)\\b", "\\1 times ten to the minus \\2"],
   ["\\btorch\\.cat\\b", "torch dot cat"],
   ["\\bPFLOPs?\\b", "petaflops"],
   ["\\btok(?:ens)?/s\\b", "tokens per second"],
@@ -28,7 +32,6 @@
   ["\\b(\\d+)k\\b", "\\1 thousand"],
   ["\\bKV\\b", "K V"],
   ["\\b[Bb][Ff]16\\b", "B F sixteen"],
-  ["\\bbfloat16\\b", "B float sixteen"],
   ["\\bfloat(16|32|64)\\b", "float \\1"],
   ["\\b[Ff][Pp](4|8|16|32)\\b", "F P \\1"],
   ["\\bTF32\\b", "T F thirty-two"],

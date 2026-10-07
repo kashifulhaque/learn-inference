@@ -16,7 +16,7 @@
   },
   "voice": {
     "model": "vibevoice-1.5b",
-    "voice": "en-Alice_woman",
+    "voice": "en-Maya_woman",
     "speed": 1.0,
     "lang": "en",
     "sample_rate": 24000
