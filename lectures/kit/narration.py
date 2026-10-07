@@ -237,6 +237,8 @@ def spoken(text: str) -> str:
         out = re.sub(pattern, repl, out)
     out = _NUMBER.sub(_say_number, out)
     out = re.sub(r"\s+([.,;:!?])", r"\1", out)
+    # Rejoin a compound the padding split: "100-token" -> "one hundred-token".
+    out = re.sub(r"\s+-(?=[A-Za-z])", "-", out)
     return " ".join(out.split())
 
 
