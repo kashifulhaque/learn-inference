@@ -1,4 +1,6 @@
 [
+  ["\\bPTX\\b", "P T X"],
+  ["\\bnvcc\\b", "N V C C"],
   ["\\bargmax\\b", "arg max"],
   ["\\bmin-p\\b", "min P"],
   ["\\bFloat(16|32|64)\\b", "float \\1"],
