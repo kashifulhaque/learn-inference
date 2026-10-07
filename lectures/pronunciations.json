@@ -1,4 +1,11 @@
 [
+  ["\\bTensorRT\\b", "tensor R T"],
+  ["\\bRunPod\\b", "run pod"],
+  ["\\bIDs\\b", "I Dees"],
+  ["\\bFLOP/s\\b", "flops per second"],
+  ["\\bNaNs?\\b", "not a number"],
+  ["\\bRMS\\b", "R M S"],
+  ["(\\d)\\s*%", "\\1 percent"],
   ["\\bbfloat16\\b", "bf16"],
   ["\\bO\\(([^()]*)\\)", "big O of \\1"],
   ["\\b1e[−-](\\d+)\\b", "ten to the minus \\1"],
