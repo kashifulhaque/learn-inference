@@ -99,6 +99,13 @@ export const PlayIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const VideoIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="2" y="3.5" width="12" height="9" rx="1.5" />
+    <path d="M6.75 6.2v3.6L9.9 8Z" />
+  </Icon>
+);
+
 export const StopIcon = (p: IconProps) => (
   <Icon {...p}>
     <rect x="4" y="4" width="8" height="8" rx="1.2" fill="currentColor" stroke="none" />

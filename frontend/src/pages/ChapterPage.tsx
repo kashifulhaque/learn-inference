@@ -4,6 +4,7 @@ import { api, type Chapter, type ChapterMeta } from "../lib/api";
 import { chapterNumbers, splitPart } from "../lib/chapters";
 import Markdown from "../components/Markdown";
 import LabPane from "../components/LabPane";
+import LecturePlayer, { clock } from "../components/LecturePlayer";
 import SplitPane from "../components/SplitPane";
 import {
   ArrowLeftIcon,
@@ -14,6 +15,7 @@ import {
   FlaskIcon,
   FocusIcon,
   ListIcon,
+  VideoIcon,
 } from "../components/icons";
 import { Button, buttonClass, IconButton, Kbd, Loading } from "../components/ui";
 import { useIsWide } from "../lib/useMediaQuery";
@@ -32,12 +34,22 @@ type NoteState = "idle" | "dirty" | "saved" | "failed";
 const ChapterBody = memo(Markdown);
 
 const FOCUS_KEY = "li.reader.focus";
+const LECTURE_KEY = "li.reader.lecture";
 
 function readFocus(): boolean {
   try {
     return window.localStorage.getItem(FOCUS_KEY) === "1";
   } catch {
     return false;
+  }
+}
+
+/** Whether the lecture panel is open. It is, unless the reader closed it. */
+function readLectureOpen(): boolean {
+  try {
+    return window.localStorage.getItem(LECTURE_KEY) !== "0";
+  } catch {
+    return true;
   }
 }
 
@@ -65,6 +77,8 @@ export default function ChapterPage({ chapters, progress, onProgress }: Props) {
   const [minutesLeft, setMinutesLeft] = useState<number | null>(null);
   const [focus, setFocus] = useState(readFocus);
   const [mapOpen, setMapOpen] = useState(false);
+  const [lectureOpen, setLectureOpen] = useState(readLectureOpen);
+  const lectureBox = useRef<HTMLDivElement>(null);
   const noteTimer = useRef<number | null>(null);
   const reading = useRef<HTMLDivElement>(null);
   const article = useRef<HTMLElement>(null);
@@ -75,6 +89,7 @@ export default function ChapterPage({ chapters, progress, onProgress }: Props) {
 
   const numbers = useMemo(() => chapterNumbers(chapters), [chapters]);
   const bySlug = useMemo(() => new Map(chapters.map((c) => [c.slug, c])), [chapters]);
+  const bookSections = useMemo(() => new Map(sections.map((s) => [s.id, s])), [sections]);
 
   useEffect(() => {
     setChapter(null);
@@ -175,6 +190,21 @@ export default function ChapterPage({ chapters, progress, onProgress }: Props) {
       // Focus mode still works, it just forgets between visits.
     }
   }, [focus]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LECTURE_KEY, lectureOpen ? "1" : "0");
+    } catch {
+      // The panel still opens and closes, it just forgets between visits.
+    }
+  }, [lectureOpen]);
+
+  function toggleLecture() {
+    // The closed panel stays mounted to keep its place, so it must not keep
+    // talking.
+    if (lectureOpen) lectureBox.current?.querySelector("video")?.pause();
+    setLectureOpen((open) => !open);
+  }
 
   const goTo = useCallback((id: string) => {
     const box = reading.current;
@@ -463,6 +493,39 @@ export default function ChapterPage({ chapters, progress, onProgress }: Props) {
               )}
             </p>
           </header>
+
+          {chapter.lecture && (
+            <section
+              ref={lectureBox}
+              aria-label="Lecture"
+              className="mb-10 overflow-hidden rounded-lg border border-line bg-card"
+            >
+              <button
+                type="button"
+                onClick={toggleLecture}
+                aria-expanded={lectureOpen}
+                className="flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-tint/60"
+              >
+                <VideoIcon className="size-4 text-accent" />
+                <span className="text-[13px] font-semibold text-fg">Lecture</span>
+                <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg-subtle">
+                  {clock(chapter.lecture.video.duration)} · {chapter.lecture.sections.length} slides
+                  {chapter.lecture.captions ? " · captions" : ""}
+                </span>
+                <ChevronDownIcon
+                  className={`size-3.5 text-fg-faint transition-transform ${lectureOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+              <div className={`border-t border-line ${lectureOpen ? "" : "hidden"}`}>
+                <LecturePlayer
+                  key={chapter.slug}
+                  lecture={chapter.lecture}
+                  book={bookSections}
+                  onRead={goTo}
+                />
+              </div>
+            </section>
+          )}
 
           {(chapter.objectives.length > 0 || sections.length > 0) && (
             <section className="mb-10 rounded-lg border border-line bg-well/60">

@@ -26,12 +26,57 @@ export type Lab = {
   runs?: Run[];
 };
 
+/** One section of a lecture video, which is also one slide. */
+export type LectureSection = {
+  id: string;
+  title: string;
+  /** Seconds into the video. */
+  start: number;
+  end: number;
+  /** The slide: the section's final frame, as an absolute URL. */
+  image: string | null;
+  /** What the narrator says over the section. */
+  notes: string;
+  /** The heading this section teaches, as a slug of its text, when the manifest says. */
+  book_section: string | null;
+  /** The id the reader gives that heading, such as `s-2`, when the manifest says. */
+  book_anchor: string | null;
+};
+
+/** A chapter's narrated lecture. Every URL in it is absolute. */
+export type Lecture = {
+  slug: string;
+  title: string;
+  version: string;
+  base_url: string;
+  video: { src: string; duration: number; width: number; height: number; poster: string | null };
+  captions: string | null;
+  sections: LectureSection[];
+};
+
+/** A lecture without its sections, for an index of lectures. */
+export type LectureSummary = {
+  slug: string;
+  title: string;
+  version: string;
+  duration: number;
+  poster: string | null;
+  /** How many sections it has. */
+  sections: number;
+  chapter_title: string;
+  /** The chapter's position in the course, from 0. */
+  order: number;
+  part: string;
+};
+
 export type Chapter = ChapterMeta & {
   body: string;
   prev: string | null;
   next: string | null;
   note: string;
   lab_detail?: Lab;
+  /** The chapter's lecture, or null when it has none yet. */
+  lecture: Lecture | null;
 };
 
 /** The whole course as one PDF, built at deploy time. */
@@ -190,6 +235,8 @@ export const api = {
       "/api/chapters",
     ),
   chapter: (slug: string) => request<Chapter>(`/api/chapters/${slug}`),
+  lectures: () => request<{ lectures: LectureSummary[] }>("/api/lectures"),
+  lecture: (slug: string) => request<Lecture>(`/api/lectures/${slug}`),
   lab: (id: string) => request<Lab>(`/api/labs/${id}`),
   solution: (id: string) => request<{ solution: string }>(`/api/labs/${id}/solution`),
   book: () => request<{ book: BookFile | null }>("/api/book"),
