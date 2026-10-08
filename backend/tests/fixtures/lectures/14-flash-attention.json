@@ -1,0 +1,47 @@
+{
+  "course": "learn-inference",
+  "slug": "14-flash-attention",
+  "title": "FlashAttention",
+  "version": "fixture0001",
+  "base_url": "https://media.example/lectures/14-flash-attention/fixture0001",
+  "video": {
+    "src": "lecture.mp4",
+    "duration": 120,
+    "width": 1920,
+    "height": 1080,
+    "poster": "poster.webp"
+  },
+  "captions": "captions.vtt",
+  "sections": [
+    {
+      "id": "title",
+      "title": "FlashAttention",
+      "start": 0,
+      "end": 30,
+      "slide": "slides/01-title.webp",
+      "notes": "Narration for the title."
+    },
+    {
+      "id": "score-matrix",
+      "title": "The score table",
+      "start": 30,
+      "end": 90,
+      "slide": "slides/02-score-matrix.webp",
+      "notes": "Narration for the score table.",
+      "book_section": "s-what-the-naive-version-costs",
+      "book_anchor": "s-2"
+    },
+    {
+      "id": "score-matrix",
+      "title": "A repeated id, which is dropped"
+    },
+    {
+      "id": "summary",
+      "title": "Summary",
+      "start": 90,
+      "end": 150,
+      "slide": "https://elsewhere.example/summary.webp",
+      "book_anchor": "#not-an-anchor"
+    }
+  ]
+}

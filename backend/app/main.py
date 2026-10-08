@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import curriculum, db, infra
+from . import curriculum, db, infra, lectures
 from .auth import clear_session, current_user, issue_session, read_session, verify_password
 from .config import Settings, get_settings
 from .providers import OutOfCredits, ProviderError, get_provider, provider_status
@@ -27,6 +27,9 @@ app = FastAPI(title="learn-inference", docs_url=None, redoc_url=None)
 @app.on_event("startup")
 def _startup() -> None:
     db.init_db()
+    # Read the lecture manifests now, so a bad one is logged at startup
+    # rather than on the first chapter someone opens.
+    lectures.load_lectures()
 
 
 # --- schemas ----------------------------------------------------------------
@@ -109,6 +112,7 @@ def chapter(slug: str, user: str = Depends(current_user)) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="No such chapter")
     payload = dict(found)
     payload["note"] = db.get_note(user, slug)
+    payload["lecture"] = lectures.get_lecture(slug)
     if found.get("lab"):
         lab = curriculum.get_lab(found["lab"])
         if lab:
@@ -116,6 +120,33 @@ def chapter(slug: str, user: str = Depends(current_user)) -> dict[str, Any]:
             public["draft"] = db.get_draft(user, lab["id"])
             payload["lab_detail"] = public
     return payload
+
+
+@app.get("/api/lectures")
+def lecture_list(user: str = Depends(current_user)) -> dict[str, Any]:
+    """Every chapter's lecture, in chapter order, without its sections."""
+    found = lectures.load_lectures()
+    out: list[dict[str, Any]] = []
+    for index, chapter in enumerate(curriculum.load_chapters()):
+        lecture = found.get(chapter["slug"])
+        if lecture:
+            out.append(
+                {
+                    **lectures.summary(lecture),
+                    "chapter_title": chapter["title"],
+                    "order": index,
+                    "part": chapter["part"],
+                }
+            )
+    return {"lectures": out}
+
+
+@app.get("/api/lectures/{slug}")
+def one_lecture(slug: str, user: str = Depends(current_user)) -> dict[str, Any]:
+    found = lectures.get_lecture(slug)
+    if found is None or curriculum.get_chapter(slug) is None:
+        raise HTTPException(status_code=404, detail="No such lecture")
+    return found
 
 
 @app.get("/api/labs/{lab_id}")
