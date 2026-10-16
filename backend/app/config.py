@@ -19,6 +19,24 @@ class Settings(BaseSettings):
     session_days: int = 30
     cookie_secure: bool = False
 
+    # Single sign-on, off while the secret is empty. Caddy asks Authelia about
+    # every request and, when the browser has an Authelia session, adds
+    # Remote-User and this secret in X-SSO-Proxy. Everyone else still gets the
+    # password form, so readers without an SSO account keep working.
+    sso_proxy_secret: str = ""
+    # Maps an Authelia username to the name that holds that reader's progress,
+    # such as "ifkash:enderboi,ananya:michu". Unmapped users keep their own name.
+    sso_users: str = ""
+
+    @property
+    def sso_names(self) -> dict[str, str]:
+        pairs = (item.split(":", 1) for item in self.sso_users.split(",") if ":" in item)
+        return {
+            sso.strip().lower(): name.strip()
+            for sso, name in pairs
+            if sso.strip() and name.strip()
+        }
+
     # App
     data_dir: Path = REPO_ROOT / "data"
     public_url: str = "http://localhost:8000"
