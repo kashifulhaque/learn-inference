@@ -65,11 +65,14 @@ You need Python 3.12 or later and Node 20 or later.
    cp .env.example .env
    ```
 
-   Set `SESSION_SECRET` to a random string:
+   Set `SSO_PROXY_SECRET` to the same high-entropy value configured in Caddy:
 
    ```bash
    python3 -c "import secrets; print(secrets.token_urlsafe(48))"
    ```
+
+   If an Authelia username already has progress under another display name,
+   preserve it with `SSO_USERS=ifkash:enderboi,ananya:michu`.
 
 2. Install and start the backend:
 
@@ -85,6 +88,10 @@ You need Python 3.12 or later and Node 20 or later.
    ```
 
 Open http://localhost:5173. The Vite dev server proxies `/api` to the backend.
+
+The development frontend has no local login bypass: to use private pages, serve
+it behind a trusted reverse proxy that sets the SSO headers after Authelia
+authorization, with the same `SSO_PROXY_SECRET` configured in the backend.
 
 ## Set up the GPU
 
@@ -211,17 +218,29 @@ The PDF lands in `book/`, which is untracked. The script finds Chrome through
 `CHROME_PATH` or in the usual install locations, and without `--force` it skips
 the build when no chapter, lab, or layout file has changed.
 
-`scripts/deploy.sh` builds the book on the workstation, because printing needs
-more memory than the VM has to spare, and copies it to the server, where the
-container mounts it read-only. To deploy without touching the PDF on the server,
-set `LI_SKIP_BOOK=1`. A server without a PDF shows no download link. The
-download needs a signed-in session, like the chapters.
+`scripts/deploy.sh` builds the book on the workstation and copies it to the
+server, where the container mounts it read-only. Set `LI_SKIP_BOOK=1` to deploy
+without touching the PDF. A server without a PDF shows no download link. The
+download requires an authenticated Authelia identity, like the chapters.
 
 ## Access
 
-The app is password protected for two people. Set `APP_PASSWORD` in `.env`.
-Whoever signs in picks a display name, which scopes their progress, drafts, and
-run history. The session is a signed, HTTP-only cookie.
+The site uses the central Authelia portal at https://auth.ifkash.dev; it has no
+site-specific password or local login session. When a visitor has no trusted
+identity, the app sends them to the portal with their full current URL as the
+encoded `rd` return destination.
+
+The deployment must route the site through Caddy `forward_auth` to Authelia,
+remove any client-provided `Remote-User` and `X-SSO-Proxy` headers, and set
+those headers only after Authelia authorizes the request. Set
+`SSO_PROXY_SECRET` in the app environment and in Caddy's trusted-header
+configuration to the same private value. Requests without both the correct
+secret and a non-empty `Remote-User` cannot access private API routes or the
+PDF. Never expose the app port directly to untrusted clients.
+
+`SSO_USERS` optionally maps Authelia usernames to existing progress, drafts,
+and run-history identities, for example `ifkash:enderboi,ananya:michu`.
+Unmapped Authelia usernames use their own username as the data identity.
 
 Labs execute code you type. That code runs on the RunPod worker, never on
 the web host, but it does run with your Hugging Face token in its environment.

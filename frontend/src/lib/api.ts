@@ -1,5 +1,4 @@
-// Thin wrapper over the backend API. Every call sends cookies, which is how the
-// session travels.
+// Thin wrapper over the backend API; same-origin requests go through the SSO proxy.
 
 export type ChapterMeta = {
   slug: string;
@@ -224,12 +223,6 @@ export const api = {
     request<{ name: string | null; model: string; small_model: string; gpu: string }>(
       "/api/me",
     ),
-  login: (name: string, password: string) =>
-    request<{ name: string }>("/api/login", {
-      method: "POST",
-      body: JSON.stringify({ name, password }),
-    }),
-  logout: () => request<{ ok: boolean }>("/api/logout", { method: "POST" }),
   chapters: () =>
     request<{ chapters: ChapterMeta[]; progress: Record<string, string> }>(
       "/api/chapters",

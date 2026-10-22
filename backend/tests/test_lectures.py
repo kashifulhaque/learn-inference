@@ -36,7 +36,6 @@ from backend.app.main import app
 FIXTURE_LECTURES = Path(__file__).parent / "fixtures" / "lectures"
 CHAPTER = "14-flash-attention"
 BASE = "https://media.example/lectures/14-flash-attention/fixture0001/"
-PASSWORD = "test-password"
 
 
 class LectureTestCase(unittest.TestCase):
@@ -47,7 +46,7 @@ class LectureTestCase(unittest.TestCase):
         self.addCleanup(data.cleanup)
         env = mock.patch.dict(
             os.environ,
-            {"DATA_DIR": data.name, "APP_PASSWORD": PASSWORD, "SESSION_SECRET": "test-secret"},
+            {"DATA_DIR": data.name, "SSO_PROXY_SECRET": "test-secret", "SSO_USERS": "ada:Ada"},
         )
         env.start()
         self.addCleanup(env.stop)
@@ -59,12 +58,10 @@ class LectureTestCase(unittest.TestCase):
             self.addCleanup(clear)
 
     def client(self, signed_in: bool = True) -> TestClient:
-        client = TestClient(app)
+        headers = {"Remote-User": "ada", "X-SSO-Proxy": "test-secret"} if signed_in else {}
+        client = TestClient(app, headers=headers)
         # Entering the client runs the startup hook, which creates the schema.
         self.enterContext(client)
-        if signed_in:
-            response = client.post("/api/login", json={"name": "Ada", "password": PASSWORD})
-            self.assertEqual(response.status_code, 200, response.text)
         return client
 
 
@@ -114,7 +111,7 @@ class ParseManifestTest(LectureTestCase):
 
 
 class RoutesTest(LectureTestCase):
-    def test_routes_need_a_session(self) -> None:
+    def test_routes_need_a_trusted_sso_identity(self) -> None:
         client = self.client(signed_in=False)
         for path in ("/api/lectures", f"/api/lectures/{CHAPTER}", f"/api/chapters/{CHAPTER}"):
             self.assertEqual(client.get(path).status_code, 401, path)

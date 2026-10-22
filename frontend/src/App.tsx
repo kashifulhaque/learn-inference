@@ -4,7 +4,6 @@ import { api, type ChapterMeta } from "./lib/api";
 import { Mark } from "./components/Brand";
 import ComputeBadge, { useActiveCompute } from "./components/ComputeBadge";
 import { MenuIcon } from "./components/icons";
-import Login from "./components/Login";
 import Sidebar from "./components/Sidebar";
 import { IconButton, Loading } from "./components/ui";
 import ChapterPage from "./pages/ChapterPage";
@@ -38,14 +37,23 @@ export default function App() {
   const active = useActiveCompute(Boolean(name));
 
   useEffect(() => {
+    const redirectToSso = () => {
+      const returnTo = encodeURIComponent(window.location.href);
+      window.location.assign(`https://auth.ifkash.dev/?rd=${returnTo}`);
+    };
     api
       .me()
       .then((me) => {
+        if (!me.name) {
+          redirectToSso();
+          return;
+        }
         setName(me.name);
         setModel(me.model);
         setGpu(me.gpu);
+        setReady(true);
       })
-      .finally(() => setReady(true));
+      .catch(redirectToSso);
   }, []);
 
   useEffect(() => {
@@ -87,17 +95,9 @@ export default function App() {
     [],
   );
 
-  async function signOut() {
-    await api.logout();
-    setName(null);
-    setChapters(null);
-  }
 
-  if (!ready) {
+  if (!ready || !name) {
     return <Loading />;
-  }
-  if (!name) {
-    return <Login onSignedIn={setName} />;
   }
 
   const list = chapters ?? [];
@@ -114,7 +114,6 @@ export default function App() {
         onToggleCollapsed={() => setCollapsed((current) => !current)}
         name={name}
         active={active}
-        onSignOut={signOut}
       />
 
       {menuOpen && (
