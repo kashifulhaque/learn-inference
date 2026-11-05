@@ -35,3 +35,10 @@ frontend/dist-book/
 # Lecture renders and the narration cache (lectures/README.md).
 lectures/.build/
 lectures/.cache/
+
+# Secrets and server-only files
+.env.*
+!.env.example
+CREDENTIALS.md
+*.bak*
+/book/
