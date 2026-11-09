@@ -1,0 +1,15 @@
+{
+  "id": "15a-prefix-cache",
+  "title": "Prefix cache",
+  "brief": "Index token blocks in a radix tree, name them with a parent hash, and place recurrent-state checkpoints under a byte budget.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "needs_weights": false,
+  "timeout": 120,
+  "metrics": ["prefill_tokens_saved", "hit_ratio"],
+  "hints": [
+    "Hash the parent hash together with this block's token ids. The same 16 tokens after two different prefixes are different blocks.",
+    "Evict a leaf whose reference count is zero. An interior node still has a child, so it stays until that child is gone.",
+    "A checkpoint costs 154,927,104 bytes. A prompt uses the rightmost checkpoint at or before its length, and that checkpoint is the tokens you skip."
+  ]
+}

@@ -68,6 +68,10 @@ deterministic.
 values in fixed-size blocks from a shared pool. The 48 linear-attention
 layers store a fixed recurrent state in a slot. Chapter 2 counts that state
 at 147.8 MiB per sequence. Cancel returns both the blocks and the slot.
+
+**Prefix hits, from
+[chapter 15a](/c/15a-prefix-caching-and-radix-trees).** A shared full block is
+a cache hit. Tokens that cache does not return still need a private tail.
 [Chapter 18](/c/18-quantization) changes how many bytes a block holds. The
 pool still hands out ids, so this chapter does not re-derive the formats.
 [Chapter 20](/c/20-speculative-decoding) may accept more than one token in a
