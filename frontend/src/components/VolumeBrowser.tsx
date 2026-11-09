@@ -42,8 +42,8 @@ export default function VolumeBrowser({ provider, volume }: Props) {
   }, [provider, volume, path]);
 
   return (
-    <div className="mt-3 overflow-hidden rounded-md border border-line bg-card">
-      <div className="flex items-center gap-2 border-b border-line bg-well py-1 pl-1 pr-3">
+    <div className="mt-3 overflow-hidden rounded-[5px] border border-line bg-surface">
+      <div className="flex items-center gap-2 border-b border-line bg-surface-muted py-1 pl-1 pr-3">
         <IconButton
           size="sm"
           onClick={() => setPath(listing?.parent ?? "/")}
@@ -54,7 +54,7 @@ export default function VolumeBrowser({ provider, volume }: Props) {
           <ArrowLeftIcon className="size-3.5" />
         </IconButton>
         <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-fg-muted">
-          <span className="text-fg-faint">{volume}:</span>
+          <span className="text-fg-subtle">{volume}:</span>
           {listing?.path ?? path}
         </span>
         {listing && listing.bytes > 0 && (
@@ -93,17 +93,17 @@ export default function VolumeBrowser({ provider, volume }: Props) {
                 disabled={!entry.is_dir}
                 className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left font-mono text-[12px] transition-colors ${
                   entry.is_dir
-                    ? "text-fg hover:bg-tint"
+                    ? "text-fg hover:bg-accent-soft hover:text-accent"
                     : "cursor-default text-fg-muted"
                 }`}
               >
                 {entry.is_dir ? (
                   <FolderIcon className="size-3.5 text-fg-subtle" />
                 ) : (
-                  <FileIcon className="size-3.5 text-fg-faint" />
+                  <FileIcon className="size-3.5 text-fg-subtle" />
                 )}
                 <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                <span className="flex-none tabular-nums text-fg-faint">
+                <span className="flex-none tabular-nums text-fg-subtle">
                   {entry.is_dir ? "dir" : formatBytes(entry.size)}
                 </span>
               </button>

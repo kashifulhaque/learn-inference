@@ -81,9 +81,9 @@ export default function LecturePlayer({
 
   return (
     <div>
-      <div className="relative overflow-hidden bg-black" style={{ aspectRatio: ratio }}>
+      <div className="relative overflow-hidden bg-code" style={{ aspectRatio: ratio }}>
         {failed ? (
-          <p className="absolute inset-0 flex items-center justify-center px-6 text-center text-[13px] text-white/75">
+          <p className="absolute inset-0 flex items-center justify-center px-6 text-center text-[13px] text-code-muted">
             The lecture video didn't load. Check your connection, then reload the page.
           </p>
         ) : (
@@ -124,7 +124,7 @@ export default function LecturePlayer({
                 else items.current.delete(section.id);
               }}
               className={`flex items-center gap-1 rounded-md transition-colors ${
-                on ? "bg-accent/8" : "hover:bg-tint"
+                on ? "bg-accent-soft" : "hover:bg-surface-muted"
               }`}
             >
               <button
@@ -135,7 +135,7 @@ export default function LecturePlayer({
                 aria-label={`${section.title}, at ${clock(section.start)}`}
                 className="flex min-w-0 flex-1 items-center gap-3 rounded-md px-1.5 py-1.5 text-left disabled:cursor-default disabled:opacity-50"
               >
-                <span className="relative hidden w-20 shrink-0 overflow-hidden rounded border border-line bg-well @sm:block @lg:w-24">
+                <span className="relative hidden w-20 shrink-0 overflow-hidden rounded-[4px] border border-line bg-surface-muted @sm:block @lg:w-24">
                   <span className="block aspect-video" />
                   {section.image && (
                     <img
@@ -149,12 +149,12 @@ export default function LecturePlayer({
                 </span>
                 <span
                   className={`w-5 shrink-0 text-right font-mono text-[11.5px] tabular-nums ${
-                    on ? "text-accent" : "text-fg-faint"
+                    on ? "text-accent" : "text-fg-subtle"
                   }`}
                 >
                   {String(index + 1).padStart(2, "0")}
                 </span>
-                <span className={`min-w-0 flex-1 text-[13px] leading-5 ${on ? "text-fg" : "text-fg-muted"}`}>
+                <span className={`min-w-0 flex-1 text-[13px] leading-5 ${on ? "font-medium text-fg" : "text-fg-muted"}`}>
                   {section.title}
                 </span>
                 <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-fg-subtle">
@@ -170,7 +170,7 @@ export default function LecturePlayer({
                   }}
                   title={`Read “${target.title}” in the chapter`}
                   aria-label={`Read “${target.title}” in the chapter`}
-                  className="mr-1 flex h-7 shrink-0 items-center rounded-md px-1.5 font-mono text-[11.5px] tabular-nums text-fg-subtle transition-colors hover:bg-card hover:text-accent"
+                  className="mr-1 flex h-7 shrink-0 items-center rounded-md px-1.5 font-mono text-[11.5px] tabular-nums text-fg-subtle transition-colors hover:bg-surface hover:text-accent"
                 >
                   §{String(target.index).padStart(2, "0")}
                 </a>
