@@ -407,12 +407,14 @@ that works.
 
 9. **Schedule.** Continuous batching, chunked prefill, and preemption.
    Chapter 16.
-10. **Benchmark.** Time to first token, inter-token latency, throughput, and
+10. **Serve.** The engine loop, stop strings, cancellation, and a streaming
+    response. Chapter 16a.
+11. **Benchmark.** Time to first token, inter-token latency, throughput, and
     what each one hides. Chapter 17.
 
 **Part 6, scaling: past one card and one token per step.**
 
-11. **Scale.** Quantization, tensor parallelism, and speculative decoding.
+12. **Scale.** Quantization, tensor parallelism, and speculative decoding.
     Chapters 18 to 20.
 
 By the end, the pieces fit together as one step that repeats:

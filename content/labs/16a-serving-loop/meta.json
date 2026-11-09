@@ -1,0 +1,15 @@
+{
+  "id": "16a-serving-loop",
+  "title": "The serving loop",
+  "brief": "Drive an engine core from a fake model, hold stop strings that span tokens, stream OpenAI chunks, and overlap a slow schedule with the forward pass.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "needs_weights": false,
+  "timeout": 120,
+  "metrics": ["gpu_idle_fraction", "requests"],
+  "hints": [
+    "Hold back the longest suffix of the pending text that is a proper prefix of a stop string. Emit it only when the next token shows it is not the stop, and never emit the stop itself.",
+    "release decrements a block's refcount. The block returns to the pool only when the count hits zero, so a block another request still holds stays allocated.",
+    "The next schedule can run during the current forward. Sampling still waits for logits, so the post stage stays on the clock."
+  ]
+}
