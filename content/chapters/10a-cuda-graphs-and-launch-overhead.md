@@ -9,7 +9,7 @@ objectives:
   - Price a decode step's launch floor from the kernel count and the 5 µs launch cost.
   - Capture a decode step and say which parts stay fixed and which parts you may change.
   - Pad a real batch to a captured size and compute the slots that padding wastes.
-  - Name the capture failures: a host sync, a dynamic shape, an allocation capture does not record, and `.item()`.
+  - "Name the capture failures: a host sync, a dynamic shape, an allocation capture does not record, and `.item()`."
   - Say when `torch.compile` fuses a region and when a graph break splits it.
 lab: 10a-cuda-graphs
 ---
