@@ -2,6 +2,7 @@ import type { VizRegistry } from "../registry";
 import WarpCoalescing from "./12-warp-coalescing";
 import TailGuard from "./12-tail-guard";
 import FusionVsL2 from "./13-fusion-vs-l2";
+import SkinnyIntensity from "./13a-skinny-intensity";
 import OnlineSoftmax from "./14-online-softmax";
 import CausalBlocks from "./14-causal-blocks";
 import SplitCount from "./14a-split-count";
@@ -13,6 +14,7 @@ const figures: VizRegistry = {
   "12-tail-guard": TailGuard,
   "12-warp-coalescing": WarpCoalescing,
   "13-fusion-vs-l2": FusionVsL2,
+  "13a-skinny-intensity": SkinnyIntensity,
   "14-online-softmax": OnlineSoftmax,
   "14-causal-blocks": CausalBlocks,
   "14a-split-count": SplitCount,

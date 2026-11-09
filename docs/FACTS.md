@@ -174,3 +174,36 @@ Numbers introduced by the split-KV chapter. The SM count is 108 and the copy ban
 | [FA3] | Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao, FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision. https://arxiv.org/abs/2407.08608 |
 | [FLASHINFER] | Zihao Ye and others, FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving. https://arxiv.org/abs/2501.01005 |
 | [FA-HEURISTIC] | `num_splits_heuristic` in FlashAttention v2.6.3, `csrc/flash_attn/flash_api.cpp`. https://github.com/Dao-AILab/flash-attention/blob/v2.6.3/csrc/flash_attn/flash_api.cpp |
+
+## Chapter 13a
+
+Numbers introduced by the skinny-decode chapter. The arithmetic peak is 312 TFLOP/s and the rated bandwidth is 1935 GB/s, both from chapter 10. A time here is a byte count divided by that bandwidth, evaluated in `scripts/figures/13a-skinny-decode-gemm.py`. It is not an A100 kernel measurement. The layer is the up projection, K = 5120 and N = 17408.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Bfloat16 bytes, FLOPs, and intensity at M = 1 | 178,302,976 bytes, 178,257,920 FLOPs, 0.999747 | D | chapter 13a |
+| Same product, memory floor at 1935 GB/s and compute floor at 312 TFLOP/s | 92.1462 µs and 0.5713 µs | D | chapter 13a |
+| Bfloat16 intensity at M = 8, 64, and 4096 | 7.983856, 62.981187, 2012.485549 | D | chapter 13a |
+| Bfloat16 bound at those four batches, ridge 161.240310 | memory, memory, memory, compute | D | chapter 13a |
+| Bfloat16 bound flips | M = 168 memory (161.156762), M = 169 compute (162.076732) | D | chapter 13a |
+| Output omitted at M = 1 and at M = 4096 | 178,268,160 bytes and 220,200,960 bytes | D | chapter 13a |
+| W4A16 weight, group 128, no zero point | 45,957,120 bytes, 33/64 bytes per weight | D | chapter 18, chapter 13a |
+| W4A16 bytes and intensity at M = 1 | 46,002,176 bytes, intensity 3.874989, floor 23.7737 µs | D | chapter 13a |
+| W4A16 intensity at M = 8, 64, and 4096 | 30.788822, 233.586045, 3167.565570 | D | chapter 13a |
+| W4A16 bound flips | M = 43 memory (160.041050), M = 44 compute (163.609023) | D | chapter 13a |
+| W4A16 at M = 64 against the 244.7 copy ridge | 233.586 is compute bound at 161.2 and memory bound at 244.7 | D | chapter 10, chapter 13a |
+| Dequantization included at M = 1, one extra multiply per weight | intensity 5.812483 | D | chapter 13a |
+| Column tiles of 128 on N = 17408 | 136 programs | D | chapter 13a |
+| Worked int4 product, activation (1, 1, 1, 1) | output (1, 15.5, 7.25) | D | chapter 13a |
+| Ampere FP16 FLOP-per-byte ratio, as stated by MARLIN | typically 100 to 200 | C | [MARLIN] |
+| MARLIN 4-bit vs FP16 on an A10, their measurement | near 4× up to batch 16 to 32, toward 1.5× at batch 128 | C | [MARLIN] |
+| MARLIN in vLLM, their measurement | up to 2.8× at batch 16 | C | [MARLIN] |
+| CS336 lectures cited here | Lecture 2, resource accounting; Lecture 6, Kernels, Triton | C | [CS336] |
+| CS 229S lecture cited here | 4 October 2023, Hardware Aware Algorithm Design | C | [CS229S] |
+
+| Key | Page |
+|---|---|
+| [MARLIN] | Elias Frantar, Roberto L. Castro, Jiale Chen, Torsten Hoefler, and Dan Alistarh, MARLIN: Mixed-Precision Auto-Regressive Parallel Inference on Large Language Models. https://arxiv.org/abs/2408.11743 |
+| [CS336] | Stanford CS336, Language Modeling from Scratch, schedule. Lecture 2 is resource accounting. Lecture 6 is Kernels, Triton. https://cs336.stanford.edu/ |
+| [CS229S] | CS 229S calendar, Fall 2023. 4 October, Hardware Aware Algorithm Design. https://cs229s.stanford.edu/fall2023/calendar/ |
+| [TRITON-GEMM] | Triton tutorial, Matrix Multiplication. https://triton-lang.org/main/getting-started/tutorials/03-matrix-multiplication.html |

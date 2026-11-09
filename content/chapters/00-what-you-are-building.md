@@ -402,8 +402,8 @@ that works.
 **Part 4, kernels: replace library calls with GPU code you wrote.**
 
 9. **Write kernels.** One CUDA kernel by hand to see what the hardware wants,
-   then Triton for the rest: fused normalization, FlashAttention, paged
-   attention. Chapters 12 to 15.
+   then Triton for the rest: fused normalization, the skinny decode GEMM,
+   FlashAttention, paged attention. Chapters 12 to 15.
 10. **Share a prefix.** Index full blocks in a radix tree, name each block by
     a hash of its parent, and choose where a hybrid model stores its recurrent
     state. Chapter 15a.
