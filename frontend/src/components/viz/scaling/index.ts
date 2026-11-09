@@ -1,6 +1,7 @@
 import type { VizRegistry } from "../registry";
 import BatchTimeline from "./16-batch-timeline";
 import ChunkBudget from "./16-chunk-budget";
+import ScheduleOverlap from "./16a-schedule-overlap";
 import TailVsMean from "./17-tail-vs-mean";
 import GroupQuant from "./18-group-quant";
 import ColumnRowSplit from "./19-column-row-split";
@@ -12,6 +13,7 @@ import SpeedupCurve from "./20-speedup-curve";
 const figures: VizRegistry = {
   "16-batch-timeline": BatchTimeline,
   "16-chunk-budget": ChunkBudget,
+  "16a-schedule-overlap": ScheduleOverlap,
   "17-tail-vs-mean": TailVsMean,
   "18-group-quant": GroupQuant,
   "19-column-row-split": ColumnRowSplit,
