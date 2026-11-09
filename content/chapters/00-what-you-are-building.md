@@ -394,33 +394,35 @@ that works.
 5. **Add a cache** and turn that $O(n^2)$ loop into an $O(n)$ one. Chapter 9.
 6. **Measure the roofline** and learn to tell a slow kernel from a memory-bound
    one. Chapter 10.
-7. **Sample.** Temperature, top-*k*, top-*p*, and the numerical care they need.
+7. **Capture the decode step.** Price the launch floor, pad the batch to a
+   captured size, and see what a CUDA graph refuses. Chapter 10a.
+8. **Sample.** Temperature, top-*k*, top-*p*, and the numerical care they need.
    Chapter 11.
 
 **Part 4, kernels: replace library calls with GPU code you wrote.**
 
-8. **Write kernels.** One CUDA kernel by hand to see what the hardware wants,
+9. **Write kernels.** One CUDA kernel by hand to see what the hardware wants,
    then Triton for the rest: fused normalization, FlashAttention, paged
    attention. Chapters 12 to 15.
-9. **Share a prefix.** Index full blocks in a radix tree, name each block by
-   a hash of its parent, and choose where a hybrid model stores its recurrent
-   state. Chapter 15a.
+10. **Share a prefix.** Index full blocks in a radix tree, name each block by
+    a hash of its parent, and choose where a hybrid model stores its recurrent
+    state. Chapter 15a.
 
 **Part 5, serving: one model, many users at once.**
 
-10. **Schedule.** Continuous batching, chunked prefill, and preemption.
+11. **Schedule.** Continuous batching, chunked prefill, and preemption.
     Chapter 16.
-11. **Serve.** The engine loop, stop strings, cancellation, and a streaming
+12. **Serve.** The engine loop, stop strings, cancellation, and a streaming
     response. Chapter 16a.
-12. **Benchmark.** Time to first token, inter-token latency, throughput, and
+13. **Benchmark.** Time to first token, inter-token latency, throughput, and
     what each one hides. Chapter 17.
-13. **Plan capacity.** Predict a step time from the roofline, communication,
+14. **Plan capacity.** Predict a step time from the roofline, communication,
     and a launch floor, then choose a batch and a parallel layout under a
     latency target. Chapter 17a.
 
 **Part 6, scaling: past one card and one token per step.**
 
-14. **Scale.** Quantization, tensor parallelism, and speculative decoding.
+15. **Scale.** Quantization, tensor parallelism, and speculative decoding.
     Chapters 18 to 20.
 
 By the end, the pieces fit together as one step that repeats:

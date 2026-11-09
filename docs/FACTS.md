@@ -104,3 +104,36 @@ Numbers introduced by the prefix-cache chapter. A byte count here is chapter 2's
 | [MOONCAKE] | Ruoyu Qin and others, Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving. https://arxiv.org/abs/2407.00079 |
 | [PREBLE] | Vikranth Srivatsa and others, Preble: Efficient Distributed Prompt Scheduling for LLM Serving. https://arxiv.org/abs/2407.00023 |
 | [MARCONI] | Rui Pan and others, Marconi: Prefix Caching for the Era of Hybrid LLMs. https://arxiv.org/abs/2411.19379 |
+
+## Chapter 10a
+
+Numbers introduced by the CUDA-graph chapter. The 5 µs launch cost is chapter 10's lower end of the 5 to 10 µs range, the same value chapter 17a uses. It is not a new measurement. The products and the padding totals are arithmetic in `scripts/figures/10a-cuda-graphs-and-launch-overhead.py`. This machine has no CUDA device, so the chapter does not report a graph speedup.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Eager decode launches, 400 kernels at 5 µs | 2.000 ms | D | chapter 10, chapter 10a |
+| One graph replay at the same 5 µs | 0.005 ms | D | chapter 10a |
+| Launches removed by that replay, 399 × 5 µs | 1.995 ms | D | chapter 10a |
+| Hand trace `[1, 3, 5]` on buckets `[1, 2, 4, 8]` | 4 idle slots out of 13 padded, waste 4/13 | D | chapter 10a |
+| Same hand trace on buckets `[1, 2, 4, 6, 8]` | 2 idle slots out of 11 padded, waste 2/11 | D | chapter 10a |
+| 200-step trace on powers of two `[1, 2, 4, 8, 16, 32]` | 1,070 real slots, 402 idle out of 1,472 padded, waste 201/736 | D | chapter 10a |
+| Same trace on `[1, 2, 4, 6, 8, 12, 16, 24, 32]` | 150 idle out of 1,220 padded, waste 15/122 | D | chapter 10a |
+| PyTorch capture replays the same kernels at the same addresses | one `cudaGraphLaunch` per replay | C | [PT-CUDA-GRAPHS] |
+| `torch.compile` mode `reduce-overhead` | CUDA graphs for CUDA-only regions that do not mutate inputs; a speedup is not guaranteed | C | [PT-COMPILE] |
+| `torch.compile` graph break | data-dependent control flow, and `.item()` | C | [PT-BREAKS] |
+| vLLM default CUDA-graph mode with piecewise compilation | `FULL_AND_PIECEWISE` | C | [VLLM-GRAPHS] |
+| SGLang decode capture sizes | `--cuda-graph-bs-decode` list, or a maximum via `--cuda-graph-max-bs-decode` | C | [SGLANG-ARGS] |
+| Synchronizing a stream that is being captured | invalid | C | [NV-GRAPHS] |
+| `cudaMalloc` during stream capture | not enqueued on the stream, and not observed by capture | C | [NV-CAPTURE] |
+| CS336 lecture titles used here | Lecture 6, Kernels, Triton; Lecture 10, Inference | C | [CS336] |
+
+| Key | Page |
+|---|---|
+| [PT-CUDA-GRAPHS] | PyTorch CUDA semantics, section CUDA Graphs. https://docs.pytorch.org/docs/2.15/notes/cuda.html |
+| [PT-COMPILE] | torch.compile. https://docs.pytorch.org/docs/2.15/generated/torch.compile.html |
+| [PT-BREAKS] | Common Graph Breaks. https://docs.pytorch.org/docs/2.15/user_guide/torch_compiler/compile/programming_model.common_graph_breaks.html |
+| [VLLM-GRAPHS] | vLLM design note, CUDA Graphs. https://github.com/vllm-project/vllm/blob/main/docs/design/cuda_graphs.md |
+| [SGLANG-ARGS] | SGLang server arguments, CUDA graph flags. https://docs.sglang.io/advanced_features/server_arguments.html |
+| [NV-GRAPHS] | NVIDIA CUDA Programming Guide, section 4.2 CUDA Graphs. https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/cuda-graphs.html |
+| [NV-CAPTURE] | NVIDIA CUDA Runtime API, stream management, capture restrictions. https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html |
+| [CS336] | Stanford CS336, Language Modeling from Scratch, syllabus. Lecture 6 is Kernels, Triton. Lecture 10 is Inference. https://cs336.stanford.edu/ |
