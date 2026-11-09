@@ -1,0 +1,15 @@
+{
+  "id": "17a-performance-model",
+  "title": "Performance model",
+  "brief": "Predict decode and prefill floors, search for SLO-constrained goodput, and recover a planted bandwidth fraction from a synthetic trace.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "needs_weights": false,
+  "timeout": 120,
+  "metrics": ["decode_batch1_ms", "prefill_2048_ms", "goodput_tokens_per_s"],
+  "hints": [
+    "A decode step at batch 1 is memory-bound. The time is the byte term, plus communication, plus the launch floor. The arithmetic peak is the other branch of the max.",
+    "Goodput is the best batch in 1..max_batch whose step meets the TPOT SLO, whose prefill meets the TTFT SLO, and whose weights, KV, and state fit. A missed TTFT SLO returns 0.",
+    "The fit is a straight line of seconds against bytes/bandwidth. The slope is 1/alpha and the intercept is the overhead. The trace is synthetic: the flops column is there so you can misuse it."
+  ]
+}

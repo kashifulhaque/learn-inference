@@ -411,10 +411,13 @@ that works.
     response. Chapter 16a.
 11. **Benchmark.** Time to first token, inter-token latency, throughput, and
     what each one hides. Chapter 17.
+12. **Plan capacity.** Predict a step time from the roofline, communication,
+    and a launch floor, then choose a batch and a parallel layout under a
+    latency target. Chapter 17a.
 
 **Part 6, scaling: past one card and one token per step.**
 
-12. **Scale.** Quantization, tensor parallelism, and speculative decoding.
+13. **Scale.** Quantization, tensor parallelism, and speculative decoding.
     Chapters 18 to 20.
 
 By the end, the pieces fit together as one step that repeats:
