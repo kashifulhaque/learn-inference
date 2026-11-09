@@ -402,22 +402,25 @@ that works.
 8. **Write kernels.** One CUDA kernel by hand to see what the hardware wants,
    then Triton for the rest: fused normalization, FlashAttention, paged
    attention. Chapters 12 to 15.
+9. **Share a prefix.** Index full blocks in a radix tree, name each block by
+   a hash of its parent, and choose where a hybrid model stores its recurrent
+   state. Chapter 15a.
 
 **Part 5, serving: one model, many users at once.**
 
-9. **Schedule.** Continuous batching, chunked prefill, and preemption.
-   Chapter 16.
-10. **Serve.** The engine loop, stop strings, cancellation, and a streaming
+10. **Schedule.** Continuous batching, chunked prefill, and preemption.
+    Chapter 16.
+11. **Serve.** The engine loop, stop strings, cancellation, and a streaming
     response. Chapter 16a.
-11. **Benchmark.** Time to first token, inter-token latency, throughput, and
+12. **Benchmark.** Time to first token, inter-token latency, throughput, and
     what each one hides. Chapter 17.
-12. **Plan capacity.** Predict a step time from the roofline, communication,
+13. **Plan capacity.** Predict a step time from the roofline, communication,
     and a launch floor, then choose a batch and a parallel layout under a
     latency target. Chapter 17a.
 
 **Part 6, scaling: past one card and one token per step.**
 
-13. **Scale.** Quantization, tensor parallelism, and speculative decoding.
+14. **Scale.** Quantization, tensor parallelism, and speculative decoding.
     Chapters 18 to 20.
 
 By the end, the pieces fit together as one step that repeats:

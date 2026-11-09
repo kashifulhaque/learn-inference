@@ -30,6 +30,8 @@ None of those chapters answers the capacity question: at this batch, this contex
 
 This chapter writes that expectation as one floor. It uses peaks, byte counts, and collective costs the course already derived. It does not add a peak, a price, or a measured latency. The lab runs on the CPU. There is no weight file and no GPU.
 
+A cached prefix shortens the prefill. [Chapter 15a](/c/15a-prefix-caching-and-radix-trees) counts those tokens. The prefill floor here is the cold prompt, with nothing cached.
+
 The floor is not a promise about a device. Chapter 10's plain copy reaches 1275 GB/s of a 1935 GB/s rating. A real decode step misses the rating by its own fraction, and by a fixed overhead the launch count only approximates. You fit those two constants when you have a trace. Until then, the trace in the lab is synthetic, and it says so.
 
 ## Before you start

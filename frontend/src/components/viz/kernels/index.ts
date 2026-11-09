@@ -5,6 +5,7 @@ import FusionVsL2 from "./13-fusion-vs-l2";
 import OnlineSoftmax from "./14-online-softmax";
 import CausalBlocks from "./14-causal-blocks";
 import BlockTable from "./15-block-table";
+import CheckpointTradeoff from "./15a-checkpoint-tradeoff";
 
 // Figures for this group's chapters, keyed by the name a ```viz fence uses.
 const figures: VizRegistry = {
@@ -14,6 +15,7 @@ const figures: VizRegistry = {
   "14-online-softmax": OnlineSoftmax,
   "14-causal-blocks": CausalBlocks,
   "15-block-table": BlockTable,
+  "15a-checkpoint-tradeoff": CheckpointTradeoff,
 };
 
 export default figures;
