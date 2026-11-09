@@ -1,0 +1,17 @@
+{
+  "id": "10a-cuda-graphs",
+  "title": "CUDA graphs and launch overhead",
+  "brief": "Pick a batch-size bucket, measure padding waste, and capture a decode step whose replay matches eager execution.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 180,
+  "metrics": ["padding_waste", "eager_ms", "graph_ms", "speedup"],
+  "hints": [
+    "The smallest bucket that is at least the real batch is the one you pad to. A batch past every bucket has no graph.",
+    "Waste is idle padded slots over padded slots. Powers of two are a legal set, and a tighter set can waste less on the same trace.",
+    "Capture after a warmup on a side stream. Replay reads the same addresses, so copy new values in with copy_ rather than rebinding the name.",
+    "A host sync, a Python slice bound that changes, and empty_cache all fail the capture rules. The CPU check grades those names. It does not run capture."
+  ]
+}
