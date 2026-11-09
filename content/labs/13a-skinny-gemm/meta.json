@@ -1,0 +1,17 @@
+{
+  "id": "13a-skinny-gemm",
+  "title": "Skinny decode GEMM",
+  "brief": "Count the FLOPs and bytes of a small-batch GEMM, place it on the roofline, and unpack a W4A16 product. A Triton row kernel runs only when CUDA is available.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 120,
+  "metrics": ["intensity_m1", "bound_m1", "w4_intensity_m1"],
+  "hints": [
+    "C = A @ B with A shaped (m, k) and B shaped (k, n) does 2*m*k*n FLOPs.",
+    "Count A, B, and C. Bfloat16 elements are 2 bytes. Dropping C still fails when C is small next to the weight.",
+    "W4A16 packs two signed int4 values per byte. The low nibble is column 2j, the value is nibble - 8, and one bfloat16 scale covers each group of 128 rows of K. The last group can be short.",
+    "The bound uses 312 TFLOP/s and 1935 GB/s. Intensity under 161.2 is memory bound. skinny_gemm is checked only when CUDA is available."
+  ]
+}
