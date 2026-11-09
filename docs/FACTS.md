@@ -137,3 +137,40 @@ Numbers introduced by the CUDA-graph chapter. The 5 µs launch cost is chapter 1
 | [NV-GRAPHS] | NVIDIA CUDA Programming Guide, section 4.2 CUDA Graphs. https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/cuda-graphs.html |
 | [NV-CAPTURE] | NVIDIA CUDA Runtime API, stream management, capture restrictions. https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html |
 | [CS336] | Stanford CS336, Language Modeling from Scratch, syllabus. Lecture 6 is Kernels, Triton. Lecture 10 is Inference. https://cs336.stanford.edu/ |
+
+## Chapter 14a
+
+Numbers introduced by the split-KV chapter. The SM count is 108 and the copy bandwidth is 1275 GB/s, both from chapter 10. A time or a GB/s here is that pair, evaluated in `scripts/figures/14a-split-kv-decode-attention.py`. It is not an A100 kernel measurement. The chapter rounds the three microsecond figures to two decimal places.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Decode grid, batch 1, 24 query heads, query length 1 | 24 blocks, utilization 24/108 | D | chapter 10, chapter 14a |
+| Copy-share ceiling at 24 of 108 SMs | 283.333333 GB/s | D | chapter 14a |
+| Four splits, 96 blocks | utilization 96/108, ceiling 1133.333333 GB/s | D | chapter 14a |
+| One full-attention layer, 32,768 tokens | 134,217,728 bytes (4,096 bytes per token) | D | chapter 7, chapter 14a |
+| That read at 1275 GB/s, at 283.333333 GB/s, and at 1133.333333 GB/s | 105.2688 µs, 473.7096 µs, 118.4274 µs | D | chapter 14a |
+| Reduction bytes, 4 splits, 24 heads, head dim 256, fp32 | 98,688 bytes, fraction 7.352829e-4 of the KV read | D | chapter 14a |
+| `choose_num_splits(1, 24, kv, 108)` | 1 at kv 64, 2 at 65, 3 at 192, 4 at 256 and at 65,536 | D | chapter 14a |
+| `choose_num_splits(1, 108, 65536, 108)` and `(1, 87, 65536, 108)` | 1 | D | chapter 14a |
+| `choose_num_splits(1, 86, 65536, 108)` | 5 | D | chapter 14a |
+| `choose_num_splits(1, 1, 65536, 108)` | 92 | D | chapter 14a |
+| Worked merge, scores 0, 2, 1 and values 4, 6, 10 | output 6.798853, log-sum-exp 2.407606 | D | chapter 14a |
+| Unscaled mean of partials 5.761594 and 10 | 7.880797 | D | chapter 14a |
+| Flash-Decoding, batch 1 versus 108 SMs | less than 1% of the GPU, their grid | C | [FLASH-DECODING] |
+| Flash-Decoding on CodeLlama-34B | up to 8× end to end, attention up to 50× versus FlashAttention, attention time roughly flat to 32k | C | [FLASH-DECODING] |
+| A100 non-matmul FP32 versus FP16/BF16 matmul | 19.5 TFLOP/s versus 312 TFLOP/s, a factor of 16 | C | [FA2] |
+| FlashAttention-1 forward pass on A100 | 30% to 50% of peak FLOP/s, their measurement | C | [FA2] |
+| FlashAttention-2 on H100, as measured in FlashAttention-3 | 35% utilization | C | [FA3] |
+| Hopper features FlashAttention-3 uses | TMA, asynchronous WGMMA, FP8 tensor cores | C | [FA3] |
+| FlashAttention-3 FP16 on H100 SXM5 | 1.5× to 2.0× over FlashAttention-2, up to 740 TFLOP/s | C | [FA3] |
+| Split heuristic fractions | return 1 at 80% of the slots, then the smallest count within 85% of the highest wave efficiency, cap 128 | C | [FA-HEURISTIC] |
+| Split-KV tile when head dimension is greater than 128 | 64 tokens | C | [FA-HEURISTIC] |
+| FlashInfer attention state | $(O, \mathrm{LSE})$ composes by the log-sum-exp merge; `plan` then `run` on a fixed grid | C | [FLASHINFER] |
+
+| Key | Page |
+|---|---|
+| [FLASH-DECODING] | Tri Dao, Daniel Haziza, Francisco Massa, and Grigory Sizov, Flash-Decoding for long-context inference. Stanford CRFM, 12 October 2023. https://crfm.stanford.edu/2023/10/12/flashdecoding.html |
+| [FA2] | Tri Dao, FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning. https://arxiv.org/abs/2307.08691 |
+| [FA3] | Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao, FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision. https://arxiv.org/abs/2407.08608 |
+| [FLASHINFER] | Zihao Ye and others, FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving. https://arxiv.org/abs/2501.01005 |
+| [FA-HEURISTIC] | `num_splits_heuristic` in FlashAttention v2.6.3, `csrc/flash_attn/flash_api.cpp`. https://github.com/Dao-AILab/flash-attention/blob/v2.6.3/csrc/flash_attn/flash_api.cpp |

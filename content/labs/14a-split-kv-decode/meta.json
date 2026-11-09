@@ -1,0 +1,17 @@
+{
+  "id": "14a-split-kv-decode",
+  "title": "Split-KV decode attention",
+  "brief": "Merge partial softmax results with the log-sum-exp, choose a split count from the SM count, and run a split decode kernel when CUDA is available.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 180,
+  "metrics": ["merge_error"],
+  "hints": [
+    "Weight each partial output by exp(lse_i - lse) before adding. A mean of the partial outputs ignores how much softmax mass each chunk holds.",
+    "An empty chunk stores a log-sum-exp of negative infinity. exp(-inf) is zero, so that chunk adds nothing.",
+    "Return 1 when batch times heads covers at least 80% of num_sms. That includes every case where batch times heads is at least num_sms.",
+    "Cap the split count by ceil(kv_len / 64). A longer cache can add a split. It does not remove one."
+  ]
+}
