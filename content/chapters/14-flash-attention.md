@@ -11,6 +11,8 @@ objectives:
   - Write a tiled attention kernel in Triton with correct causal masking and grouped-query indexing.
   - Explain the IO complexity result and why a kernel that does more arithmetic runs faster.
   - Read a benchmark honestly when a teaching kernel loses to a vendor kernel.
+  - Count the programs a FlashAttention launch creates, and say why a query of length 1 leaves most SMs idle.
+  - Say what FlashAttention-2 and FlashAttention-3 change, and which of those changes this kernel already has.
 lab: 14-flash-attention
 ---
 
@@ -29,6 +31,9 @@ lab: 14-flash-attention
 >   values past it, and never gives the score table a place in memory.
 > - The Triton kernel runs at 0.63x the speed of the vendor kernel and uses 27.5x
 >   less peak memory than the naive path.
+> - Its grid is one program per query tile and head. That fills the GPU in
+>   prefill and launches only 24 programs on 108 SMs at one query token, which
+>   [the next chapter](/c/14a-split-kv-decode-attention) fixes.
 
 Attention is the one operation in the model whose intermediate result is larger
 than the model. Everything else, including the projections, the MLP, and the
@@ -774,9 +779,11 @@ is the gap between them, and four things account for most of it:
   units, not the tensor cores, and they don't overlap the matmuls for free.
   FlashAttention-2's main contribution was reducing exactly this class of work.
 - **The rescale in the inner loop.** `acc = acc * correction[:, None] + ...`
-  touches $B_r \times d$ float32 registers on every iteration. A tuned kernel
-  defers more of that work, keeping the correction as a scalar applied at tile
-  boundaries rather than a full accumulator multiply each time.
+  touches $B_r \times d$ float32 registers on every iteration. This kernel
+  already defers the divide, so it does one scaling per tile where
+  FlashAttention-1 did two, and it can't hide the remaining one behind the
+  matmul the way a Hopper kernel can. A later
+  section counts it.
 - **Scheduling.** cuDNN and CUTLASS, NVIDIA's own kernel libraries, use warp
   specialization, where some warps do nothing but issue asynchronous copies
   while others do nothing but matmul. They add hand-tuned pipelining and, on
@@ -816,6 +823,142 @@ understand what the measurement measured.
 Peak memory, not clock time, is why every serving stack uses FlashAttention. A
 27.5x reduction in the attention working set is ==the difference between 8k
 context and 200k context== on the same card.
+
+## The grid at one query token
+
+This section counts the programs a launch creates, because a grid that's right
+for prefill can be wrong for decode. The kernel launches
+`grid = (cdiv(q_len, block_m), batch * heads)`, so the number of programs is the
+following:
+
+$$
+\boxed{\text{programs} = \left\lceil \frac{q_\text{len}}{B_r} \right\rceil \times
+\text{batch} \times \text{query heads}}
+$$
+
+Read it for what it leaves out. The KV length isn't in it, because the key loop
+runs inside a program. The KV head count isn't in it either, because grouped
+queries share K and V, not programs. An A100 has 108 SMs, and the last column
+counts how many of them hold a program in the first wave:
+
+| Shape, with $B_r = 128$ | Programs | SMs holding a program |
+|---|---|---|
+| Lab benchmark, 512 tokens, 8 heads | $4 \times 8 = 32$ | 32 of 108 |
+| Lab benchmark, 8192 tokens, 8 heads | $64 \times 8 = 512$ | all 108, in 5 waves |
+| 32,768-token prefill, 24 heads | $256 \times 24 = 6144$ | all 108, in 57 waves |
+| Decode, batch 1, 24 heads | $1 \times 24 = 24$ | 24 of 108 |
+| Decode, batch 4, 24 heads | $1 \times 96 = 96$ | 96 of 108 |
+
+The 24-head rows are the model from [chapter 14a](/c/14a-split-kv-decode-attention).
+The 512-token row says the lab's own smallest benchmark leaves 76 SMs empty,
+so read that speedup with the grid in mind. A prefill of 32,768 tokens
+launches 6144 programs, which is 57 waves of 108 slots with 99.8% of the slots in use.
+
+> [!KEY] A decode step has no query axis left to parallelize
+> At $q_\text{len} = 1$ the first factor is 1 for any tile height. The launch is
+> `batch * heads` programs, 24 at batch 1, and ==84 of 108 SMs receive no
+> block== while one program walks the whole KV cache.
+
+The lab's `count_programs` and `sm_fill` compute those two columns, and they
+run without a GPU. The GPU half of the lab now adds the shape the table ends
+with: one query token behind 32,768 cached tokens on the 24-head model, with
+head dimension 256. It reports the kernel's time against
+`F.scaled_dot_product_attention` as `speedup_decode_32k`. The lab doesn't gate
+on it, and this chapter doesn't quote a value, because no A100 run of that
+shape went into this revision. Whether the vendor kernel splits the KV length
+itself at that shape depends on your PyTorch version, so compare the number
+with `speedup_8k` on your machine.
+
+## What FlashAttention-2 and 3 change
+
+This section counts the rescale work the loop does, then says what the later
+FlashAttention papers add. The update in the kernel multiplies the accumulator
+by a row factor on every tile. FlashAttention-1 did that twice per tile,
+because it kept the output normalized: it scaled both the old output and the new
+$PV$ term by $\operatorname{diag}(\ell)^{-1}$. FlashAttention-2 keeps the output
+unnormalized. It scales the old output by $\hld{\alpha}$ once per tile and
+divides by $\hlb{\ell}$ once, after the last tile, which is what step 4 of the
+tiled algorithm does.
+
+Count the elements scaled for one head. Each scaling touches $B_r \times d$
+accumulator elements, so with $T$ tile steps and $Q$ query tiles the two
+versions cost the following:
+
+$$
+\text{FA-1} = 2\,T\,B_r\,d,
+\qquad
+\text{FA-2} = (T + Q)\,B_r\,d.
+$$
+
+The FA-2 term has $T$ scalings from the loop and $Q$ from the final divides,
+one per query tile.
+
+> [!EXAMPLE] One head at $L = 8192$, causal
+> The causal example earlier gives $T = 4160$ tile steps and $Q = 64$ query
+> tiles, with $B_r = 128$ and $d = 128$, so $B_r d = 16{,}384$. FlashAttention-1
+> scales $2 \times 4160 \times 16{,}384 = 136{,}314{,}880$ elements.
+> FlashAttention-2 scales $(4160 + 64) \times 16{,}384 = 69{,}206{,}016$, which
+> is 50.8% as many. The lab's `rescale_elements` returns both numbers.
+>
+> Against the 17.2 GFLOP of causal matmul for that head, the FlashAttention-2
+> count is 0.40% as many operations. The FlashAttention-2 paper puts one
+> non-matmul FLOP at 16 matmul FLOPs on an A100, because the A100 does 19.5
+> TFLOP/s of FP32 against 312 TFLOP/s of matmul. At that price the rescale costs
+> about 6.4% of the matmul work under FlashAttention-2 and 12.7% under
+> FlashAttention-1. That is an estimate of the rescale term alone. It leaves out
+> the exponentials, and it isn't a measured time.
+
+The wrong version of this count is easy to write. Normalize every tile and you
+get FlashAttention-1's 136,314,880. Forget the final divide and you get 68,157,440,
+which is the 64 final divides' 1,048,576 elements short. The lab checks both.
+
+> [!DEEPDIVE] FlashAttention-2 and FlashAttention-3 against this kernel
+> **FlashAttention-2** makes three changes, and this kernel has two of them.
+> It defers the divide, as counted above, and it stores only the log-sum-exp
+> $m + \log \ell$ for the backward pass, not both $m$ and $\ell$. It adds the
+> query length to the grid, so one head spreads across many blocks, and it swaps
+> the loops, which is the order in this chapter. The paper says the
+> `batch * heads` grid of FlashAttention-1 is efficient when that product is
+> large, about 80 or more on 108 SMs, and that long sequences usually mean a
+> small batch. The third change splits Q across the warps in a block. In Triton
+> you don't write that, because the compiler lays out the warps and `num_warps`
+> is the knob. The paper also skips blocks above the causal diagonal, as this
+> chapter does, and reports about 1.7 to 1.8 times faster than the same
+> attention without the mask. Its headline is about 2 times over
+> FlashAttention-1 and up to 230 TFLOP/s on an A100.
+>
+> **FlashAttention-3** is a Hopper kernel, and this course treats it as a
+> concept. It has three ideas, and none of them runs on an A100:
+>
+> - **Asynchrony and warp specialization.** Producer warps issue TMA loads and
+>   consumer warps issue matrix multiplies, with registers reassigned between
+>   them by `setmaxnreg`. Chapter 14a lists the hardware this needs.
+> - **Overlap of softmax and matmul.** An H100 SXM5 has 989 TFLOP/s of FP16
+>   matmul and 3.9 TFLOP/s of special functions such as the exponential, so at
+>   head dimension 128 the exponentials can take about half as long as the
+>   matmuls. Two warpgroups alternate, one doing softmax while the other does
+>   matmul. Inside one warpgroup, the next $QK^\top$ is issued before the
+>   current softmax. The paper reports that pingpong scheduling raises
+>   FP16 forward from 570 to 620 to 640 TFLOP/s at head dimension 128 and
+>   length 8192.
+> - **FP8 with incoherent processing.** E4M3 keeps 3 mantissa bits, and outliers
+>   in Q and K make that worse. FlashAttention-3 quantizes one scale per block,
+>   and it multiplies Q and K by a random orthogonal matrix $M$ first. $M$ is
+>   random $\pm 1$ diagonals times a Hadamard matrix, so it costs $O(d \log d)$
+>   and $(QM)(KM)^\top = QK^\top$. The paper measures 2.6 times lower error
+>   than per-tensor FP8 attention.
+>
+> The paper's results are FlashAttention-2 at 35% utilization on an H100,
+> FlashAttention-3 1.5 to 2.0 times faster than FlashAttention-2, FP16 up to 740 TFLOP/s (75%),
+> and FP8 near 1.2 PFLOP/s. This machine has no Hopper GPU, and the lab doesn't
+> time one.
+
+The grid this kernel launches is FlashAttention-2's grid, and at one query token
+it has no axis left to spread. [Chapter 14a](/c/14a-split-kv-decode-attention)
+computes the bandwidth that 24 of 108 SMs can reach, then splits the KV length to
+buy the missing programs and merges the pieces with the log-sum-exp this chapter
+already keeps. Run the decode shape in this lab first, so you have a
+`speedup_decode_32k` to compare with the chapter's fix.
 
 ## What goes wrong
 
@@ -860,6 +1003,11 @@ context and 200k context== on the same card.
 >   shared memory, and only $Q$, $K$, $V$, and $O$ in HBM.
 > - Traffic stays quadratic, $\Theta(L^2 d / M)$, but L2 absorbs most re-reads.
 >   The kernel runs at 0.63x of the vendor kernel and uses 27.5x less memory.
+> - The grid is $\lceil q_\text{len} / B_r \rceil \times \text{batch} \times \text{heads}$
+>   programs. At one query token that is 24 of 108 SMs on the 24-head model.
+> - FlashAttention-2 scales the accumulator once per tile and divides once at the
+>   end: 69,206,016 elements per head at $L = 8192$, against 136,314,880 for
+>   FlashAttention-1.
 
 ## Check your understanding
 
@@ -890,13 +1038,26 @@ context and 200k context== on the same card.
 > for exactly this reason: the tail block has 2 valid columns, and the answer
 > must still be right.
 
+> [!QUESTION] Why does a decode step launch only 24 programs on the 24-head model, whatever the KV length?
+> The grid is one program per query tile and query head, and one query token is
+> one tile. The key loop runs inside the program, so a longer cache makes each
+> program slower and adds no programs. Batch 1 launches $1 \times 24 = 24$ of
+> 108 SMs. Batch 4 launches 96, and [chapter 14a](/c/14a-split-kv-decode-attention)
+> splits the KV length to fill the rest.
+
+> [!QUESTION] This kernel divides by $\ell$ once per query tile. How many scalings per head does that save against normalizing every tile, at $L = 8192$ causal?
+> FlashAttention-1 does $2T$ scalings of a $B_r \times d$ tile and
+> FlashAttention-2 does $T + Q$. With $T = 4160$ and $Q = 64$ that is 8320
+> against 4224, so 136,314,880 against 69,206,016 elements, or 49.2% fewer.
+
 ## Lab
 
 > [!TRY]
 > Write the FlashAttention forward pass in Triton. You pass when it matches a
 > float32 naive implementation in all six cases plus the decode-against-prefill
 > check, runs at least 0.33x of the vendor kernel at 8192 tokens, and uses at
-> least 3x less peak memory than the naive path at 4096 tokens.
+> least 3x less peak memory than the naive path at 4096 tokens. Three small helpers
+> that count programs and rescale work pass without a GPU.
 
 Match the signature in `starter.py`: `flash_attention(q, k, v, causal=True,
 scale=None)`, with `q` of shape `(batch, heads, q_len, head_dim)` and `k`, `v`
@@ -915,17 +1076,39 @@ cases, each of which must land within $5 \times 10^{-3}$ absolute:
 
 A bfloat16 run must stay within $5 \times 10^{-2}$. One more check compares a
 single decode query against the last row of a full prefill, which is where an
-incorrect causal offset shows up.
+incorrect causal offset shows up. Three more bfloat16 runs cover head
+dimensions 64, 128, and 256, and the 256 case uses a 64-row query tile.
 
 Then it benchmarks against `F.scaled_dot_product_attention` at 512, 2048, and
 8192 tokens, requiring at least 0.33x at 8192, and compares peak memory against
 the naive path at 4096 tokens, requiring at least 3x. The reference lands at
 0.63x and 27.5x.
 
+The launch and rescale checks run on any machine, with no GPU. Without CUDA, the
+kernel and benchmark checks report a skip. Implement three helpers in
+`starter.py`:
+
+- `count_programs(batch, heads, q_len, kv_len, block_m)` returns the programs your
+  grid launches. `kv_len` is an argument so a wrong answer has somewhere to go:
+  the right answer doesn't use it.
+- `sm_fill(programs, num_sms=108)` returns the fraction of the SMs that hold a
+  program in the first wave, capped at 1.
+- `rescale_elements(q_len, kv_len, block_m, block_n, head_dim, version,
+  causal=True)` returns the accumulator elements scaled per head. Version 1 does
+  2 scalings per tile step and no final divide. Version 2 does 1 per tile step
+  and one divide per query tile. Count the real rows of a partial tile.
+
+The GPU half also times head dimensions 64, 128, and 256 at 4096 tokens, and the
+decode shape from the grid section, and reports `speedup_hd64_4k`,
+`speedup_hd128_4k`, `speedup_hd256_4k`, and `speedup_decode_32k`. None of those
+four gates a pass.
+
 ## Further reading
 
 - [FlashAttention: fast and memory-efficient exact attention with IO-awareness](https://arxiv.org/abs/2205.14135)
-- [FlashAttention-2: faster attention with better parallelism and work partitioning](https://arxiv.org/abs/2307.08691)
+- [FlashAttention-2: faster attention with better parallelism and work partitioning](https://arxiv.org/abs/2307.08691). Tri Dao. The deferred divide, the 16x non-matmul cost, the 80-program grid rule, and the causal skip figures are from this paper.
 - [Online normalizer calculation for softmax](https://arxiv.org/abs/1805.02867)
 - [Self-attention does not need $O(n^2)$ memory](https://arxiv.org/abs/2112.05682)
+- [FlashAttention-3: fast and accurate attention with asynchrony and low-precision](https://arxiv.org/abs/2407.08608). Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao. The pingpong schedule, the exponential throughput figures, block quantization, and incoherent processing are from this paper.
 - [Triton tutorial: fused attention](https://triton-lang.org/main/getting-started/tutorials/06-fused-attention.html)
+- [Split-KV decode attention](/c/14a-split-kv-decode-attention), the next chapter, for the decode grid this kernel can't fill.

@@ -4,13 +4,21 @@
   "brief": "Write the tiled forward pass with an online softmax, and never materialize a score matrix.",
   "gpu": "A100-80GB",
   "needs_gpu": true,
+  "device_agnostic": true,
   "needs_weights": false,
   "timeout": 1200,
-  "metrics": ["max_error", "speedup_8k", "peak_memory_ratio"],
+  "metrics": [
+    "max_error",
+    "speedup_8k",
+    "peak_memory_ratio",
+    "speedup_decode_32k"
+  ],
   "hints": [
     "Keep m, l, and acc in float32. The running denominator sums thousands of exponentials.",
     "On a new tile maximum, rescale both l and acc by exp(m_old - m_new) before adding.",
     "Skip whole key tiles past the causal diagonal instead of masking them after the fact.",
-    "kv_head = head // kv_group lets the kernel share KV heads without the caller duplicating them."
+    "kv_head = head // kv_group lets the kernel share KV heads without the caller duplicating them.",
+    "The grid is (ceil(q_len / block_m), batch * heads). Count query tiles and query heads, never KV tiles.",
+    "FlashAttention-2 rescales only the old output per tile and divides once at the end, so it does steps + 1 scalings per query tile against FA-1's 2 * steps."
   ]
 }

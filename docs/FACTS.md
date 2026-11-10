@@ -201,6 +201,29 @@ Numbers introduced by the split-KV chapter. The SM count is 108 and the copy ban
 | [FLASHINFER] | Zihao Ye and others, FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving. https://arxiv.org/abs/2501.01005 |
 | [FA-HEURISTIC] | `num_splits_heuristic` in FlashAttention v2.6.3, `csrc/flash_attn/flash_api.cpp`. https://github.com/Dao-AILab/flash-attention/blob/v2.6.3/csrc/flash_attn/flash_api.cpp |
 
+## Chapter 14
+
+Numbers added to the FlashAttention chapter by the grid and FlashAttention-2 and -3 sections. The SM count is 108, from chapter 10. A D row is arithmetic in the chapter and in `content/labs/14-flash-attention/solution.py` (`count_programs`, `sm_fill`, `rescale_elements`). None is an A100 kernel measurement. The chapter quotes no value for `speedup_decode_32k`, because no A100 run of that shape went into this revision. The paper keys are defined in the Chapter 14a section.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Programs launched, $\lceil q_\text{len}/B_r \rceil \times$ batch $\times$ query heads, block_m 128 | 512 tokens, 8 heads: 32 programs. 8192 tokens, 8 heads: 512. 32,768 tokens, 24 heads: 6144. Decode, batch 1, 24 heads: 24. Decode, batch 4, 24 heads: 96 | D | chapter 14 |
+| SM fill in the first wave of 108 | 32/108 = 0.2963, 24/108 = 0.2222, 96/108 = 0.8889, 1.0 for 512 and 6144 programs | D | chapter 14 |
+| Waves of 108 slots | 512 programs: 5 waves, efficiency 0.9481. 6144 programs: 57 waves, efficiency 0.9981 | D | chapter 14 |
+| Scaled accumulator elements per head, L 8192, causal, 128x64 tiles, d 128 (4160 tile steps, 64 query tiles) | FlashAttention-1: 136,314,880. FlashAttention-2: 69,206,016, ratio 0.5077 | D | chapter 14 |
+| Causal matmul FLOPs per head at L 8192 | 17.18 GFLOP, as 4 L^2 d / 2 | D | chapter 14 |
+| Rescale term priced at 16 matmul FLOPs each | about 6.4% (FlashAttention-2) and 12.7% (FlashAttention-1) of the matmul work, an estimate that omits the exponentials | D | chapter 14 |
+| FlashAttention-2 output update | keeps an unscaled output and divides once at the end of the loop; stores the log-sum-exp instead of the max and the sum | C | [FA2] section 3.1.1 |
+| FlashAttention-2 grid | FlashAttention-1 runs batch size times heads blocks, efficient when that is large (say 80 or more) on 108 SMs; FlashAttention-2 also parallelizes over the sequence length | C | [FA2] section 3.2 |
+| FlashAttention-2 loop order | outer loop over row blocks, inner over column blocks; first suggested and implemented by Phil Tillet in Triton | C | [FA2] section 3.2 |
+| FlashAttention-2 causal masking | skips blocks above the diagonal, about 1.7 to 1.8 times faster than without the mask | C | [FA2] section 3.1.1 |
+| FlashAttention-2 forward benchmark on A100 | around 2 times FlashAttention, up to 230 TFLOP/s (73% of peak) | C | [FA2] abstract and section 4.1 |
+| FlashAttention-3 exponential throughput on H100 SXM5 | 989 TFLOP/s FP16 matmul against 3.9 TFLOP/s special functions; exponentials can take 50% of the matmul cycle at head dimension 128 | C | [FA3] section 3.1 |
+| FlashAttention-3 pingpong scheduling | FP16 forward, head dimension 128, length 8192: from 570 to 620-640 TFLOP/s | C | [FA3] section 3.1 |
+| FlashAttention-3 warp specialization | producer warps issue TMA, consumer warps issue WGMMA, registers reallocated with `setmaxnreg` | C | [FA3] section 3.1 |
+| FlashAttention-3 FP8 | block quantization (one scale per block of Q, K, V); incoherent processing multiplies Q and K by a random orthogonal matrix, ±1 diagonals times a Hadamard matrix, O(d log d); up to 2.6 times lower error than per-tensor FP8 | C | [FA3] section 3.3 and abstract |
+| FlashAttention-3 FP8 throughput | close to 1.2 PFLOP/s | C | [FA3] abstract |
+
 ## Chapter 13a
 
 Numbers introduced by the skinny-decode chapter. The arithmetic peak is 312 TFLOP/s and the rated bandwidth is 1935 GB/s, both from chapter 10. A time here is a byte count divided by that bandwidth, evaluated in `scripts/figures/13a-skinny-decode-gemm.py`. It is not an A100 kernel measurement. The layer is the up projection, K = 5120 and N = 17408.
