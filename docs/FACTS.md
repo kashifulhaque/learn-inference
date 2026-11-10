@@ -242,3 +242,23 @@ Numbers introduced by the int4 and KV chapter. Errors are computed by `scripts/f
 | [KIVI] | Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, Vladimir Braverman, Beidi Chen, and Xia Hu, KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache. https://arxiv.org/abs/2402.02750 |
 | [FP8] | Paulius Micikevicius, Dusan Stosic, Patrick Judd, John Kamalu, Stuart Oberman, Mohammad Shoeybi, Michael Siu, Hao Wu, Neil Burgess, Sangwon Ha, Richard Grisenthwaite, Naveen Mellempudi, Marius Cornea, Alexander Heinecke, and Pradeep Dubey, FP8 Formats for Deep Learning. https://arxiv.org/abs/2209.05433 |
 | [MIT6.5940] | MIT 6.5940, TinyML and Efficient Deep Learning Computing, Fall 2024, schedule. Lecture 5, Quantization (Part I), 19 September. Lecture 6, Quantization (Part II), 24 September. Lecture 13, Efficient LLM Deployment, 22 October. https://hanlab.mit.edu/courses/2024-fall-65940 |
+
+## Chapter 10
+
+Numbers introduced by the launch-floor model in the roofline chapter. Each is
+arithmetic on the chapter's A100 rates (312 TFLOP/s, 1935 GB/s) and its 5 µs
+launch cost, evaluated by `scripts/figures/10-roofline.py` through the lab's
+reference solution. None is an A100 measurement. The lab's CUDA timing of 400
+tiny kernels reports `tiny_eager_ms` and `tiny_graph_ms` on a device and has no
+expected value.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Kernel time model | per kernel, max of 5 µs launch and roofline floor; step is the sum | D | chapter 10 |
+| Floor of a batch-1 RMSNorm, 20,480 bytes | 10.6 ns | D | chapter 10 |
+| Floor of one of 271 weight kernels sharing 53.8 GB, intensity 1 | 0.1026 ms | D | chapter 10 |
+| 400-kernel decode step, 129 norms and 271 weight kernels, eager | 28.449 ms, memory bound | D | chapter 10 |
+| Same step in one graph, one 5 µs launch | 27.810 ms | D | chapter 10 |
+| Launch time a graph removes from that step | 0.639 ms, 2.2% of eager | D | chapter 10 |
+| 400 norm-sized kernels, eager | 2.000 ms, launch bound | D | chapter 10 |
+| Three norm-sized kernels and the one-token MLP, per-kernel sum against one max over the step | 0.2914 ms against 0.2764 ms | D | chapter 10 |

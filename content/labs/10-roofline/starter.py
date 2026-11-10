@@ -56,3 +56,47 @@ def roofline(flops: float, bytes_moved: float, spec: dict = A100_80GB) -> dict:
     """
     # TODO
     raise NotImplementedError
+
+
+# Chapter 10 prices a launch at 5 µs, the low end of its 5 to 10 µs range.
+LAUNCH_US = 5.0
+
+
+def launch_floor_ms(num_kernels: int, launch_us: float = LAUNCH_US) -> float:
+    """Time the launches alone take if the GPU waits on every one."""
+    # TODO
+    raise NotImplementedError
+
+
+def kernel_time_ms(flops: float, bytes_moved: float, launch_us: float = LAUNCH_US,
+                   spec: dict = A100_80GB) -> float:
+    """One kernel's step time in milliseconds.
+
+    A kernel that runs longer than a launch takes hides the next launch behind
+    it. A shorter kernel leaves the GPU waiting for the next launch. Decide per
+    kernel which one sets the time.
+    """
+    # TODO
+    raise NotImplementedError
+
+
+def step_time_ms(kernels: list[tuple[float, float]], launch_us: float = LAUNCH_US,
+                 graph: bool = False, spec: dict = A100_80GB) -> float:
+    """Time for a step made of (flops, bytes) kernels run one after another.
+
+    Eager (graph=False): every kernel pays its own launch. Graph (graph=True):
+    the whole step pays one launch, then every kernel runs at its roofline floor.
+    """
+    # TODO
+    raise NotImplementedError
+
+
+def classify_step(kernels: list[tuple[float, float]], launch_us: float = LAUNCH_US,
+                  spec: dict = A100_80GB) -> str:
+    """Return "launch", "memory", or "compute" for an eager step.
+
+    Charge each kernel's time to what set it, then return the label with the
+    most time.
+    """
+    # TODO
+    raise NotImplementedError

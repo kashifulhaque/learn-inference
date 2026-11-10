@@ -7,10 +7,22 @@
   "device_agnostic": true,
   "needs_weights": false,
   "timeout": 600,
-  "metrics": ["decode_intensity", "prefill_intensity", "ridge_point"],
+  "metrics": [
+    "decode_intensity",
+    "prefill_intensity",
+    "ridge_point",
+    "launch_floor_ms",
+    "step_eager_ms",
+    "step_graph_ms",
+    "launch_saved_ms",
+    "tiny_eager_ms",
+    "tiny_graph_ms",
+    "tiny_speedup"
+  ],
   "hints": [
     "A matmul of (m, k) by (k, n) does 2 * m * k * n FLOPs: one multiply and one add.",
     "Weights are read once per forward pass regardless of how many tokens are in it.",
-    "Attention during decode reads the KV cache but reuses nothing, so batching does not raise its intensity."
+    "Attention during decode reads the KV cache but reuses nothing, so batching does not raise its intensity.",
+    "A kernel that runs longer than its launch hides the next launch. Take the max per kernel, then sum. One max over the whole step hides launches that a short kernel exposes."
   ]
 }
