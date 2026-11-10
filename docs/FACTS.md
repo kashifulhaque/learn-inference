@@ -688,3 +688,54 @@ This section records numbers introduced by the pipeline and context parallelism 
 | [MEGATRON-SCALE] | Narayanan et al., Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM, arXiv:2104.04473. https://arxiv.org/abs/2104.04473 |
 | [LLAMA3] | Llama Team, The Llama 3 Herd of Models, arXiv:2407.21783, section 3.3.2. https://arxiv.org/abs/2407.21783 |
 | [CS336] | Stanford CS336 schedule, fetched for this chapter. https://cs336.stanford.edu/ |
+
+# Fact entries for chapter 19a
+
+This section records numbers introduced by the mixture-of-experts chapter. A
+number below is a claim from a cited page (tag C), or arithmetic from
+`content/labs/19a-moe/solution.py` and the Qwen3-30B-A3B config, printed by
+`scripts/figures/19a-moe-and-expert-parallelism.py` (tag D). Routing statistics
+come from seeded simulations (seed 19) with synthetic routers, not from a
+trained router. Nothing here is an A100 measurement. Link rates and the 4 µs hop
+latency are chapter 19's.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Qwen3-30B-A3B config | hidden 2048, 48 layers, 128 experts, top-8, expert width 768, 32 query heads, 4 KV heads, head dim 128, vocabulary 151,936, `norm_topk_prob` true, bfloat16, untied embeddings | C | [QWEN3-CFG] |
+| DeepSeek-V3 config | hidden 7168, 61 layers, first 3 dense, 256 routed and 1 shared expert, top-8, expert width 2048, `n_group` 8, `topk_group` 4, sigmoid scoring, `topk_method` `noaux_tc` | C | [DSV3-CFG] |
+| DeepSeek-V3 size | 671B total parameters, 37B activated per token | C | [DSV3] |
+| Mixtral | 8 experts per layer, 2 per token, 47B total, 13B active | C | [MIXTRAL] |
+| Switch expert capacity | (tokens per batch / experts) x capacity factor; overflowing tokens are not processed by the layer | C | [SWITCH] |
+| MegaBlocks | recasts MoE as block-sparse operations and never drops tokens | C | [MEGABLOCKS] |
+| EPLB | replicates heavily loaded experts and packs replicas onto GPUs; hierarchical policy for prefill, global policy for decode | C | [EPLB] |
+| DeepEP | expert-parallel all-to-all dispatch and combine kernels, with FP8 dispatch | C | [DEEPEP] |
+| vLLM fused MoE | Triton `fused_moe_kernel`; `moe_align_block_size` sorts and pads tokens by expert | C | [VLLM-FUSED] |
+| Qwen3-30B-A3B expert size | 3 x 2048 x 768 = 4,718,592 parameters, 9,437,184 bytes (9.0 MiB) | D | chapter 19a |
+| Qwen3-30B-A3B parameters | 30,532,122,624 total (28,991,029,248 in experts, 1,541,093,376 elsewhere); 3,353,032,704 active at top-8, 11.0% | D | chapter 19a |
+| Qwen3-30B-A3B bytes | 61,064,245,248 (61.06 GB, 56.87 GiB); 23.13 GiB left on 80 GiB; KV 98,304 B per token; 252,635 tokens fit | D | chapter 19a |
+| Expected distinct experts, E 128, k 8 | 8.00, 51.62, 111.77, 125.94, 127.97 at batch 1, 8, 32, 64, 128 | D | chapter 19a |
+| Weights read per decode step | 6,706,065,408 B at batch 1; 53.71 GB at batch 32 (8.01 times batch 1); 61.05 GB at batch 128 | D | chapter 19a |
+| Step floor at 1275 GB/s | 5.26 ms at batch 1, 42.13 ms at batch 32, 47.88 ms at batch 128; dense 27B 42.19 ms | D | chapter 19a |
+| Expert-MLP intensity B k / D | 1.000 at batch 1, 2.290 at 32, 4.065 at 64, 8.002 at 128 | D | chapter 19a |
+| Batch to reach the 161.24 ridge | 2,580 for E 128 k 8; 5,160 for E 256 k 8; 645 for E 8 k 2; dense 162 | D | chapter 19a |
+| Skewed routing, Zipf 0.8, batch 32 | 88.61 distinct experts against 111.77 uniform; ridge batch unchanged at 2,580 | D | chapter 19a |
+| Capacity drop, uniform routing, seed 19 | T 1024: 4.36% at factor 1.0, 0.01% at 1.25 (capacity 80, busiest expert 81); T 256: 8.84%, 1.66%; T 4096: 2.18%, 0.00% | D | chapter 19a |
+| Padded bmm example | counts 5,0,17,2,0,9,1,4 at block 8: 192 rows for 38 real, 5.05 times | D | chapter 19a |
+| All-to-all volume, 128 tokens, k 8, hidden 2048, bf16, 8 ranks | 3,670,016 B per rank per direction (3.5 MiB); 28,672 B per token | D | chapter 19a |
+| All-to-all time at 300 GB/s one way, alpha 4 µs | 12.23 µs bandwidth, 28 µs latency, 40.23 µs total; 3.86 ms for 96 per step | D | chapter 19a |
+| Imbalance, 1,024 tokens, 8 ranks, 16 experts each | uniform 1.049; Zipf 0.5 1.467; Zipf 0.8 1.758 | D | chapter 19a |
+| EPLB plan on Zipf 0.8 | packing only 1.172; 8 spare slots 1.001 | D | chapter 19a |
+| Hand example, loads 9, 4, 2, 1, 6 slots, 2 ranks | contiguous 13 and 3 (1.625); plan replicas 2,2,1,1, rank loads 8.5 and 7.5 (1.0625) | D | chapter 19a |
+
+| Key | Page |
+|---|---|
+| [QWEN3-CFG] | Qwen3-30B-A3B config.json. https://huggingface.co/Qwen/Qwen3-30B-A3B/blob/main/config.json |
+| [DSV3-CFG] | DeepSeek-V3 config.json. https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/config.json |
+| [DSV3] | DeepSeek-AI, DeepSeek-V3 Technical Report, arXiv:2412.19437. https://arxiv.org/abs/2412.19437 |
+| [MIXTRAL] | Jiang et al., Mixtral of Experts, arXiv:2401.04088. https://arxiv.org/abs/2401.04088 |
+| [SWITCH] | Fedus et al., Switch Transformers, arXiv:2101.03961, Figure 3. https://arxiv.org/abs/2101.03961 |
+| [MEGABLOCKS] | Gale et al., MegaBlocks, arXiv:2211.15841. https://arxiv.org/abs/2211.15841 |
+| [EPLB] | DeepSeek EPLB README. https://github.com/deepseek-ai/EPLB |
+| [DEEPEP] | DeepSeek DeepEP README. https://github.com/deepseek-ai/DeepEP |
+| [VLLM-FUSED] | vLLM, fused_moe.py. https://github.com/vllm-project/vllm/blob/main/vllm/model_executor/layers/fused_moe/fused_moe.py |
+| [CS336] | Stanford CS336 Spring 2025 syllabus: Lecture 4, Mixture of experts, Thursday 10 April. http://cs336.stanford.edu/spring2025/ |
