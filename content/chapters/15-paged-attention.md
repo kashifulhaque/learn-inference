@@ -372,13 +372,17 @@ Two design decisions follow, and neither is an accident:
   then hits the wall with room to make a decision, instead of with nothing left
   to move.
 
-Releasing is the reverse, and it must return every block:
+Releasing is the reverse, and it must return every block that no other
+sequence still holds. The sharing section adds the reference count that makes
+this precise. The following code sample shows the version with counts:
 
 ```python
 def release(self, seq_id):
     table = self.tables.pop(seq_id, None)
-    if table:
-        self.free.extend(table.blocks)
+    for block in table or []:
+        self.refs[block] -= 1
+        if self.refs[block] == 0:
+            self.free.append(block)
 ```
 
 > [!WARNING] A leaked block doesn't crash
@@ -502,6 +506,48 @@ three rules:
 That's copy-on-write, and it buys ==the single largest saving available to a
 chat stack==.
 
+### A fork and one divergent append
+
+Picture two block tables that point at the same physical blocks. A *fork* copies
+the table, not the data, and adds one to each block's count. A write that lands
+in a shared block allocates a private copy first. This example uses 16-token
+blocks and a pool of 64 blocks.
+
+Sequence `p` holds 20 tokens: one full block and a tail with 4 tokens in it.
+That takes 2 blocks, so 62 are free.
+
+1. `fork("p", "c")` gives `c` the same table. No block moves, 62 blocks stay
+   free, and both blocks have count 2.
+2. `c` appends token 21. It lands in the tail, which has count 2, so
+   `copy_on_write` takes a free block, copies the 4 tokens, subtracts one from
+   the old tail's count, and points `c`'s table at the copy. The free count
+   falls to 61. The counts are now `[2, 1]` along `p`'s table and 1 for `c`'s
+   new tail.
+3. `c` appends 11 more tokens. They fill the private tail, and the free count
+   stays at 61.
+4. The next token starts a third block, so the free count falls to 60.
+
+Only the divergent first append copies. A tail that is full does not copy at
+all: the next token goes into a fresh block, and the full block stays shared.
+
+The lab's `fork`, `copy_on_write`, and `append_token` implement these steps, and
+`release` decrements each block and returns it to the free list only at zero.
+
+> [!WARNING] Two wrong versions that look right
+> An implementation that never copies lets `p` and `c` write position 20 into
+> one block, so each overwrites the other's token. An implementation that copies
+> whenever the sequence has ever been forked takes a block on every append, and
+> the free count falls by 12 where it should fall by 1. The lab checks both. The
+> parent's visible tokens stay correct until the parent appends, so test the
+> sibling's write, not only the child's.
+
+The same discipline, a reference count and a copy before a write, extends from
+one shared prefix to a tree of them. For the radix tree that indexes shared
+prefixes, the hash that names each block by its parent, and eviction of only
+unreferenced leaves, see [chapter 15a](/c/15a-prefix-caching-and-radix-trees).
+
+### What sharing saves
+
 Take the common case: a service where every request carries the same 500-token
 system prompt. Sharing it saves on two fronts.
 
@@ -537,8 +583,10 @@ Two details bite in practice:
   into it.
 - **The match must be a prefix, not a substring.** Attention at position $p$
   depends on every token before $p$, so a cached block is reusable only if every
-  preceding block matched too. Implementations hash the token IDs of the prefix
-  up to and including each block, and look the block up by that hash.
+  preceding block matched too. Implementations name each block by a hash of its
+  parent's hash and its own token IDs, and look the block up by that name.
+  [Chapter 15a](/c/15a-prefix-caching-and-radix-trees) defines that hash and
+  checks it in its lab, so this lab doesn't repeat it.
 
 > [!TIP] Pad the system prompt to a block boundary
 > Prefixes that are exact multiples of the block size share perfectly. A system
@@ -624,6 +672,12 @@ is more interesting than the usual advice suggests:
 > $$
 >
 > That's 345 ms at 312 TFLOP/s, and considerably more in practice.
+>
+> The lab's `preemption_cost` reports the same numbers. For 2,000 tokens, 64 KiB
+> of KV per token, and 154,927,104 bytes of recurrent state, swap moves
+> 285,999,104 bytes out and 285,999,104 back, 571,998,208 in all. Recompute
+> moves 0 bytes and costs 107.6 TFLOP. A sequence of 2,001 tokens fills 126
+> blocks, so a swap moves 126 whole blocks, not 2,001 tokens' worth.
 
 By that arithmetic, ==swapping wins by an order of magnitude==, and the textbook
 answer, recompute always, isn't clearly right on this hardware and this model.
@@ -659,10 +713,10 @@ sequence's *current* length, not against `extra_tokens` alone. An implementation
 that ignores the existing length reallocates from scratch on every decode step
 and exhausts the pool in seconds.
 
-**Releasing a sequence twice.** Running `self.free.extend(table.blocks)` twice
-puts duplicate IDs in the free list, and two sequences then write to the same
+**Releasing a sequence twice.** Appending a sequence's blocks to the free list
+twice puts duplicate IDs in the free list, and two sequences then write to the same
 block. The symptom is one conversation's tokens appearing in another's output,
-which looks like a sampling bug and isn't. Popping the table before extending,
+which looks like a sampling bug and isn't. Popping the table before releasing,
 as the reference does, makes the second release a no-op.
 
 **Assuming block order.** The free list is LIFO, so a sequence's physical block
@@ -721,18 +775,24 @@ its most recent token.
 
 > [!TRY]
 > Build a paged KV cache and a decode kernel that reads through it. You pass when
-> the allocator conserves blocks at every boundary, paged decode attention
-> matches attention over the gathered prefix to $10^{-4}$, and the waste on the
-> ten-length mix is over 95% contiguous and under 5% paged.
+> the allocator conserves blocks at every boundary, a forked sequence shares
+> blocks and copies only the tail it writes, paged decode attention matches
+> attention over the gathered prefix to $10^{-4}$, the waste on the ten-length
+> mix is over 95% contiguous and under 5% paged, and the preemption byte counts
+> match the arithmetic above.
 
 Implement the following:
 
-- `PagedCache`, with `blocks_needed`, `allocate`, `release`, `slot_indices`,
-  `write`, and `gather`.
+- `PagedCache`, with `blocks_needed`, `allocate`, `refcount`, `fork`,
+  `copy_on_write`, `append_token`, `release`, `slot_indices`, `write`, and
+  `gather`.
 - `paged_decode_attention(cache, seq_ids, q)`, which attends each sequence's
   query against its own paged prefix.
 - `memory_waste(lengths, max_seq_len, block_size)`, which returns the contiguous
   and paged waste fractions.
+- `preemption_cost(num_tokens, kv_bytes_per_token, block_size, num_params,
+  state_bytes)`, which returns the bytes a swap moves out and back and the FLOPs
+  a recompute spends.
 
 The harness checks the allocator first:
 
@@ -745,6 +805,22 @@ The harness checks the allocator first:
 - Release returns precisely the blocks taken.
 - Exhausting a small pool raises.
 
+It then checks sharing on a 20-token parent:
+
+- A fork copies no block and gives both sequences count 2 on every block.
+- The first divergent append takes exactly one block, the full block stays
+  shared, and the counts are `[2, 1]`.
+- The parent's tokens survive the child's write, and the child's token survives
+  a sibling write to the same position.
+- Appends into a private tail take no block.
+- A full shared tail gets a fresh block instead of a copy.
+- Releasing in either order keeps every count at zero or above, and returns a
+  block only at zero.
+- A divergent append with no free block raises and changes nothing.
+
+It also checks `preemption_cost` against 285,999,104 bytes each way and
+107.6 TFLOP for 2,000 tokens, and against whole-block rounding at 2,001.
+
 Then it compares paged decode attention against attention over the gathered
 prefix for three sequences of 37, 5, and 64 tokens, requiring agreement to
 $10^{-4}$ and an output of shape `(3, heads, head_dim)`. Finally, it checks that
@@ -755,4 +831,5 @@ stays under 5%.
 
 - [Efficient memory management for large language model serving with PagedAttention](https://arxiv.org/abs/2309.06180)
 - [vLLM: easy, fast, and cheap LLM serving with PagedAttention](https://blog.vllm.ai/2023/06/20/vllm.html)
+- [Prefix caching and radix trees](/c/15a-prefix-caching-and-radix-trees), the next chapter, builds the tree and the block hash on top of `fork` and `copy_on_write`.
 - [SGLang: efficient execution of structured language model programs](https://arxiv.org/abs/2312.07104) — RadixAttention, which generalizes prefix sharing to a tree.

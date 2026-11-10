@@ -88,6 +88,17 @@ $1275/1935$.
 | [DISTSERVE] | Yinmin Zhong and others, DistServe: Disaggregating Prefill and Decoding for Goodput-Optimized Large Language Model Serving. https://arxiv.org/abs/2401.09670 |
 | [MIT65940] | MIT 6.5940, TinyML and Efficient AI Computing, Fall 2026 schedule. https://hanlab.mit.edu/courses/2026-fall-65940 |
 
+## Chapter 15
+
+Numbers the paged-attention lab checks. All are arithmetic from chapter 2's per-token KV bytes and recurrent state, evaluated in `content/labs/15-paged-attention/tests.py`. None is a measurement.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Swap bytes out, 2,000 tokens at 65,536 bytes of KV each, plus 154,927,104 bytes of recurrent state | 285,999,104 (back in: the same, 571,998,208 in all) | D | chapter 15 |
+| Recompute for the same sequence | 0 bytes moved; 2 × 26.9e9 × 2,000 = 107.6 TFLOP | D | chapter 15 |
+| Swap for 2,001 tokens, KV only | 126 blocks of 16, 132,120,576 bytes each way | D | chapter 15 |
+| Fork of a 20-token sequence, then 12 appends on the child | 62 free blocks after the fork, 61 after the first append, 61 after 12 appends, 60 after the 13th | D | chapter 15 |
+
 ## Chapter 15a
 
 Numbers introduced by the prefix-cache chapter. A byte count here is chapter 2's recurrent state, or an integer multiple of it. A time is the $2NL$ tensor-core term from chapter 15, evaluated in `scripts/figures/15a-prefix-caching-and-radix-trees.py`. It is not an A100 measurement, and it is not chapter 17a's prefill floor.

@@ -11,6 +11,8 @@
   "hints": [
     "Logical position p lives at block p // block_size, offset p % block_size.",
     "Blocks are interchangeable, so allocation is a pop from a free list and release is an extend.",
-    "Round up when computing how many blocks a length needs: -(-x // y) is ceiling division."
+    "Round up when computing how many blocks a length needs: -(-x // y) is ceiling division.",
+    "A fork copies the table and adds one to each count. Copy a tail only when it is shared and not full.",
+    "Swap moves whole blocks out and back. Recompute moves nothing and costs 2 * params * tokens FLOPs."
   ]
 }
