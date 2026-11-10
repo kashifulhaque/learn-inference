@@ -1,0 +1,22 @@
+{
+  "id": "19a-moe",
+  "title": "Mixture-of-experts serving",
+  "brief": "Route tokens to top-k experts, dispatch and combine them, count the experts a batch touches, price the all-to-all, and rebalance hot experts.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 120,
+  "metrics": [
+    "distinct_experts_batch_32",
+    "ridge_batch_uniform",
+    "all_to_all_bytes_per_rank",
+    "eplb_imbalance_factor"
+  ],
+  "hints": [
+    "Softmax over all experts first, then keep the top k and divide by their sum. Skipping the division leaves the weights summing to less than 1.",
+    "A capacity drop is decided in token order: for each expert, the first `capacity` (token, slot) pairs in row-major order stay.",
+    "A batch of B tokens misses an expert with probability (1 - k/E) per token, so it touches E * (1 - (1 - k/E)^B) experts on average.",
+    "The step waits on the busiest rank, so the cost factor is max load over mean load."
+  ]
+}

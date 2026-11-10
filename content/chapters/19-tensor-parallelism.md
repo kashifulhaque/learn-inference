@@ -731,6 +731,9 @@ flight fill the bubble, which requires many concurrent requests, and that's
 exactly what you don't have at low load. [Chapter 19b](/c/19b-pipeline-and-context-parallelism)
 builds the schedule and checks the bubble fraction.
 
+Mixture-of-experts models add a fourth layout, expert parallelism, which shards experts instead of
+matrices. [Chapter 19a](/c/19a-moe-and-expert-parallelism) covers its routing and all-to-all cost.
+
 **Tensor parallelism** is the only one of the three that reduces single-request
 decode latency, because it's the only one that reduces the bytes each GPU reads
 per token. It pays for that with 128 collectives per step and a hard
