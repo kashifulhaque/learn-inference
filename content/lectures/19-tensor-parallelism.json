@@ -180,7 +180,7 @@
       "start": 596.0,
       "end": 639.467,
       "slide": "slides/17-prefill.webp",
-      "notes": "Take a 4096-token prefill on 2 GPUs. Across 64 layers, each rank sends 5.37 GB. Prefill is limited by arithmetic, and on two A100 GPUs, the compute takes 353 ms. Over PCIe, the general-purpose bus, the transfer takes 83.9 ms, 24 percent of the compute. Over NVLink, the direct link between GPUs, it takes 8.95 ms, only 2.5 percent. The sharding that costs nothing over NVLink costs a quarter of your prefill over PCIe.",
+      "notes": "Take a 4096-token prefill on 2 GPUs. Across 64 layers, each rank sends 5.37 GB. Prefill is limited by arithmetic, and on two A100 GPUs, the compute takes 353 ms. Over PCIe, the general-purpose bus, at 32 GB/s one way the transfer takes 168 ms, 48 percent of the compute. Over NVLink, the direct link between GPUs, at 300 GB/s one way it takes 17.9 ms, only 5.1 percent. The sharding that costs a few percent over NVLink costs nearly half of your prefill over PCIe.",
       "book_section": "s-communication-volume",
       "book_anchor": "s-11"
     },

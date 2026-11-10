@@ -91,8 +91,8 @@ $1275/1935$.
 | Batch where compute and memory floors meet, hybrid, context 1, degree 1 | 2,515.71 | D | chapter 17a |
 | Sequences that fit at context 1, degree 1, beside the hybrid weights | 207 | D | chapter 17a |
 | Prefill floor, one hybrid sequence, 2048 tokens, degree 1 | 360.094 ms (compute 358.094 ms, memory 37.176 ms) | D | chapter 17a |
-| Four GPUs, context 1024, 1 s TPOT SLO, NVLink 600 GB/s, search to batch 4096 | degree 4, 16,217 tokens/s | D | chapter 17a |
-| Same workload on PCIe 64 GB/s | degree 2 with two replicas, 13,175 tokens/s | D | chapter 17a |
+| Four GPUs, context 1024, 1 s TPOT SLO, NVLink 300 GB/s one way, search to batch 4096 | degree 4, 15,398 tokens/s | D | chapter 17a |
+| Same workload on PCIe 32 GB/s one way | degree 2 with two replicas, 11,609 tokens/s | D | chapter 17a |
 | Pope et al. split inference into a memory time and a compute time, and treat prefill and decode separately | analytical model, not a latency for this model | C | [POPE] |
 | DistServe defines goodput from a TTFT SLO and a TPOT SLO together | definition | C | [DISTSERVE] |
 | CS336 lecture titles used here | Lecture 2, resource accounting; Lecture 10, Inference | C | [CS336] |

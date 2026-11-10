@@ -17,6 +17,8 @@ import random
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+# One-way rates in GB/s (chapter 19): 300 is half of the 600 GB/s NVLink rating, 32 is half of 64 GB/s PCIe.
+LINKS = ((300.0, "nvlink"), (32.0, "pcie"))
 SOL = ROOT / "content" / "labs" / "17a-performance-model" / "solution.py"
 
 
@@ -34,7 +36,7 @@ def a100(m):
         "launch_us": 5.0,
         "launches": 400,
         "allreduce_us": 8.0,
-        "link_gbs": 600.0,
+        "link_gbs": 300.0,
         "memory_bytes": 80 * 1024**3,
         "tp": 1,
     }
@@ -126,7 +128,7 @@ def main() -> None:
     # Chapter 19's prefill communication example, bandwidth term only.
     comm_bytes = 64 * 4096 * 40960 * 0.5
     print(f"ch19_prefill_comm_bytes {comm_bytes} gb {comm_bytes / 1e9:.4f}")
-    print(f"ch19_nvlink_ms {comm_bytes / 600e9 * 1e3:.4f}")
+    print(f"ch19_nvlink_one_way_ms {comm_bytes / 300e9 * 1e3:.4f}")
     print(f"model_prefill_comm_ms {m.comm_seconds(hw, 4096, 2) * 1e3:.4f}")
 
     print("crossing and fit")
@@ -202,13 +204,26 @@ def main() -> None:
     print(f"single_gpu_cap_tok_s {g:.6f}")
     print(f"tokens_per_dollar_over_price {g * 3600:.6f}")
 
+    print("layout table, 4 GPUs, ctx 1024, prompt 128, max_batch 4096, TTFT SLO 1 s")
+    wl = {"prompt": 128, "ctx": 1024, "max_batch": 4096}
+    for link, name in (LINKS):
+        hw_l = dict(hw, link_gbs=link)
+        for slo_tpot in (0.025, 0.040, 0.080, 1.0):
+            row = []
+            for tp in (1, 2, 4):
+                per = m.max_goodput(hybrid, dict(hw_l, tp=tp), 1.0, slo_tpot, wl)
+                row.append(f"{per * (4 // tp):.0f}")
+            print(f"  {name} tpot {slo_tpot} replicas4 / tp2 / tp4: " + " / ".join(row))
+
     print("full-cap layouts, 4 GPUs, prompt 128, max_batch 4096")
     for ctx in (1024, 4096, 32768):
         wl = {"prompt": 128, "ctx": ctx, "max_batch": 4096}
-        for link, name in ((600.0, "nvlink"), (64.0, "pcie")):
+        for link, name in LINKS:
             hw_l = dict(hw, link_gbs=link)
             choice = m.choose_layout(hybrid, hw_l, 4, 1.0, 1.0, wl)
             print(f"  ctx {ctx} {name} pick tp {choice['tp']} replicas {choice['replicas']} tok_s {choice['tokens_per_s']:.2f}")
+            alts = [m.max_goodput(hybrid, dict(hw_l, tp=tp), 1.0, 1.0, wl) * (4 // tp) for tp in (1, 2, 4)]
+            print(f"    replicas4 / tp2 / tp4: " + " / ".join(f"{a:.0f}" for a in alts))
 
     # Chapter 19 weight-read at 1275, for the comparison sentence.
     print(f"weight_only_1935_ms {53_791_959_040 / 1935e9 * 1e3:.4f}")
