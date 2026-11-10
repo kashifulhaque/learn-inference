@@ -1,0 +1,18 @@
+{
+  "id": "19b-pipeline-and-ring",
+  "title": "Pipeline schedules and ring attention",
+  "brief": "Build a pipeline Gantt table and its bubble fraction, shard attention over a simulated ring with load-balanced causal assignment, and compare tensor, pipeline, context, and data parallelism for one long request.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 300,
+  "metrics": ["ring_attention_error", "striped_imbalance", "max_memory_per_rank_ratio"],
+  "hints": [
+    "Build the causal mask from each token's position in the whole sequence, not from its index inside the block.",
+    "A query row with no visible key has a log-sum-exp of negative infinity. Skip that block and the merge ignores it.",
+    "Put the output back in token order. Rank r's rows came from shard_indices(r), not from rows r * n to (r + 1) * n.",
+    "A ring step waits for its busiest rank, so the critical path is the sum over steps of the maximum, not the maximum of the totals.",
+    "Stage s runs micro-batch t - s at time t. Count the idle slots in the table instead of trusting the formula."
+  ]
+}
