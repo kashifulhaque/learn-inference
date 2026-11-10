@@ -1,0 +1,17 @@
+{
+  "id": "11a-constrained-decoding",
+  "title": "Constrained decoding",
+  "brief": "Lift a byte-level DFA to a token mask, sample under it, cache it, jump over forced text, and keep one grammar state per batch row.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "needs_weights": false,
+  "device_agnostic": true,
+  "timeout": 300,
+  "metrics": ["mask_build_ms", "cached_mask_us", "completions_matching", "retokenize_mismatch_rate", "jump_tokens_saved"],
+  "hints": [
+    "A token is legal only if all of its bytes keep the DFA alive, not just the first byte.",
+    "Apply the mask before top-k. If top-k runs first, the k survivors can all be illegal.",
+    "Jump forward only through states that are not accepting. An accepting state can also stop.",
+    "One mask per request: rows of a batch are usually in different grammar states."
+  ]
+}

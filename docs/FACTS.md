@@ -413,3 +413,41 @@ A100 measurement.
 | Break-even batch with a 154,927,104-byte state snapshot per sequence | α 0.5 γ 4: 47; α 0.8 γ 2: 96; α 0.8 γ 4: 85; α 0.8 γ 8: 63; α 0.9 γ 4: 105 | D | chapter 20 |
 | Snapshot copy time per sequence per round at 1935 GB/s | 0.160 ms; speedup at batch 32 falls from 2.80 to 2.43 | D | chapter 20 |
 | Scalar rollback example, decay 0.9, start 2.0, writes 1.0, 0.5, 2.0, 1.5 | state after four steps 5.7462; correct state after keeping two inputs 3.02 | D | chapter 20 |
+
+# Fact entries for chapter 11a
+
+This section records numbers introduced by the constrained-decoding chapter.
+A number below is a claim from a cited page (tag C), or arithmetic from
+`content/labs/11a-constrained-decoding/solution.py`, printed by
+`scripts/figures/11a-constrained-decoding.py` (tag D). Nothing here is an A100
+measurement. The timing rows are pure-Python CPU timings on the author's machine.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Outlines recasts generation as moves between states of a finite-state machine and builds an index over the vocabulary | stated in the abstract | C | [OUTLINES] |
+| XGrammar splits the vocabulary into context-independent tokens, which are prechecked, and context-dependent tokens, which are interpreted at run time | stated in the abstract | C | [XGRAMMAR] |
+| XGrammar co-designs the grammar engine with the inference engine so grammar work overlaps with GPU execution | stated in the abstract | C | [XGRAMMAR] |
+| SGLang jump-forward: forced single-path FSM transitions are appended as one string, and the whole sequence is re-tokenized, which adds about 4% overhead | as stated in the blog | C | [SGLANG-CFSM] |
+| SGLang compressed FSM, llama-7B on an A10 | up to 2x lower latency at batch 1, up to 2.5x higher throughput | C | [SGLANG-CFSM] |
+| llguidance mask time, 128k tokenizer | on the order of 50 µs of CPU time per token | C | [LLGUIDANCE] |
+| vLLM structured outputs backends and fields | xgrammar or guidance backends; `structured_outputs` with `choice`, `regex`, `json`, `grammar`, `structural_tag` | C | [VLLM-SO] |
+| Toy vocabulary of the lab | 296 tokens: end, pad, 256 single bytes, 38 multi-character | D | chapter 11a |
+| Worked draw, logits 4, 2, 1, 3, 0 for maybe, y, yes, n, no, T=1 | unconstrained 0.6364, 0.0861, 0.0317, 0.2341, 0.0117; masked 0, 0.2369, 0.0871, 0.6439, 0.0321 | D | chapter 11a |
+| Legal tokens for `(yes\|no)` at the start, after `y`, after `ye`, after `yes` | 5, 2, 1, 1 of 296 | D | chapter 11a |
+| JSON pattern `\{"name": "[a-z]{1,8}", "age": (0\|[1-9][0-9]{0,2})\}` | 34 DFA states; 2 legal tokens at the start; 10 forced bytes in 3 tokens; 19 of 24 bytes forced in `{"name": "bo", "age": 7}` | D | chapter 11a |
+| `nested_array_regex` depths 1 to 5, unminimized subset DFA | 7, 17, 37, 77, 157 states | D | chapter 11a |
+| Mask size at 248,320 tokens | 248,320 B per row as bool, 31,040 B bit-packed | D | chapter 11a |
+| Mask size at batch 128 | 31,784,960 B bool, 3,973,120 B packed | D | chapter 11a |
+| Copy time at 32 GB/s one way (chapter 19's PCIe figure), batch 128 | 0.993 ms bool, 0.124 ms packed; 2.4% of the 42.2 ms decode weight read (53.8 GB at 1275 GB/s) | D | chapter 11a |
+| Mask cache for 34 states at 248,320 tokens, bool | 8,442,880 B | D | chapter 11a |
+| Mask build, pure Python, random 248,320-token vocabulary | about 34 ms; cached lookup about 0.07 µs; CPU timing, varies by machine | D | chapter 11a |
+| 250 seeded completions of the JSON pattern | 250/250 pass `re.fullmatch` and `json.loads`; the sampled token path differs from greedy longest-match encoding in 250/250 | D | chapter 11a |
+| `[0-9]{1,3}` as the age | accepts `007` under `re.fullmatch`; `json.loads` rejects it | D | chapter 11a |
+
+| Key | Page |
+|---|---|
+| [OUTLINES] | Willard and Louf, Efficient Guided Generation for Large Language Models, arXiv:2307.09702. https://arxiv.org/abs/2307.09702 |
+| [XGRAMMAR] | Dong et al., XGrammar: Flexible and Efficient Structured Generation Engine for Large Language Models, arXiv:2411.15100. https://arxiv.org/abs/2411.15100 |
+| [SGLANG-CFSM] | Fast JSON Decoding for Local LLMs with Compressed Finite State Machine, LMSYS blog, 2024-02-05. https://lmsys.org/blog/2024-02-05-compressed-fsm/ |
+| [LLGUIDANCE] | llguidance README. https://github.com/guidance-ai/llguidance |
+| [VLLM-SO] | vLLM, Structured Outputs. https://docs.vllm.ai/en/latest/features/structured_outputs/ |
