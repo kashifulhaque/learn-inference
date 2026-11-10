@@ -768,6 +768,8 @@ To ask whether splitting prefill and decode onto separate GPUs moves that knee,
 read [chapter 17b](/c/17b-disaggregated-serving), which replays a trace on a
 simulated clock in both layouts.
 
+To turn a running engine's event log into TTFT and ITL histograms, alerts, and a cold-start time, read [chapter 17c](/c/17c-observability-and-cold-start).
+
 ## What goes wrong
 
 Each of these mistakes produces a number that looks reasonable:

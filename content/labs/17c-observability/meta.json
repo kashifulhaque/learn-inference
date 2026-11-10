@@ -1,0 +1,22 @@
+{
+  "id": "17c-observability",
+  "title": "Observability and cold start",
+  "brief": "Parse an engine event log into queue, TTFT, and ITL histograms, read a quantile back from the buckets, write alerts that do not flap, and model the time to ready of a cold start.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "needs_weights": false,
+  "device_agnostic": true,
+  "timeout": 120,
+  "metrics": [
+    "ttft_p99_bucket_estimate",
+    "ttft_p99_exact",
+    "kv_alert_start_s",
+    "time_to_ready_stream_s"
+  ],
+  "hints": [
+    "A bucket's le is less than or equal. Count a sample into the first bucket whose bound is at least the sample, then add the counts from the left so each bucket includes all the smaller ones.",
+    "histogram_quantile finds the first bucket whose cumulative count reaches q times the total, then interpolates between that bucket's lower and upper bound by how far into its own samples the rank falls.",
+    "The alert has three states: idle, pending since some time, and firing. Pending needs the condition to hold for for_s. Firing needs the condition to stay false for keep_firing_for_s before it resolves.",
+    "Streaming reads chunk k+1 while it copies chunk k. For n equal chunks the time is n times the slower stage plus one chunk of the faster stage."
+  ]
+}
