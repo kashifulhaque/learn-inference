@@ -34,6 +34,23 @@ def emit(result: dict[str, Any]) -> None:
     print(RESULT_PREFIX + json.dumps(result), flush=True)
 
 
+def _enforce_thresholds(outcome: dict[str, Any], meta_path: Path) -> None:
+    """Apply the lab's optional perf_threshold from the meta.json next to tests.py."""
+    try:
+        meta = json.loads(meta_path.read_text()) if meta_path.is_file() else {}
+        if "perf_threshold" in meta:
+            from lab_common import enforce_perf_thresholds
+
+            enforce_perf_thresholds(outcome, meta)
+    except Exception:
+        traceback.print_exc()
+        outcome.setdefault("checks", []).append(
+            {"name": "perf_threshold config", "passed": False,
+             "detail": "Could not apply perf_threshold. See the traceback above."}
+        )
+        outcome["passed"] = False
+
+
 def main() -> int:
     faulthandler.enable()
     work = Path(os.environ["LI_WORK_DIR"])
@@ -85,6 +102,7 @@ def main() -> int:
     outcome["metrics"]["wall_seconds"] = round(time.time() - started, 3)
     checks = outcome.get("checks", [])
     outcome["passed"] = bool(outcome.get("passed", all(c["passed"] for c in checks)))
+    _enforce_thresholds(outcome, tests_path.parent / "meta.json")
     emit(outcome)
     return 0
 

@@ -182,3 +182,14 @@ the model's config, or cited. When you revise a chapter, keep every number,
 measurement, code sample, lab requirement, and link intact, and recompute any
 new arithmetic you add. If a measurement contradicts the tidy prediction, say
 so: the chapters exist partly to show where the textbook byte count is wrong.
+
+## Performance thresholds in labs
+
+Add `perf_threshold` to a lab's `meta.json` only when the chapter quotes a number
+measured on the target A100 for that metric. Set `min` (or `max`) from the
+measured value with margin, so a correct solution passes on both the SXM4 and
+the PCIe card; the default `perf_tolerance` of 0.05 covers the variant noise
+described in the README's [Measured on the target
+hardware](../README.md#measured-on-the-target-hardware) section. Never set a
+threshold from a CPU run or from a guess. For the block's format and
+semantics, see the README's "Performance thresholds".

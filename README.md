@@ -295,6 +295,32 @@ python3 scripts/check_labs.py
 Labs that need CUDA are skipped on a machine without a GPU and reported as
 skipped. To run those, use a GPU host, or open the lab in the app.
 
+### Performance thresholds
+
+By default a lab's tests grade correctness only, and the metrics in `meta.json`
+are informational. A lab can also grade a speed claim by adding an optional
+`perf_threshold` block to its `meta.json`:
+
+```json
+"metrics": ["swiglu_speedup", "achieved_gbs"],
+"perf_threshold": {
+  "swiglu_speedup": {"min": 1.4},
+  "achieved_gbs": {"min": 900}
+},
+"perf_tolerance": 0.05
+```
+
+Each entry names a metric from `metrics` and sets exactly one of `min` or `max`.
+Because RunPod can give you either A100 variant (see
+[Measured on the target hardware](#measured-on-the-target-hardware)), timings
+differ by a few percent, so the check applies a tolerance, 0.05 by default:
+`min` passes when the metric is at least `min * (1 - tolerance)`, and `max`
+passes when it is at most `max * (1 + tolerance)`. A metric that is missing or
+not a number, for example because the lab skipped it on a CPU, shows as a
+skipped line and does not fail, so CPU runs and CI stay green.
+`scripts/check_labs.py` validates the block and enforces it for the reference
+solution, and the GPU worker enforces it for learner submissions.
+
 ## Write a chapter
 
 Chapters use a few reading aids on top of Markdown: callouts such as

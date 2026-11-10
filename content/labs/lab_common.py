@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import traceback
 from typing import Any, Callable
 
@@ -84,3 +85,87 @@ def pick_device():
     import torch
 
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+DEFAULT_PERF_TOLERANCE = 0.05
+
+
+def validate_perf_threshold(meta: dict[str, Any]) -> list[str]:
+    """Return the problems with a lab's `perf_threshold` and `perf_tolerance`.
+
+    An empty list means the block is absent or well formed. Each threshold must
+    be `{"min": number}` or `{"max": number}` and name a metric in `metrics`.
+    """
+    errors: list[str] = []
+
+    def is_number(v: Any) -> bool:
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+    if "perf_tolerance" in meta:
+        tol = meta["perf_tolerance"]
+        if not is_number(tol) or not 0 <= tol < 1:
+            errors.append(f"perf_tolerance must be a number in [0, 1), got {tol!r}")
+    block = meta.get("perf_threshold")
+    if block is None:
+        if "perf_tolerance" in meta:
+            errors.append("perf_tolerance is set but perf_threshold is not")
+        return errors
+    if not isinstance(block, dict) or not block:
+        return errors + ["perf_threshold must be a non-empty object"]
+    known = set(meta.get("metrics", []))
+    for metric, spec in block.items():
+        if metric not in known:
+            errors.append(f"perf_threshold names '{metric}', which is not in metrics")
+        if not isinstance(spec, dict) or len(spec) != 1:
+            errors.append(f"perf_threshold['{metric}'] must have exactly one key, min or max")
+            continue
+        (kind, value), = spec.items()
+        if kind not in ("min", "max"):
+            errors.append(f"perf_threshold['{metric}'] has unknown key '{kind}' (use min or max)")
+        elif not is_number(value) or value <= 0:
+            errors.append(f"perf_threshold['{metric}'].{kind} must be a positive number, got {value!r}")
+    return errors
+
+
+def enforce_perf_thresholds(result: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
+    """Append one check per `perf_threshold` entry to a lab result.
+
+    A `min` threshold passes when metric >= min * (1 - tol), and a `max`
+    threshold passes when metric <= max * (1 + tol), where tol is
+    `perf_tolerance` (default 0.05). A metric that is absent or not a number,
+    such as one skipped on a CPU, is recorded as a passing "skipped" line so
+    that CPU runs and CI stay green. A malformed block adds one failing check.
+    Updates `result["passed"]` and returns `result`.
+    """
+    block = meta.get("perf_threshold")
+    if block is None:
+        return result
+    checks = result.setdefault("checks", [])
+    first_new = len(checks)
+    problems = validate_perf_threshold(meta)
+    if problems:
+        checks.append({"name": "perf_threshold config", "passed": False,
+                       "detail": "; ".join(problems)})
+    else:
+        tol = meta.get("perf_tolerance", DEFAULT_PERF_TOLERANCE)
+        metrics = result.get("metrics", {})
+        for metric, spec in block.items():
+            (kind, limit), = spec.items()
+            bound = limit * (1 - tol) if kind == "min" else limit * (1 + tol)
+            op = ">=" if kind == "min" else "<="
+            name = f"perf: {metric} {op} {limit:g} (tolerance {tol:.0%}, bound {bound:g})"
+            value = metrics.get(metric)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                checks.append({"name": name, "passed": True, "skipped": True,
+                               "detail": f"skipped, metric not measured (got {value!r})"})
+                continue
+            ok = value >= bound if kind == "min" else value <= bound
+            checks.append({"name": name, "passed": bool(ok),
+                           "detail": f"measured {value:g}, need {op} {bound:g}"})
+    for c in checks[first_new:]:
+        print(f"[{'PASS' if c['passed'] else 'FAIL'}] {c['name']} — {c['detail']}", flush=True)
+    # Thresholds can only turn a pass into a failure, never the reverse: a
+    # result that already failed (for example, a harness error) stays failed.
+    prior = bool(result.get("passed", True))
+    result["passed"] = prior and all(c["passed"] for c in checks[first_new:])
+    return result

@@ -31,6 +31,8 @@ def load(name, path):
 
 
 def main(argv):
+    from lab_common import enforce_perf_thresholds, validate_perf_threshold
+
     try:
         import torch
 
@@ -46,6 +48,11 @@ def main(argv):
         lab_id = meta["id"]
         if wanted and lab_id not in wanted:
             continue
+        bad = validate_perf_threshold(meta)
+        if bad:
+            failed.append(lab_id)
+            print(f"FAIL  {lab_id}  meta.json: {'; '.join(bad)}")
+            continue
         # Some GPU labs check mathematics that runs anywhere; their tests call
         # pick_device and are marked device_agnostic so they still run on CPU.
         if meta.get("needs_gpu") and not has_cuda and not meta.get("device_agnostic"):
@@ -58,7 +65,7 @@ def main(argv):
         try:
             solution = load(f"sol_{lab_id.replace('-', '_')}", lab_dir / "solution.py")
             tests = load(f"tst_{lab_id.replace('-', '_')}", lab_dir / "tests.py")
-            outcome = tests.run(solution)
+            outcome = enforce_perf_thresholds(tests.run(solution), meta)
         except Exception:
             traceback.print_exc()
             failed.append(lab_id)
