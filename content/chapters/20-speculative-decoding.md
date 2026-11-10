@@ -10,7 +10,8 @@ objectives:
   - Prove that the accept-reject rule produces samples distributed exactly as the target.
   - Derive the expected tokens per round, the net speedup, and the optimal draft length.
   - "Choose a draft: a small model, a multi-token prediction head, n-gram lookup, or Medusa heads."
-  - Roll back a rejected token from both a paged KV cache and a recurrent state.
+  - Roll back a rejected token from both a paged KV cache and a recurrent state, and check that the result equals never having run it.
+  - Compute the batch size at which speculation stops paying, from the roofline.
 lab: 20-spec-decode
 ---
 
@@ -514,8 +515,10 @@ continuations simultaneously.
 ## Batching makes it worse
 
 Everything so far assumed batch 1. This section explains why the gain shrinks as
-the batch grows. At batch 1, speculative decoding gives 2 to 3 times. At batch
-32 it often gives nothing, for two reasons that compound.
+the batch grows, and at which batch it disappears. At batch 1, speculative
+decoding gives 2.8 times for $\alpha = 0.8$ and $\gamma = 4$. It holds that
+gain while the verification pass stays under the ridge point, then falls below
+1, for two reasons that compound.
 
 **The idle compute is gone.** Arithmetic intensity rises with the number of
 tokens in the pass. At batch 32 a plain decode step already carries 32 tokens,
@@ -541,6 +544,77 @@ Production engines enable speculation adaptively: on at low batch size, off at
 high, with the threshold set by $B(\gamma+1)$ against the ridge point. That's
 the correct behavior, so implement it instead of treating speculation as a
 global switch.
+
+### Where it stops paying
+
+The threshold is a number you can compute, so this subsection computes it. A
+pass over $T$ tokens per sequence at batch $B$ takes the longer of the weight
+read and the arithmetic. With 53.8 GB of weights, 26.9 billion active
+parameters, and the rated 1935 GB/s and 312 TFLOP/s:
+
+$$
+t(B, T) = \max\!\left(\frac{53.8 \times 10^{9}}{1935 \times 10^{9}},\;
+\frac{2 \times 26.9 \times 10^{9}\, B\, T}{312 \times 10^{12}}\right)
+= \max\big(27.80 \text{ ms},\; 0.1724\, B\, T \text{ ms}\big)
+$$
+
+The two terms cross at $B\,T = 161.2$ tokens, which is the ridge point. A
+speculative round costs $\gamma$ draft passes, each a fraction $c$ of a plain
+step, plus one verification pass over $\gamma + 1$ tokens per sequence. Divide
+the tokens it yields by that cost, in units of the plain step $t(B, 1)$:
+
+$$
+\boxed{\operatorname{speedup}(B) =
+\frac{\mathbb{E}[N+1]}{\gamma c + t(B, \gamma+1)\,/\,t(B, 1)}}
+$$
+
+The ratio in the denominator is 1 while $B(\gamma+1) \le 161.2$, so verification
+is free, and it climbs to $\gamma + 1$ once $B$ passes the ridge. Below the
+ridge it grows linearly, which gives a closed form for the break-even:
+$\operatorname{speedup} = 1$ when $B(\gamma+1)/161.2 = \mathbb{E}[N+1] - \gamma c$.
+
+> [!EXAMPLE] Break-even for $\alpha = 0.8$, $\gamma = 4$, $c = 0.05$
+> The round yields $\mathbb{E}[N+1] = 3.3616$ tokens and the draft costs
+> $\gamma c = 0.2$ plain steps. Setting the ratio equal to $3.3616 - 0.2 = 3.1616$:
+>
+> $$
+> B^{*} = \frac{161.2 \times 3.1616}{5} = 101.96
+> $$
+>
+> Batch 101 still wins, at 1.009 times. Batch 102 loses, at 0.9996 times. Past the
+> ridge the ratio is 5 and the speedup flattens at $3.3616 / 5.2 = 0.65$. At
+> batch 32 the verification pass carries 160 tokens, still just under the ridge,
+> so the speedup is the full 2.80. At batch 128 it carries 640 tokens, takes
+> 110.4 ms against a plain step's 27.8 ms, and gives 0.81 times.
+
+The break-even moves the way the earlier sections predict. A better draft and a
+shorter draft push it out. Snapshotting the recurrent state for rollback, at
+the 154,927,104 bytes per sequence from
+[the paged attention chapter](/c/15-paged-attention), adds
+$2 \times 154.9 \times 10^{6} / 1935 \times 10^{9} = 0.160$ ms per sequence per
+round and pulls it in:
+
+| $\alpha$ | $\gamma$ | Tokens per round | Break-even batch | With a state snapshot |
+|---|---|---|---|---|
+| 0.5 | 4 | 1.94 | 56 | 47 |
+| 0.8 | 2 | 2.44 | 125 | 96 |
+| 0.8 | 4 | 3.36 | 101 | 85 |
+| 0.8 | 8 | 4.33 | 70 | 63 |
+| 0.9 | 4 | 4.10 | 125 | 105 |
+
+At $\alpha = 0.8$ and $\gamma = 4$, the snapshot alone costs 16 batch slots, and
+at batch 32 it drops the speedup from 2.80 to 2.43. The chunked commit from the
+next section needs no snapshot, so it keeps the 101.
+
+> [!WARNING] This model is an upper bound on where speculation pays
+> It prices only the weight read and the matmul arithmetic. It leaves out the
+> attention and state traffic of
+> [the performance model chapter](/c/17a-performance-model), the launch floor, and
+> ragged acceptance, all of which move the real break-even down. Treat 101 as
+> the point beyond which speculation certainly loses, and measure on your own
+> engine for the point where it stops being worth the complexity. Tree
+> speculation, which spends the same budget on several drafts at once, is later
+> material.
 
 ## Rolling back a rejected token
 
@@ -632,6 +706,26 @@ another reason speculation and large batches don't mix.
 **The chunked form avoids the problem entirely.** This is the design to reach
 for, and it reuses machinery the gated delta rule chapter already built.
 
+> [!EXAMPLE] Rollback on one number
+> Take a scalar state with a decay of 0.9, a starting value of 2.0, and four
+> inputs (the last committed token and three drafts) whose writes are 1.0, 0.5,
+> 2.0, and 1.5. Each step is $s \leftarrow 0.9\,s + w$, so the verification pass
+> walks the state through 2.8, 3.02, 4.718, and 5.7462. The target accepts one
+> draft token, so the first two inputs survive. The right state is 3.02. A
+> rollback that only truncates the KV cache leaves 5.7462, which is off by 2.73,
+> and every later token reads it. Restoring the snapshot of 2.0 and replaying
+> the two surviving writes gives 3.02 exactly.
+
+The lab runs this on a toy hybrid cache: a KV list, plus a gated delta state
+that `step` overwrites in place. Its check is the equivalence the example
+shows. After drafting, accepting $j$, and rolling back, the cache's length, keys,
+values, and state must equal those of a cache that ran only the first $j + 1$
+inputs from scratch, and its next output must match too. The lab replays by
+calling `step` again, which recomputes the projections. An engine instead
+saves each token's update inputs during verification and re-applies only those,
+so the replay costs no weight read. A third option keeps the state after every
+position and picks one, which trades memory for the replay.
+
 > [!KEY] Treat the speculative tokens as one chunk
 > The chunked delta rule computes every output in a chunk from the chunk's
 > *starting* state plus intra-chunk terms, and applies the state update only at
@@ -690,7 +784,15 @@ These are the mistakes the lab and a real engine surface:
 - **Leaving the recurrent state advanced.** The same failure, harder to see,
   because there's no length to inspect. The symptom is output that degrades
   over a long generation while short generations look fine: the state
-  accumulates the effect of every rejected token.
+  accumulates the effect of every rejected token. The lab's rollback check
+  catches the version where the KV cache is truncated and the state is left
+  alone.
+- **Snapshotting by reference.** A snapshot that holds the state tensor instead
+  of a copy sees the speculative updates, because they overwrite it in place.
+  Restoring it restores nothing.
+- **Assuming verification is free at every batch size.** It's free only below
+  $B(\gamma+1) \approx 161$. Beyond the break-even batch, speculation makes the
+  engine slower, and a snapshot per sequence moves that batch lower.
 
 > [!RECAP]
 > - Decode is memory bound, so verifying $\gamma + 1$ tokens costs one weight
@@ -702,7 +804,13 @@ These are the mistakes the lab and a real engine surface:
 > - The speedup is capped by $1/(1-\alpha)$ and by $B(\gamma+1) \lesssim 161$,
 >   so turn speculation off at large batch sizes.
 > - Roll back the KV cache by length; for the recurrent state, verify as one
->   chunk and commit only the accepted prefix.
+>   chunk and commit only the accepted prefix, or snapshot by copy, restore, and
+>   replay the accepted tokens.
+> - A correct rollback equals never having run the rejected tokens. Truncating
+>   the KV cache alone fails that test.
+> - Verification is free below the ridge and costs about $\gamma + 1$ times a
+>   plain step above it, so speculation has a break-even batch: 101 for
+>   $\alpha = 0.8$, $\gamma = 4$, $c = 0.05$.
 
 ## Check your understanding
 
@@ -724,13 +832,14 @@ These are the mistakes the lab and a real engine surface:
 > $\gamma = 13$ puts 14 tokens in the verification pass, far below 161, so it's
 > still free.
 
-> [!QUESTION] Speculation gives 2.4 times at batch 1 and 1.0 times at batch 32. Is something broken?
-> No, that's the expected behavior. At batch 32 with $\gamma = 4$ the
-> verification pass carries $32 \times 5 = 160$ tokens, right at the ridge point
-> of 161, so the extra tokens are no longer riding on idle bandwidth. On top of
-> that, ragged acceptance discards a third of the verification work, which was
-> free below the ridge point and isn't free above it. Switch speculation off
-> above a batch-size threshold instead of trying to fix it.
+> [!QUESTION] Speculation gives 2.8 times at batch 1 and 0.81 times at batch 128. Is something broken?
+> No, that's the expected behavior. At batch 128 with $\gamma = 4$ the
+> verification pass carries $128 \times 5 = 640$ tokens, four times the ridge
+> point of 161, so the extra tokens are no longer riding on idle bandwidth. The
+> pass takes 110.4 ms against a plain step's 27.8 ms, and the round's 3.36 tokens
+> don't repay that. Ragged acceptance makes it worse, because the pass pays for
+> five positions per sequence and delivers 3.36. Switch speculation off above
+> the break-even batch, 101 here, instead of trying to fix it.
 
 > [!QUESTION] Why can't you rerun the linear-attention layers after you know the accepted length?
 > Because the layer types interleave: three linear layers then one
@@ -740,13 +849,24 @@ These are the mistakes the lab and a real engine surface:
 > update out of the verification pass, which is what the chunked form gives you
 > for free.
 
+> [!QUESTION] Your rollback truncates the KV cache to the accepted length and leaves the recurrent state alone. Short outputs look right. What breaks, and how would a test see it?
+> The state still holds the effect of every rejected token, so each later token
+> reads a memory that was never written by the sequence. The error compounds
+> slowly, which is why short generations pass. A test sees it directly: run the
+> rejected-and-rolled-back cache and a cache that only ever ran the accepted
+> tokens, then compare the lengths, the keys and values, and the state. The
+> lengths and KV match and the state doesn't, so a test that checks only the KV
+> cache passes.
+
 ## Lab
 
 > [!TRY]
-> Build the accept-reject rule and the speedup arithmetic. Passing means the
-> arithmetic checks hold and, over 40,000 rounds with a deliberately poor
-> draft, the first emitted token's distribution is within 0.02 total variation
-> distance of the target.
+> Build the accept-reject rule, the speedup arithmetic, a rollback for a toy
+> hybrid cache, and the batch-dependent cost model. Passing means the
+> arithmetic checks hold, rollback equals never having run the rejected tokens,
+> the break-even batch for $\alpha = 0.8$, $\gamma = 4$ is 101, and, over 40,000
+> rounds with a deliberately poor draft, the first emitted token's
+> distribution is within 0.02 total variation distance of the target.
 
 Implement the following functions:
 
@@ -757,6 +877,13 @@ Implement the following functions:
   plus the count of draft tokens accepted.
 - `expected_tokens_per_round`, as the truncated geometric sum.
 - `net_speedup`, dividing it by $1 + \gamma c$.
+- `ToyHybridCache.snapshot` and `ToyHybridCache.rollback`, which copy the state,
+  truncate the KV list, and replay only the surviving tokens. The cache itself
+  is given.
+- `speculative_round`, which snapshots, runs the verify pass over all
+  $\gamma + 1$ inputs, and rolls back to the accepted prefix.
+- `step_time`, `speculative_speedup`, and `break_even_batch`, the cost model
+  above, with the A100 constants in the file.
 
 The harness checks the arithmetic first: acceptance of 1.0 for a token the
 target prefers, 0.5 for the lab's mismatched pair, 4.6856 expected tokens at
@@ -772,6 +899,15 @@ the time, and that a round always yields between 1 and $\gamma + 1$ tokens.
 
 ==That statistical test is the one to watch.== Every plausible-looking shortcut
 in the rejection rule passes the arithmetic checks and fails this one.
+
+Two groups of checks cover the engineering. The rollback checks draft five
+tokens, accept 0, 2, and 5, and compare length, keys, values, state, the
+verify outputs, and the next token against a cache that never ran the rejected
+tokens. A truncate-only rollback passes the length and KV comparisons and
+fails the state comparison. The cost checks pin the step time on both sides of
+the ridge and the break-even batches in the table: 101, 125, 70, and 85 with a
+snapshot. A model that treats verification as always free never breaks even,
+and one that always charges $\gamma + 1$ steps loses at batch 1.
 
 ## Further reading
 

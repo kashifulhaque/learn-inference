@@ -378,3 +378,24 @@ Tag **A** marks an assumption.
 |---|---|
 | [A100-DS] | NVIDIA A100 Tensor Core GPU datasheet, 2021. Interconnect row: NVLink Bridge for 2 GPUs 600 GB/s, PCIe Gen4 64 GB/s. https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf |
 | [AMPERE-BLOG] | NVIDIA Ampere Architecture In-Depth, NVIDIA Technical Blog. "A single A100 NVLink provides 25-GB/second bandwidth in each direction." The total number of links is 12. https://developer.nvidia.com/blog/nvidia-ampere-architecture-in-depth/ |
+
+## Chapter 20
+
+Numbers introduced by the batch-dependent cost model and the rollback example
+in the speculative decoding chapter. Each is arithmetic on the chapter's A100
+rates (53.8 GB of weights, 26.9 billion active parameters, 312 TFLOP/s,
+1935 GB/s) and on chapter 15's 154,927,104 bytes of recurrent state per
+sequence, evaluated by `content/labs/20-spec-decode/solution.py`. None is an
+A100 measurement.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Plain decode step at batch 1, weight read at the rated bandwidth | 27.804 ms | D | chapter 20 |
+| Compute time per token | 0.1724 ms; the two terms cross at 161.2 tokens | D | chapter 20 |
+| Speedup at α 0.8, γ 4, c 0.05, batch 1 and batch 32 | 2.80 and 2.80 (160 verify tokens, under the ridge) | D | chapter 20 |
+| Same configuration at batch 128 | 0.806; verify pass 110.4 ms against a 27.8 ms plain step | D | chapter 20 |
+| Break-even batch, α 0.8, γ 4, c 0.05 | 101 (continuous 101.96); speedup 1.009 at 101 and 0.9996 at 102 | D | chapter 20 |
+| Break-even batch, α 0.5 γ 4; α 0.8 γ 2; α 0.8 γ 8; α 0.9 γ 4 | 56; 125; 70; 125 | D | chapter 20 |
+| Break-even batch with a 154,927,104-byte state snapshot per sequence | α 0.5 γ 4: 47; α 0.8 γ 2: 96; α 0.8 γ 4: 85; α 0.8 γ 8: 63; α 0.9 γ 4: 105 | D | chapter 20 |
+| Snapshot copy time per sequence per round at 1935 GB/s | 0.160 ms; speedup at batch 32 falls from 2.80 to 2.43 | D | chapter 20 |
+| Scalar rollback example, decay 0.9, start 2.0, writes 1.0, 0.5, 2.0, 1.5 | state after four steps 5.7462; correct state after keeping two inputs 3.02 | D | chapter 20 |
