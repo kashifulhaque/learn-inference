@@ -1,0 +1,17 @@
+{
+  "id": "17b-disaggregation",
+  "title": "Disaggregated serving",
+  "brief": "Count the KV bytes a prefill GPU ships, find the link rate an SLO needs, simulate colocated and disaggregated serving on a simulated clock, and search the prefill:decode split.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "needs_weights": false,
+  "device_agnostic": true,
+  "timeout": 300,
+  "metrics": ["kv_bytes_8192", "min_link_gbs_8192", "best_prefill_gpus", "disagg_goodput_per_s"],
+  "hints": [
+    "The hybrid ships 16 layers of K and V for every prompt token (65,536 bytes per token) plus 48 layers of fixed state (154,927,104 bytes). Do not multiply the state by the prompt length.",
+    "Layer i finishes at (i + 1) * prefill_s / 64. Its copy starts at the later of that time and the moment the link frees. The exposed wait is the last copy's end minus prefill_s, floored at 0.",
+    "A colocated step takes every running decode, then fills the rest of the chunk budget from the waiting prompts in arrival order. The step time comes from step_time with those decodes and chunks. A prompt's first token is out when its last chunk's step ends.",
+    "The disaggregated TTFT is the wait for a prefill GPU, the prefill, and the wait for the copy. Leaving the copy out makes every TTFT too small by bytes / link."
+  ]
+}

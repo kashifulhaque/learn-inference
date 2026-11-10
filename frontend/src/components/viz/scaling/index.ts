@@ -4,6 +4,7 @@ import ChunkBudget from "./16-chunk-budget";
 import ScheduleOverlap from "./16a-schedule-overlap";
 import TailVsMean from "./17-tail-vs-mean";
 import ThroughputLatency from "./17a-throughput-latency";
+import ChunkVsDisagg from "./17b-chunk-vs-disagg";
 import GroupQuant from "./18-group-quant";
 import GptqMargin from "./18a-gptq-margin";
 import ColumnRowSplit from "./19-column-row-split";
@@ -18,6 +19,7 @@ const figures: VizRegistry = {
   "16a-schedule-overlap": ScheduleOverlap,
   "17-tail-vs-mean": TailVsMean,
   "17a-throughput-latency": ThroughputLatency,
+  "17b-chunk-vs-disagg": ChunkVsDisagg,
   "18-group-quant": GroupQuant,
   "18a-gptq-margin": GptqMargin,
   "19-column-row-split": ColumnRowSplit,
