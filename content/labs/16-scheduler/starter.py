@@ -1,7 +1,9 @@
 """Lab 16 — continuous batching.
 
 Implement `step`. It runs before every forward pass and decides what that pass
-contains, under a token budget and a block budget.
+contains, under a token budget and a block budget. Then implement `percentile`
+and `replay`, which replay an arrival trace on a simulated clock and report
+time to first token (TTFT) and inter-token latency (ITL).
 """
 
 from collections import deque
@@ -16,6 +18,8 @@ class Request:
     prefilled: int = 0
     generated: int = 0
     finished: bool = False
+    arrival: float = 0.0   # when the request reaches the server, in ms
+    priority: int = 0      # higher is admitted first; ties go first come, first served
 
     @property
     def needs_prefill(self) -> bool:
@@ -99,7 +103,9 @@ class Scheduler:
         3. Continue prefilling running requests, in chunks, with the remaining
            budget.
         4. Admit waiting requests from the head of the queue while budget and
-           blocks allow. Stop at the first one that does not fit.
+           blocks allow. The head is the waiting request with the highest
+           `priority`, and the earliest position among equals. Stop at the
+           first one that does not fit.
 
         Keep a watermark of free blocks in reserve so the next step still has
         room to make a decision.
@@ -116,6 +122,51 @@ class Scheduler:
             request.finished = True
 
     def preempt(self) -> None:
-        """Evict the newest running request and return it to the queue front."""
+        """Evict one running request and return it to the queue front.
+
+        The victim is the running request with the lowest priority. Among
+        equals, it is the newest one.
+        """
         # TODO
         raise NotImplementedError
+
+
+def percentile(values, q):
+    """Return the q-th percentile of `values`, with linear interpolation.
+
+    Sort the values as x_0 <= ... <= x_(n-1). Take the rank r = q/100 * (n-1),
+    split it into an index i = floor(r) and a fraction phi = r - i, and return
+    x_i + phi * (x_(i+1) - x_i). For q = 100, return the largest value.
+    """
+    # TODO
+    raise NotImplementedError
+
+
+def replay(scheduler, requests, overhead=2.0, per_token=0.125):
+    """Replay an arrival trace on a simulated clock and report latency.
+
+    A step that carries `n` tokens takes `overhead + per_token * n` ms. The
+    clock starts at 0. Before each step, every request whose `arrival` is at or
+    before the clock joins the scheduler. When nothing is waiting or running,
+    the clock jumps to the next arrival. A step that retires the last finished
+    request returns an empty batch and takes no time. A token's time is the clock at the end
+    of the step that produced it. A request's first token is the one its last
+    prefill chunk produces, so call `commit_token` once when a chunk finishes
+    the prompt. The trace must not trigger preemption.
+
+    Return a dict with these keys:
+
+    - "ttft": {id: first token time - ARRIVAL}. Measure from arrival, not from
+      admission, so queueing counts.
+    - "itl": {id: (last token time - first token time) / (n - 1)}, for
+      requests with n >= 2 tokens. A request that emits n tokens has n - 1
+      gaps.
+    - "gaps": {id: [gap between each pair of consecutive tokens]}.
+    - "order": request ids in the order they first appear in a prefill chunk.
+    - "makespan": the clock when the last step ends.
+    - "p99_ttft": the 99th percentile of the per-request TTFTs.
+    - "p99_itl": the 99th percentile of every gap from every request, pooled.
+    - "max_gap": the largest single gap.
+    """
+    # TODO
+    raise NotImplementedError
