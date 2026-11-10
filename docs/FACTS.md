@@ -311,6 +311,20 @@ Numbers introduced by the int4 and KV chapter. Errors are computed by `scripts/f
 | [FP8] | Paulius Micikevicius, Dusan Stosic, Patrick Judd, John Kamalu, Stuart Oberman, Mohammad Shoeybi, Michael Siu, Hao Wu, Neil Burgess, Sangwon Ha, Richard Grisenthwaite, Naveen Mellempudi, Marius Cornea, Alexander Heinecke, and Pradeep Dubey, FP8 Formats for Deep Learning. https://arxiv.org/abs/2209.05433 |
 | [MIT6.5940] | MIT 6.5940, TinyML and Efficient Deep Learning Computing, Fall 2024, schedule. Lecture 5, Quantization (Part I), 19 September. Lecture 6, Quantization (Part II), 24 September. Lecture 13, Efficient LLM Deployment, 22 October. https://hanlab.mit.edu/courses/2024-fall-65940 |
 
+## Chapter 18
+
+Numbers introduced by the lab's SmoothQuant check. They come from seeded synthetic tensors on the CPU (`torch.manual_seed(18)`, 128 tokens, 512 inputs, 256 outputs, weight scale 0.05, channels 7, 150, and 333 multiplied by 60), not from an A100 measurement. Activations use one int8 scale per tensor and weights use one int8 scale per output row. The scale is $c_k = x_{\max,k}^{\alpha} / w_{\max,k}^{1-\alpha}$, with $w_{\max}$ taken over the output rows.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| W8A8 relative output error with no planted outliers | $0.012403$ | D | chapter 18 |
+| Same layer with three planted outlier channels, no smoothing | $0.099090$ | D | chapter 18 |
+| Smoothed at $\alpha = 0$, $0.5$ | $0.088486$, $0.014136$ | D | chapter 18 |
+| Wrong direction: activations times $c$, weight divided by $c$, at $\alpha = 0.5$ | $0.218857$ | D | chapter 18 |
+| Product error of $(x / c)(c W)$ against $xW$ | about $8.5 \times 10^{-8}$ relative, float32 | D | chapter 18 |
+| SmoothQuant balanced point $\alpha = 0.5$ for OPT and BLOOM | as reported | C | [SMOOTHQUANT] |
+| FP8 cast rounding and ranges (E4M3 max 448, E5M2 max 57344) | see chapter 18a | C | [FP8] |
+
 ## Chapter 10
 
 Numbers introduced by the launch-floor model in the roofline chapter. Each is

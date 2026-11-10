@@ -2,7 +2,7 @@
 title: Quantization on Ampere
 slug: 18-quantization
 part: "Part 6 — Scaling"
-summary: What the bits of int8, bfloat16, and FP8 hold, how affine and symmetric quantization follow from them, why grouping fixes outliers, and why FP8 isn't available to you on an A100.
+summary: What the bits of int8, bfloat16, and FP8 hold, how affine and symmetric quantization follow from them, why grouping fixes outliers, and why an A100 has no FP8 tensor cores but can still store and round FP8.
 minutes: 115
 gpu: true
 objectives:
@@ -11,7 +11,8 @@ objectives:
   - Explain why per-tensor scaling collapses under outliers, and derive per-channel and group-wise scaling as the fix.
   - Compute the metadata cost of a group size and the memory saved at model scale.
   - Explain why weight-only quantization helps decode and not prefill, with the byte arithmetic.
-  - Describe what Ampere's int8 tensor cores compute, and why Ampere has no FP8.
+  - Describe what Ampere's int8 tensor cores compute, and what you can and can't do with FP8 on an A100.
+  - Migrate activation outliers into the weights with SmoothQuant and measure the W8A8 error it removes.
   - Quantize a KV cache and say why keys tolerate it worse than values.
 lab: 18-int8-quant
 ---
@@ -28,8 +29,13 @@ lab: 18-int8-quant
 >   1.56% extra storage.
 > - Decode spends its time reading weights, so halving the bytes makes it 1.97
 >   times faster. Prefill spends its time computing, so it gains nothing.
-> - The A100's int8 matrix units need one scale per tensor or per output row,
->   and the A100 has no FP8 arithmetic at all.
+> - The A100's int8 matrix units need one scale per tensor or per output row.
+>   It has no FP8 tensor cores, but it can still store and round FP8, so you
+>   can exercise the format without the speedup.
+> - Per-tensor int8 activations collapse when a few channels are huge.
+>   SmoothQuant divides those channels out of the activations and folds them
+>   into the weights. On the lab's planted outliers it cuts the error from 9.9%
+>   to 1.4%.
 > - In a quantized KV cache, the softmax magnifies errors in keys while errors
 >   in values average out, so keys need more precision.
 
@@ -47,6 +53,10 @@ format hold. Quantization is a rounding scheme, and a rounding scheme has an
 error bound you can derive rather than measure. Once you have the bound, every
 later choice follows from it: symmetric against affine, per-tensor against
 per-group, and weights only against weights and activations.
+
+The lab here stops at int8. The follow-up,
+[chapter 18a](/c/18a-int4-and-kv-quantization), builds int4 packing, GPTQ, AWQ,
+KV-cache quantization axes, and FP8 rounding.
 
 ## Before you start
 
@@ -577,9 +587,9 @@ For this course, weight-only is the right choice. Decode is where the time goes,
 decode is memory bound, and weight-only gets the full memory saving with none of
 the activation difficulty.
 
-## Ampere has no FP8
+## FP8 on Ampere: storage and rounding, no tensor cores
 
-FP8 would suit the outlier problem well, but the A100 can't compute in it.
+FP8 would suit the outlier problem well, and the A100 can't run its matmuls.
 Recall the formats table: FP8 spends bits on an exponent, so its precision is
 relative rather than absolute. A value ten times larger gets the same number of
 significant digits, not ten times worse.
@@ -590,24 +600,47 @@ $2^{-4} = 6.25\%$ at every magnitude. An outlier costs an exponent increment,
 not the mantissa of every other value in its block.
 
 Ada and Hopper have tensor cores that do FP8 matmuls natively. The A100 is
-Ampere, compute capability 8.0, and ==has no FP8 tensor core support at all==.
+Ampere, compute capability 8.0, and ==has no FP8 tensor cores==. That limit is
+about arithmetic. Storing a tensor in one byte per element and rounding to the
+FP8 grid are ordinary operations, and you can run both on an A100 or on a CPU:
 
-You can store weights in an FP8 layout and unpack them in software for the
-bandwidth saving, but there's no compute speedup. The arithmetic still runs in
-bfloat16, and the unpack is more work than an int8 dequantization. On Ampere,
-int8 gives the same bandwidth saving with better tooling and a faster unpack.
+- **Storage.** Keep a tensor as `torch.float8_e4m3fn` (or `torch.float8_e5m2`)
+  and upcast to bfloat16 before the matmul. You get the same bandwidth saving as
+  int8, 1 byte per element, and the arithmetic still runs in bfloat16.
+- **Rounding.** The cast to FP8 rounds to the nearest representable value, with
+  ties to even. You can measure the error an FP8 weight scale or an FP8 KV cache
+  would add without any FP8 hardware.
+
+So you can exercise FP8 weight scaling and an FP8 KV cache on an A100 and check
+their error. You can't get the compute speedup. [Chapter
+18a](/c/18a-int4-and-kv-quantization) teaches the E4M3 and E5M2 rounding rules,
+including the maximum of 448 for E4M3 and why it has no infinity.
+
+For a KV cache, the recipe is the int8 one with a different grid. Pick a
+per-tensor or per-head scale so the largest magnitude lands on 448, divide,
+cast to E4M3, and multiply back after the upcast. The cache is half the size of
+bfloat16, same as int8, with a relative error of at most 6.25% per element.
+
+On Ampere, int8 gives the same bandwidth saving with better tooling and a faster
+unpack, and its tensor cores can run W8A8. FP8 is worth emulating when you want
+to evaluate a format before moving to hardware that multiplies it natively.
 
 > [!TIP] Check the capability before you write an FP8 kernel
-> This is a hard constraint, worth knowing before you spend a day on a kernel
-> that can't be fast. Check it in code rather than trusting the part number:
+> Native FP8 arithmetic is a hard constraint, worth knowing before you spend a
+> day on a kernel that can't be fast. Check it in code rather than trusting the
+> part number:
 >
 > ```python
 > major, minor = torch.cuda.get_device_capability()
-> has_fp8 = (major, minor) >= (8, 9)    # Ada and Hopper onward
+> has_fp8_tensor_cores = (major, minor) >= (8, 9)    # Ada and Hopper onward
 > ```
+>
+> On a device that fails this test, FP8 storage and casts still work. FP8
+> matmul kernels don't.
 
-The model publishes an official FP8 checkpoint, `Qwen/Qwen3.8-27B-FP8`, which is
-useful on an H100 and not here.
+The model publishes an official FP8 checkpoint, `Qwen/Qwen3.8-27B-FP8`, which
+runs at full speed on an H100. On the A100 you could store it in FP8 and upcast,
+but not multiply it in FP8.
 
 ## Activation outliers
 
@@ -638,11 +671,43 @@ $$
 
 The scaling folds into the preceding layer's norm weights at no runtime cost.
 
+> [!EXAMPLE] Planted outliers in the lab's W8A8 layer
+> The lab plants three outlier channels in an activation matrix: 128 tokens of
+> 512 standard normals, with channels 7, 150, and 333 multiplied by 60. The
+> weight is `(256, 512)` normals scaled by 0.05. The matmul quantizes the
+> activations with one int8 scale per tensor and the weights with one scale per
+> output row. The relative output errors are:
+>
+> | Setup | Output error |
+> |---|---|
+> | No outliers | 1.24% |
+> | Planted outliers, no smoothing | 9.91% |
+> | Smoothed, $\alpha = 0$ | 8.85% |
+> | Smoothed, $\alpha = 0.5$ | 1.41% |
+>
+> The three outlier channels set the activation scale for all 512 channels, so
+> the ordinary ones round onto a handful of levels. At $\alpha = 0.5$, dividing
+> by $c_k$ shrinks the outlier channels and the weight rows absorb the factor.
+> The product $(x / c)(c W)$ is unchanged to float32 precision, and the error
+> returns to 1.41%, close to the no-outlier figure. At $\alpha = 0$, $c_k$
+> depends only on the weight and doesn't touch the activation spread, so it
+> removes almost none of the damage.
+
+> [!WARNING] Divide the activation, multiply the weight
+> Multiplying the activations by $c$ and dividing the weight by it also
+> preserves the product, so a shape or equality check won't catch it. It moves
+> the outliers the wrong way: on this layer the $\alpha = 0.5$ error becomes
+> 21.9%. Swapping the exponents of the two terms in $c_k$ is invisible at
+> $\alpha = 0.5$ and wrong everywhere else.
+
 **AWQ** observes that a small fraction of weight channels matter far more than
 the rest. It identifies them from activation statistics rather than weight
 magnitudes, and protects them with a per-channel scale. The important weights
 are the ones multiplying large activations, which you can't see by looking at
 the weights alone.
+[Chapter 18a](/c/18a-int4-and-kv-quantization) builds the AWQ scale search and
+compares it with SmoothQuant: SmoothQuant is for an int8 activation, and AWQ is
+for a weight that is int4 under a 16-bit activation.
 
 ## Calibration
 
@@ -756,9 +821,16 @@ attends to:
   that one value: no amplification, and no suppression either.
 
 > [!KEY] Values never amplify error; keys always do
-> That asymmetry is the reason for the standard configuration: keys in bfloat16
-> or with per-head scales, and values in int8. Quantizing both to int8 with
+> That asymmetry is the reason keys get more care than values: keys in bfloat16,
+> or on a finer axis, and values in int8. Quantizing both to int8 with
 > per-tensor scales quietly degrades long-context quality.
+
+The care is about the axis as well as the width. [Chapter
+18a](/c/18a-int4-and-kv-quantization) measures one seeded head at int4: with one
+scale per token, the key error is 0.277654 and the value error is 0.079503.
+Giving keys one scale per channel drops the key error to 0.071986, because a
+few key channels are large on every token. Values stay per token, since a
+per-channel value scale makes them worse (0.147489).
 
 ## The model at three precisions
 
@@ -801,10 +873,12 @@ $$
 By the error bound, the reconstruction error grows by the same factor. The
 $\sqrt{2\ln(2n)}$ estimate at $\hlc{g} = 128$ goes from 0.76% to about 13.7%.
 
-That's why ==int4 is where round-to-nearest stops working==. Weight-only schemes
-start needing the AWQ or GPTQ machinery, which spends a calibration pass
-choosing rounding directions that minimize the *output* error rather than the
-weight error.
+That's why ==int4 is where round-to-nearest stops working==. Two methods spend a
+calibration pass on it, and [chapter 18a](/c/18a-int4-and-kv-quantization)
+builds both. GPTQ chooses rounding directions that minimize the *output* error
+instead of the weight error, and cuts the lab layer's error from 0.041674 to
+0.015605. AWQ searches a per-channel scale from activation magnitudes. That
+chapter also packs eight int4 codes into each 32-bit word.
 
 ## Measuring the damage
 
@@ -880,8 +954,10 @@ silently on another. There's no runtime symptom, only worse outputs.
 >   the damage for 1.56% of metadata, 50.78% of bfloat16 in total.
 > - Weight-only int8 takes decode from 42.2 ms to 21.4 ms per token and leaves
 >   compute-bound prefill flat.
-> - Ampere's int8 tensor cores need per-tensor or per-channel scales, and the
->   A100 has no FP8 tensor cores.
+> - Ampere's int8 tensor cores need per-tensor or per-channel scales. The A100
+>   has no FP8 tensor cores, but FP8 storage and rounding still work on it.
+> - SmoothQuant moves activation outliers into the weights. On the lab's planted
+>   outliers, it takes W8A8 error from 9.91% to 1.41%.
 > - Key error in a KV cache is exponentiated by the softmax; value error is
 >   averaged down by $n_{\text{eff}}$.
 > - Judge a scheme by perplexity, not by weight error alone.
@@ -918,8 +994,9 @@ silently on another. There's no runtime symptom, only worse outputs.
 
 > [!TRY]
 > Implement symmetric int8 quantization at three granularities, plus the helpers
-> that dequantize, measure error, and count bytes. Passing means every harness
-> check in the following list holds.
+> that dequantize, measure error, and count bytes. Then implement the SmoothQuant
+> migration and show it removes W8A8 error on planted outlier channels. Passing
+> means every harness check in the following list holds.
 
 Implement the following functions:
 
@@ -929,6 +1006,8 @@ Implement the following functions:
 - `dequantize`, which broadcasts a group scale back across its group.
 - `relative_error`, as the Frobenius norm ratio.
 - `storage_bytes`, for the int8 data plus its scales.
+- `smooth(weight, x_absmax, w_absmax, alpha)`, returning the migrated weight
+  and the per-input-channel scale.
 
 The harness checks the following, in order:
 
@@ -943,6 +1022,16 @@ The harness checks the following, in order:
    comes in under 55% of bfloat16.
 6. A real matmul against the dequantized weights keeps the layer output error
    under 1%.
+7. Three planted outlier channels make per-tensor W8A8 error more than five
+   times the no-outlier error (9.91% against 1.24%).
+8. `smooth` returns a per-input-channel scale $c_k = x_{\max,k}^{\alpha} /
+   w_{\max,k}^{1-\alpha}$ (checked at $\alpha = 0.75$), and
+   $(x / c)(c W)$ equals $xW$ to a relative error under $10^{-5}$.
+9. Smoothing at $\alpha = 0.5$ lowers the W8A8 error to 1.41%, below both the
+   unsmoothed 9.91% and the $\alpha = 0$ figure of 8.85%.
+
+Chapter 18a is the follow-up lab. It owns int4 packing, GPTQ, AWQ, the KV-cache
+axes, and FP8 rounding, so this lab doesn't repeat them.
 
 ## Further reading
 
@@ -952,3 +1041,5 @@ The harness checks the following, in order:
 - [LLM.int8(): 8-bit matrix multiplication for transformers at scale](https://arxiv.org/abs/2208.07339) — the paper that identified the activation outlier channels.
 - [Quantization and training of neural networks for efficient integer-arithmetic-only inference](https://arxiv.org/abs/1712.05877) — the original derivation of the affine scheme used here.
 - [KIVI: a tuning-free asymmetric 2bit quantization for KV cache](https://arxiv.org/abs/2402.02750)
+- [FP8 formats for deep learning](https://arxiv.org/abs/2209.05433) — E4M3 and E5M2.
+- [Chapter 18a, int4 weights and KV quantization](/c/18a-int4-and-kv-quantization) — the follow-up lab.
