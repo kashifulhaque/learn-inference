@@ -207,6 +207,8 @@ A *graph break* ends the region. The compiler runs the compiled prefix, runs the
 
 A graph break ==puts the host back between two short graphs==. Each piece can be fused on its own, and each piece can be replayed on its own. The `.item()` between them is a sync on every token. Move that read out of the step. Capture and the compiler reject it for the same reason.
 
+[Chapter 10b](/c/10b-profiling) shows how to find that gap, and the launch-bound gaps before it, in a profiler timeline.
+
 ## What goes wrong
 
 - **Rounding the batch up to a power of two.** `pick_bucket(5, [1, 2, 4, 6, 8])` is 6. An implementation that ignores the list and rounds 5 up to 8 returns 8, and its waste on `[1, 3, 5]` is 4/13. The lab's CPU checks catch that implementation. The tighter list's waste is 2/11.

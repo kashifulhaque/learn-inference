@@ -607,3 +607,36 @@ verification writes one recurrent state per node.
 | [EAGLE3] | EAGLE-3: Scaling up Inference Acceleration of Large Language Models via Training-Time Test, arXiv 2503.01840. |
 | [DSV3] | DeepSeek-V3 Technical Report, arXiv 2412.19437, sections 2.2, 4.2, and 5.4.3. |
 | [SPECINFER] | SpecInfer: Accelerating Generative Large Language Model Serving with Tree-based Speculative Inference and Verification, arXiv 2305.09781; the multi-step speculative sampling procedure. |
+
+# Fact entries for chapter 10b
+
+Numbers in the profiling chapter. A D row is arithmetic on the hand-built traces in
+`content/labs/10b-profiling/fixture_traces.py` or on a hardware limit, printed by
+`scripts/figures/10b-profiling.py`. A C row is a claim from a cited page. Nothing here is a GPU
+measurement, and the fixtures are not profiler exports from a device.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| `torch.profiler` exports a Chrome trace with `traceEvents`; complete events carry `ph` `"X"`, `ts`, `dur`, `pid`, `tid`, `cat` and `name`; `cpu_op` events are `aten::` calls | field names checked by exporting a CPU trace with torch 2.11 | C | [PT-PROFILER] |
+| GPU categories in a real export: `kernel`, `gpu_memcpy`, `gpu_memset`, `gpu_user_annotation`, `cuda_runtime` | from the Kineto trace format; only `cpu_op` and `Trace` were observed locally | C | [PT-PROFILER] |
+| A100 (compute capability 8.0) limits | 64 resident warps, 64 K 32-bit registers, 2,048 threads, 32 shared-memory banks, 255 registers per thread | C | [CUDA-CC] |
+| Occupancy at 32, 64, 128, 255 registers per thread | 64, 32, 16, 8 warps; 100%, 50%, 25%, 12.5% | D | chapter 10b |
+| Sectors per request, 32 threads reading 4 B at stride 1, 2, 4, 8 floats | 4, 8, 16, 32 | D | chapter 10b |
+| Bank conflict reading a 32x32 float tile by column | 32-way at row pitch 32, none at pitch 33 | D | chapter 10b |
+| Launch-bound fixture | busy 70/193 = 0.3627; 19 gaps (ten of 6 µs, nine of 7 µs), 123 µs idle; median kernel 3.5 µs | D | chapter 10b |
+| Sync-bound fixture | busy 810/930 = 0.8710; one 120 µs gap, cause `host_sync` | D | chapter 10b |
+| Two-stream fixture | busy 210/260 = 21/26 = 0.8077; summing durations gives 1.0 | D | chapter 10b |
+| Launch floor, 400 kernels at 5 µs | 2.000 ms (chapter 10's constant, not remeasured) | D | chapter 10, chapter 10a |
+| Copy ceiling, measured over rated bandwidth | 1275/1935 = 65.9% | D | chapter 10 |
+| Regression example: baseline 10.0, 10.1, 9.9, 10.0, 10.2 vs 10.0, 10.1, 9.9, 10.0, 30.0 | means 10.04 and 14.00 (+39.4%); medians 10.0 and 10.0 | D | chapter 10b |
+| Overhead-bound as a regime: time goes to Python, dispatch, and launching kernels | stated in the essay | C | [BRRR] |
+| CS336 lecture list has no profiling lecture: lecture 2 "PyTorch (einops), resource accounting (FLOPs, memory, arithmetic intensity)", lecture 6 "Kernels, Triton" | as listed on the syllabus page; Assignment 2 asks for profiling | C | [CS336] |
+| Nsight Compute metric names in the lab | follow the documented naming structure; the exact strings were not found on the fetched Profiling Guide text, so confirm with `ncu --query-metrics` | C (unverified) | [NCU-GUIDE] |
+
+| Key | Page |
+|---|---|
+| [PT-PROFILER] | PyTorch, torch.profiler. https://docs.pytorch.org/docs/stable/profiler.html |
+| [CUDA-CC] | CUDA Programming Guide, compute capabilities. https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/compute-capabilities.html |
+| [NCU-GUIDE] | Nsight Compute Profiling Guide. https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html |
+| [BRRR] | Horace He, Making Deep Learning Go Brrrr From First Principles. https://horace.io/brrr_intro.html |
+| [CS336] | Stanford CS336 syllabus. https://cs336.stanford.edu/ |

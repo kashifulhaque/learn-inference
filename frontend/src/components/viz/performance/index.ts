@@ -6,6 +6,7 @@ import TemperatureOrder from "./TemperatureOrder";
 import TruncationRules from "./TruncationRules";
 import WaveQuantization from "./WaveQuantization";
 import PaddingWaste from "./10a-padding-waste";
+import TraceTimeline from "./10b-trace-timeline";
 import TokenMask from "./11a-token-mask";
 
 // Figures for this group's chapters, keyed by the name a ```viz fence uses.
@@ -15,6 +16,7 @@ const figures: VizRegistry = {
   "10-roofline-explorer": RooflineExplorer,
   "10-wave-quantization": WaveQuantization,
   "10a-padding-waste": PaddingWaste,
+  "10b-trace-timeline": TraceTimeline,
   "11-truncation-rules": TruncationRules,
   "11-temperature-order": TemperatureOrder,
   "11a-token-mask": TokenMask,

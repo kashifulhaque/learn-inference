@@ -1,0 +1,17 @@
+{
+  "id": "10b-profiling",
+  "title": "Profiling and performance debugging",
+  "brief": "Parse Chrome-trace fixtures for GPU busy time and gaps, diagnose a kernel from Nsight Compute counters, and gate a regression against a noisy baseline.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 120,
+  "metrics": ["sync_gap_us", "launch_bound_busy_fraction", "cpu_profile_mul_count"],
+  "hints": [
+    "GPU busy time is the union of the GPU intervals. Sort by start, merge overlaps, then add up. Summing durations counts two overlapping streams twice.",
+    "Count only cat kernel, gpu_memcpy, and gpu_memset. A gpu_user_annotation covers the whole region and is not GPU work.",
+    "A host sync shows up as a gap that begins where a sync call ends. In diagnose, check the rules in the docstring's order: a kernel that reads 32 sectors per request can also show 80% DRAM throughput, and the coalescing rule has to win.",
+    "Compare medians, not means. One 30 ms outlier in five runs moves the mean by 4 ms and the median by nothing."
+  ]
+}
