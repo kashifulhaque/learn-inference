@@ -122,7 +122,7 @@ The same arithmetic on the dense stack, at batch 1 and context 1, is 29.255 ms. 
 >
 > The weight matmuls inside that compute are $2 \times 26{,}895{,}979{,}520 \times 2048 / (312 \times 10^{12}) = 353.3$ ms. That is the same product chapter 19 writes as 353 ms for a 4096-token prefill split across two GPUs. The attention triangle and the chunked recurrence add the other 4.8 ms.
 
-At degree 2, chapter 19's prefill example moves $64 \times 4096 \times 20{,}480 = 5.369 \times 10^{9}$ bytes, 5.37 GB, which is 8.95 ms on NVLink. This model adds the 1.024 ms of collective latency on top, 9.97 ms. Against a prefill of a third of a second, the latency term is small. Against a decode step it is most of the communication.
+At degree 2, chapter 19's prefill example moves $64 \times 4096 \times 20{,}480 = 5.369 \times 10^{9}$ bytes, 5.37 GB. At this model's 600 GB/s, the rated total of both directions, that is 8.95 ms. Chapter 19 divides by 300 GB/s, one direction, and gets 17.9 ms. This model adds the 1.024 ms of collective latency on top, 9.97 ms. Against a prefill of a third of a second, the latency term is small. Against a decode step it is most of the communication.
 
 ## The batch where decode would cross the ridge
 

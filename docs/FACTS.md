@@ -349,3 +349,32 @@ Numbers introduced by the coordinated-omission, in-process client, and knee sect
 |---|---|
 | [TENE] | Gil Tene, How NOT to measure latency. https://www.youtube.com/watch?v=lJ8ydIuPFeU |
 | [VLLM-BENCH] | vLLM benchmark CLI. https://docs.vllm.ai/en/latest/benchmarking/cli/ |
+
+## Chapter 19
+
+Numbers introduced by the interconnect-bandwidth correction and the ring all-reduce latency section. A D row is arithmetic in the chapter, in `scripts/figures/19-tensor-parallelism.py`, and in `content/labs/19-tensor-parallel/solution.py` (`ring_all_reduce`, `all_reduce_time`, `step_all_reduce_time`). None is an A100 measurement. The hop latency of 4 µs is an assumption chosen so that a two-GPU all-reduce costs the chapter's 8 µs. The weight read of 42.2 ms per step is chapter 14a's 53.8 GB at 1275 GB/s.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| A100 NVLink rating | 600 GB/s; the datasheet does not say whether this counts both directions | C | [A100-DS] |
+| A100 NVLink links and per-link rate | 12 links, 25 GB/s in each direction per link | C | [AMPERE-BLOG] |
+| A100 NVLink, one direction | 300 GB/s (12 × 25); the 600 GB/s rating is both directions combined | D | [AMPERE-BLOG] |
+| PCIe Gen4 as rated for A100 | 64 GB/s; this is the both-directions figure, so 32 GB/s one way | C | [A100-DS] |
+| NVLink bridge for PCIe A100 | two GPUs only | C | [A100-DS] |
+| Hop latency alpha | 4 µs, an assumption | A | chapter 19 |
+| Ring all-reduce time | 2(N-1) alpha + 2(N-1)/N × bytes / bandwidth | D | chapter 19 |
+| Decode message, hidden 5120, bfloat16, one token | 10,240 bytes | D | chapter 19 |
+| That message at N = 2, 4, 8 | 8.03, 24.05, 56.06 µs; latency is 99.6%, 99.8%, 99.9% | D | chapter 19 |
+| Prefill message, 4096 tokens | 41,943,040 bytes; at N = 2, 147.8 µs, latency 5.4% | D | chapter 19 |
+| Crossover message size, N alpha beta | 2.4, 4.8, 9.6 MB at N = 2, 4, 8 | D | chapter 19 |
+| 128 decode all-reduces per token at N = 2, 4, 8 | 1.028, 3.079, 7.176 ms | D | chapter 19 |
+| Decode step with a plain ring at N = 2, 4, 8 | 22.1, 13.6, 12.5 ms; speedup 1.91, 3.10, 3.39 | D | chapter 19 |
+| Prefill comm at N = 2, 5.37 GB, bandwidth only | 17.9 ms over NVLink at 300 GB/s, 168 ms over PCIe at 32 GB/s | D | chapter 19 |
+| Same, as a share of 353 ms of compute | 5.1% over NVLink, 48% over PCIe | D | chapter 19 |
+
+Tag **A** marks an assumption.
+
+| Key | Page |
+|---|---|
+| [A100-DS] | NVIDIA A100 Tensor Core GPU datasheet, 2021. Interconnect row: NVLink Bridge for 2 GPUs 600 GB/s, PCIe Gen4 64 GB/s. https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf |
+| [AMPERE-BLOG] | NVIDIA Ampere Architecture In-Depth, NVIDIA Technical Blog. "A single A100 NVLink provides 25-GB/second bandwidth in each direction." The total number of links is 12. https://developer.nvidia.com/blog/nvidia-ampere-architecture-in-depth/ |

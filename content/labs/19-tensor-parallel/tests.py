@@ -8,14 +8,7 @@ HIDDEN, INTERMEDIATE = 256, 704
 HEADS, KV_HEADS, HEAD_DIM = 24, 4, 64
 
 
-def run(submission):
-    c = Checks()
-    needed = ("split_column_parallel", "split_row_parallel",
-              "column_parallel_forward", "row_parallel_forward", "parallel_mlp",
-              "split_attention_heads", "all_reduce_bytes")
-    if not c.require(submission, *needed):
-        return c.finish()
-
+def _partition_checks(c, submission):
     device = pick_device()
     torch.manual_seed(0)
 
@@ -110,6 +103,137 @@ def run(submission):
     c.metric("mlp_error", float(f"{worst:.3e}"))
     c.metric("attention_error", float(f"{attn_err:.3e}"))
     c.metric("comm_bytes_per_layer", 2 * two)
+
+# Constants from the chapter. ALPHA is an assumption: the latency of one ring
+# hop. NVLINK_ONE_WAY is 12 links x 25 GB/s per direction, which is half of the
+# 600 GB/s NVIDIA quotes for the total of both directions.
+HIDDEN_FULL, LAYERS, BYTES = 5120, 64, 2
+ALPHA, NVLINK_ONE_WAY = 4e-6, 300e9
+DECODE_MSG = HIDDEN_FULL * BYTES
+PREFILL_MSG = 4096 * HIDDEN_FULL * BYTES
+
+
+def _collective_checks(c, submission):
+    torch.manual_seed(19)
+
+    def ring(n, length, dtype=torch.float64):
+        shards = [torch.randn(length, dtype=dtype) for _ in range(n)]
+        results, sent = submission.ring_all_reduce(shards)
+        return shards, results, sent
+
+    def worst_error(shards, results):
+        ref = torch.stack(shards).sum(0)
+        return max((r - ref).abs().max().item() for r in results)
+
+    shards, results, sent = ring(4, 12)
+    err = worst_error(shards, results)
+    c.check("ring all-reduce: every rank holds the sum of the shards",
+            lambda: (len(results) == 4 and err < 1e-12,
+                     f"{len(results)} results, max abs error {err:.2e}"))
+    c.check("ring all-reduce: all ranks end with identical values",
+            lambda: all(torch.equal(results[0], r) for r in results[1:]))
+
+    # Catches a chunking bug that drops the remainder: with length 10 on 4
+    # ranks, floor(10 / 4) = 2 elements per chunk would leave two elements
+    # unreduced.
+    for n, length in ((4, 10), (3, 7), (8, 5)):
+        shards, results, _ = ring(n, length)
+        err = worst_error(shards, results)
+        c.check(f"ring all-reduce handles length {length} on {n} ranks "
+                "(not divisible)",
+                lambda e=err: (e < 1e-12, f"max abs error {e:.2e}, expected 0"))
+
+    inputs = [torch.randn(12, dtype=torch.float64) for _ in range(4)]
+    before = [s.clone() for s in inputs]
+    submission.ring_all_reduce(inputs)
+    c.check("ring all-reduce does not modify its inputs",
+            lambda: all(torch.equal(a, b) for a, b in zip(inputs, before)))
+
+    shards, results, sent = ring(3, 6)
+    c.check("ring all-reduce keeps the input shape",
+            lambda: submission.ring_all_reduce(
+                [torch.ones(2, 3), torch.ones(2, 3)])[0][0].shape == (2, 3))
+    _, one_sent = submission.ring_all_reduce([torch.ones(5)])
+    c.check("one rank sends nothing", lambda: list(one_sent) == [0],
+            f"expected [0], got {one_sent}")
+
+    # Catches naive all-to-one accounting, (N - 1) * message bytes per rank,
+    # instead of the ring's 2 * (N - 1) / N * message bytes.
+    for n in (2, 4, 8):
+        length = 1024
+        message = length * 4
+        expected = int(2 * (n - 1) / n * message)
+        _, _, got = ring(n, length, torch.float32)
+        c.check(f"bytes sent per rank on {n} ranks equal 2(N-1)/N of the message",
+                lambda g=got, e=expected: (list(g) == [e] * len(g),
+                                           f"expected {[e] * len(g)}, got {list(g)}"))
+    n, length = 4, 10
+    _, _, got = ring(n, length, torch.float32)
+    expected_total = 2 * (n - 1) * length * 4
+    c.check("a non-divisible length still moves 2(N-1) messages in total",
+            lambda: (sum(got) == expected_total,
+                     f"expected {expected_total} bytes in total, got {sum(got)}"))
+
+    def one_way(num_bytes, n):
+        return submission.all_reduce_time(num_bytes, n, ALPHA, NVLINK_ONE_WAY)
+
+    expected = 2 * 1 * ALPHA + 2 * 1 / 2 * 1e6 / NVLINK_ONE_WAY
+    got = one_way(1e6, 2)
+    c.check("all_reduce_time matches the alpha-beta formula at N = 2",
+            lambda: (math.isclose(got, expected, rel_tol=1e-9),
+                     f"expected {expected:.6e} s, got {got:.6e} s"))
+    expected = 2 * 3 * ALPHA + 2 * 3 / 4 * 1e6 / NVLINK_ONE_WAY
+    got = one_way(1e6, 4)
+    c.check("all_reduce_time matches the alpha-beta formula at N = 4",
+            lambda: (math.isclose(got, expected, rel_tol=1e-9),
+                     f"expected {expected:.6e} s, got {got:.6e} s"))
+    c.check("all_reduce_time is zero on one rank", lambda: one_way(1e6, 1) == 0.0)
+
+    for n in (2, 4, 8):
+        total = one_way(DECODE_MSG, n)
+        latency = 2 * (n - 1) * ALPHA
+        share = latency / total
+        c.check(f"a {DECODE_MSG}-byte decode message on {n} ranks is latency bound",
+                lambda s=share: (s > 0.99,
+                                 f"expected latency share above 0.99, got {s:.4f}"))
+    total = one_way(PREFILL_MSG, 2)
+    latency = 2 * ALPHA
+    c.check("a 4096-token prefill message is bandwidth bound",
+            lambda: (latency / total < 0.1,
+                     f"expected latency share below 0.1, got {latency / total:.4f}"))
+    n = 4
+    crossover = n * ALPHA * NVLINK_ONE_WAY
+    ratio = one_way(crossover, n) / (2 * (2 * (n - 1) * ALPHA))
+    c.check("at S = N * alpha * bandwidth the two terms are equal",
+            lambda: (math.isclose(ratio, 1.0, rel_tol=1e-9),
+                     f"expected total / (2 x latency) = 1, got {ratio:.6f}"))
+
+    expected_ms = {2: 1.028, 4: 3.079, 8: 7.176}
+    got_ms = {n: submission.step_all_reduce_time(
+        LAYERS, DECODE_MSG, n, ALPHA, NVLINK_ONE_WAY) * 1e3 for n in (2, 4, 8)}
+    for n, e in expected_ms.items():
+        c.check(f"128 decode all-reduces per token on {n} ranks",
+                lambda n=n, e=e: (abs(got_ms[n] - e) < 0.005,
+                                  f"expected {e} ms, got {got_ms[n]:.4f} ms"))
+    c.metric("decode_all_reduce_ms_tp2", round(got_ms[2], 3))
+    c.metric("decode_all_reduce_ms_tp8", round(got_ms[8], 3))
+
+
+def run(submission):
+    c = Checks()
+    needed = ("split_column_parallel", "split_row_parallel",
+              "column_parallel_forward", "row_parallel_forward", "parallel_mlp",
+              "split_attention_heads", "all_reduce_bytes", "ring_all_reduce",
+              "all_reduce_time", "step_all_reduce_time")
+    if not c.require(submission, *needed):
+        return c.finish()
+    for name, fn in (("collective checks", _collective_checks),
+                     ("partition checks", _partition_checks)):
+        try:
+            fn(c, submission)
+        except Exception as exc:  # noqa: BLE001
+            c.add(f"{name} ran to completion", False,
+                  f"{type(exc).__name__}: {exc}")
     return c.finish()
 
 

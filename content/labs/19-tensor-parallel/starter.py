@@ -78,3 +78,44 @@ def all_reduce_bytes(tokens: int, hidden: int, world_size: int,
     """
     # TODO
     raise NotImplementedError
+
+
+def ring_all_reduce(shards: list):
+    """Simulate a ring all-reduce over len(shards) ranks.
+
+    Args:
+        shards: N tensors of the same shape, one per rank.
+
+    Returns:
+        (results, bytes_sent): the per-rank results, each equal to the sum of
+        the shards, and the bytes each rank sent.
+
+    Reduce-scatter first: for N - 1 steps, rank r sends chunk (r - step) % N to
+    rank r + 1, which adds it to its own copy. Then all-gather: for N - 1
+    steps, rank r forwards the finished chunk (r + 1 - step) % N, and the
+    neighbour overwrites its copy. Cut the flattened tensor into N chunks that
+    cover every element even when the length is not divisible by N. Do not
+    modify the inputs.
+    """
+    # TODO
+    raise NotImplementedError
+
+
+def all_reduce_time(num_bytes: float, world_size: int, alpha: float,
+                    bandwidth: float) -> float:
+    """Alpha-beta time, in seconds, of one ring all-reduce.
+
+    time = 2 (N - 1) alpha + 2 (N - 1) / N * num_bytes / bandwidth
+
+    `alpha` is the latency of one hop in seconds and `bandwidth` is bytes per
+    second in one direction. Return 0.0 for a single rank.
+    """
+    # TODO
+    raise NotImplementedError
+
+
+def step_all_reduce_time(num_layers: int, message_bytes: float, world_size: int,
+                         alpha: float, bandwidth: float) -> float:
+    """All-reduce time for one forward pass: two all-reduces per layer."""
+    # TODO
+    raise NotImplementedError
