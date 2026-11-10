@@ -764,6 +764,10 @@ output lengths, and the same SLOs, then compute $G$ and the knee with the lab's
 the peak throughputs. Check first that the tool measures from the intended send
 time, as the coordinated-omission section requires.
 
+To ask whether splitting prefill and decode onto separate GPUs moves that knee,
+read [chapter 17b](/c/17b-disaggregated-serving), which replays a trace on a
+simulated clock in both layouts.
+
 ## What goes wrong
 
 Each of these mistakes produces a number that looks reasonable:

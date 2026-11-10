@@ -509,3 +509,47 @@ Numbers introduced by the KV-economy chapter. The DeepSeek-V2 dimensions and the
 | [H2O] | Zhang et al., H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. https://arxiv.org/abs/2306.14048 |
 | [SNAPKV] | Li et al., SnapKV: LLM Knows What You Are Looking for Before Generation. https://arxiv.org/abs/2404.14469 |
 | [GEMMA2] | Gemma Team, Gemma 2: Improving Open Language Models at a Practical Size. https://arxiv.org/abs/2408.00118 |
+
+## Chapter 17b
+
+Numbers introduced by the disaggregated-serving chapter. Each is arithmetic on
+chapter 2's byte counts, chapter 19's link rates, and chapter 17a's step-time
+floor, or the output of the simulator in
+`content/labs/17b-disaggregation/solution.py`, printed by
+`scripts/figures/17b-disaggregated-serving.py`. None is an A100 or a network
+measurement. Link rates are one way.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Bytes a prefill GPU ships for the hybrid | 65,536 per prompt token plus a fixed 154,927,104 (147.75 MiB) | D | chapter 17b |
+| Same, 128, 2,048, 8,192, 131,072 tokens | 155.75, 275.75, 659.75, 8,339.75 MiB | D | chapter 17b |
+| Dense stack (64 full-attention layers) | 262,144 per token, no state; 2,048 MiB at 8,192 tokens | D | chapter 17b |
+| Prompt length where hybrid and dense ship equal bytes | 788 tokens; KV equals the state at 2,364 | D | chapter 17b |
+| NVLink per A100, one way | 300 GB/s (the 600 GB/s rating adds both directions) | C | [A100-DS], [AMPERE-BLOG] |
+| PCIe 4.0 x16, one way | 32 GB/s | C | [A100-DS] |
+| InfiniBand 4x port, HDR and NDR | 200 and 400 Gbit/s, which is 25 and 50 GB/s | C | [IB-WIKI] |
+| Ethernet at 100 and 25 Gbit/s | 12.5 and 3.125 GB/s, line rate divided by 8, no protocol overhead | A | chapter 17b |
+| Bulk copy of 8,192 tokens at 300, 50, 32, 25, 12.5, 3.125 GB/s | 2.31, 13.84, 21.62, 27.67, 55.34, 221.38 ms | D | chapter 17b |
+| Prefill floor, 128, 512, 2,048, 8,192 tokens | 30.39, 91.03, 360.09, 1,466.09 ms | D | chapter 17a, 17b |
+| Layer-wise streamed wait, 8,192 tokens at 300 GB/s | 0.112 ms (the last full-attention layer, 33,554,432 bytes) | D | chapter 17b |
+| Least link rate, 8,192 tokens, bulk within 10% of the prefill | 4.719 GB/s | D | chapter 17b |
+| Least link rate, 8,192 tokens, streamed within 5 ms | 6.711 GB/s | D | chapter 17b |
+| Decode step, 8 decodes at context 2,048 | 31.652 ms; with a 160-token chunk 32.53 ms (1.03x); with 512 tokens 93.76 ms (2.96x) | D | chapter 17b |
+| Chunk size where compute passes the decode byte floor | about 164 tokens | D | chapter 17b |
+| Planted trace, 8 decoders plus an 8,192-token prompt at 2 s: worst gap, whole prompt / 512 / 160 chunk / disaggregated | 1,467.48 / 97.37 / 32.79 / 31.60 ms | D | chapter 17b |
+| Same trace, long prompt's TTFT, whole prompt / 160 / 128 chunk / disaggregated | 1.485 / 1.699 / 2.063 / 1.468 s | D | chapter 17b |
+| Prefill-heavy trace, 8 GPUs, 8,192 in, 32 out, 3 requests/s, seed 7, TTFT 1.6 s, worst gap 36 ms | best split 7:1 at 2.226 goodput/s; best colocated chunk 1.423/s (4,096); 56% higher | D | chapter 17b |
+| Decode-heavy trace, 8 GPUs, 128 in, 512 out, 8 requests/s, seed 11, TTFT 1.0 s, worst gap 40 ms | best split 1:7 at 3.486/s; colocated 3.499/s at every chunk size | D | chapter 17b |
+| Short-prompt trace (128 in, 16 out, 2 requests/s, seed 5): median TTFT | 30.39 ms colocated; 30.93 ms NVLink; 43.45 ms 100 Gbit/s Ethernet; 82.65 ms 25 Gbit/s Ethernet | D | chapter 17b |
+| vLLM disaggregated prefill | experimental; "does not improve throughput" | C | [VLLM-DISAGG] |
+
+Tag **A** marks an assumption.
+
+| Key | Page |
+|---|---|
+| [IB-WIKI] | InfiniBand, Wikipedia, data rates table. HDR 200 Gbit/s and NDR 400 Gbit/s at 4x. https://en.wikipedia.org/wiki/InfiniBand |
+| [VLLM-DISAGG] | vLLM documentation, Disaggregated Prefilling. https://docs.vllm.ai/en/latest/features/disagg_prefill/ |
+| [DISTSERVE] | Zhong et al., DistServe. https://arxiv.org/abs/2401.09670 |
+| [SPLITWISE] | Patel et al., Splitwise. https://arxiv.org/abs/2311.18677 |
+| [MOONCAKE] | Qin et al., Mooncake. https://arxiv.org/abs/2407.00079 |
+| [SARATHI-SERVE] | Agrawal et al., Sarathi-Serve. https://arxiv.org/abs/2403.02310 |
