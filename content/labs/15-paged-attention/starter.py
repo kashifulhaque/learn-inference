@@ -14,7 +14,7 @@ class PagedCache:
 
         Storage is one tensor of shape
         (num_blocks, block_size, num_kv_heads, head_dim) for keys and one for
-        values.
+        values. Also keep a reference count per block.
         """
         # TODO
         raise NotImplementedError
@@ -38,8 +38,42 @@ class PagedCache:
         # TODO
         raise NotImplementedError
 
+    def refcount(self, block: int) -> int:
+        """How many sequences hold `block`. Keep a count per block."""
+        # TODO
+        raise NotImplementedError
+
+    def fork(self, seq_id: str, new_seq_id: str) -> list[int]:
+        """Share every block of `seq_id` with `new_seq_id`; copy nothing.
+
+        Increment each block's reference count. The new sequence starts with
+        the same length and the same block table.
+        """
+        # TODO
+        raise NotImplementedError
+
+    def copy_on_write(self, seq_id: str) -> int:
+        """Give `seq_id` a private tail block and return its id.
+
+        If the tail has one owner, return it unchanged. Otherwise take a free
+        block, copy the old tail's K and V into it, decrement the old count,
+        and point the table at the copy. Raise RuntimeError if none is free.
+        """
+        # TODO
+        raise NotImplementedError
+
+    def append_token(self, seq_id: str, k: torch.Tensor, v: torch.Tensor) -> None:
+        """Append one token (k, v: (num_kv_heads, head_dim)).
+
+        Copy the tail first only when the token lands in a shared block that
+        is not full. A full shared tail needs a fresh block, not a copy.
+        Make `allocate` do the same, so it never writes through a shared tail.
+        """
+        # TODO
+        raise NotImplementedError
+
     def release(self, seq_id: str) -> None:
-        """Return a sequence's blocks to the free list."""
+        """Decrement the count of each block. Free a block only at zero."""
         # TODO
         raise NotImplementedError
 
@@ -89,6 +123,21 @@ def memory_waste(lengths: list[int], max_seq_len: int, block_size: int
 
     Contiguous reserves `max_seq_len` per sequence. Paged reserves whole blocks.
     Waste is reserved-but-unused divided by reserved.
+    """
+    # TODO
+    raise NotImplementedError
+
+
+def preemption_cost(num_tokens: int, kv_bytes_per_token: int, block_size: int,
+                    num_params: int, state_bytes: int = 0) -> dict[str, int]:
+    """Bytes moved and FLOPs spent to preempt one sequence.
+
+    Return a dict with the integer keys swap_bytes_out, swap_bytes_in,
+    swap_bytes_total, recompute_bytes, and recompute_flops.
+
+    Swap copies whole blocks (round the KV bytes up to a block boundary) out to
+    host memory and back, plus `state_bytes` each way. Recompute moves zero
+    bytes and redoes the prefill: 2 * num_params * num_tokens FLOPs.
     """
     # TODO
     raise NotImplementedError
