@@ -640,3 +640,51 @@ measurement, and the fixtures are not profiler exports from a device.
 | [NCU-GUIDE] | Nsight Compute Profiling Guide. https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html |
 | [BRRR] | Horace He, Making Deep Learning Go Brrrr From First Principles. https://horace.io/brrr_intro.html |
 | [CS336] | Stanford CS336 syllabus. https://cs336.stanford.edu/ |
+
+# Fact entries for chapter 19b
+
+This section records numbers introduced by the pipeline and context parallelism chapter. A number below is a claim from a cited page (tag C), or arithmetic from `content/labs/19b-pipeline-and-ring/solution.py`, printed by `scripts/figures/19b-pipeline-and-context-parallelism.py` (tag D). Nothing here is a multi-GPU or A100 measurement. The hardware inputs are the course's: 1275 GB/s measured copy, 300 GB/s NVLink one way, 32 GB/s PCIe one way, 312 TFLOP/s peak, 4 µs per ring hop (chapter 19's assumption), 53.8 GB of weights, and 65,536 bytes of KV per token across 16 full-attention layers.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Fill-and-drain pipeline, one time unit per stage per micro-batch | `m + p - 1` slots, bubble `(p-1)/(m+p-1)`; table counted by the lab | D | chapter 19b |
+| Bubble at p=4 for m=1, 4, 16 | 0.7500, 0.4286, 0.1579 | D | chapter 19b |
+| Bubble at p=2, m=8, and at p=8, m=32 | 0.1111 and 0.1795 | D | chapter 19b |
+| Interleaved form `(p-1)/(v m + p - 1)` at p=4, m=16, v=2 and 4 | 0.0857 and 0.0448 | D | chapter 19b |
+| Megatron-LM interleaved schedule | proposed in the paper; the authors state a throughput gain of more than 10% at comparable memory | C | [MEGATRON-SCALE] |
+| Decode stage time at 1275 GB/s, 53.8 GB over p stages | 21.098 ms at p=2, 10.549 ms at p=4 | D | chapter 19b |
+| One-token hop, 10,240 bytes at 300 GB/s plus 4 µs | 4.034 µs | D | chapter 19b |
+| Decode inter-token latency through the pipeline | 42.204 ms at p=2, 42.212 ms at p=4, independent of micro-batches in flight | D | chapter 19b |
+| Decode utilization and trips per second, p=4, 1 and 4 in flight | 0.25 at 23.69, 1.00 at 94.76 | D | chapter 19b |
+| Fixed batch split into m micro-batches at p=4 | step 42.20, 52.75, 73.84, 116.04 ms at m=1, 2, 4, 8 | D | chapter 19b |
+| Causal ring, contiguous, 64 tokens, 4 ranks | pairs per rank 136, 392, 648, 904; imbalance 1.7385; critical path 904; efficiency 0.5752 | D | chapter 19b |
+| Causal ring, striped, same setup | pairs per rank 496, 512, 528, 544; imbalance 1.0462; critical path 544; efficiency 0.9559 | D | chapter 19b |
+| Causal ring, zigzag, same setup | 520 pairs per rank; imbalance 1.0; efficiency 1.0 | D | chapter 19b |
+| Efficiency at 2 and 8 ranks, 64 tokens | contiguous 0.6701 and 0.5372; striped 0.9848 and 0.9028 | D | chapter 19b |
+| Ring attention error against full attention, seed 19, 2 heads, dim 16 | at most 3.6e-7 for every layout | D | chapter 19b |
+| Per-rank KV memory in the ring | resident 1/P; peak 2/P with one receive buffer; peak ratio 1.0 at P=2, 0.5 at P=4, 0.25 at P=8 | D | chapter 19b |
+| Shard length where a balanced causal block's compute equals its transfer | 346.67 tokens at 300 GB/s, 3,250 tokens at 32 GB/s | D | chapter 19b |
+| KV cache for one request at 1,048,576 tokens | 64.0 GiB; per-GPU budget 69.11 GiB (53.8 GB of weights plus 19 GiB) | D | chapter 19b |
+| Prefill FLOPs at 1,048,576 tokens | 2.7259e17, of which 5.6413e16 dense | D | chapter 19b |
+| Decode floor at batch 1, 1,048,576 tokens, 4 GPUs | data 96.09 ms; tensor 27.10 ms; pipeline 96.11 ms; context 55.87 ms | D | chapter 19b |
+| Tensor-parallel all-reduce part of that floor | 3.079 ms for 128 all-reduces at P=4 | D | chapter 19b |
+| Prefill bytes sent per rank at 1,048,576 tokens, 4 GPUs | tensor 2,061.58 GB; pipeline 10.74 GB; context ring 51.54 GB | D | chapter 19b |
+| Prefill compute floor at the 312 TFLOP/s peak, 4 GPUs | 218.4 s without a bubble; 259.4 s for pipeline with 16 chunks; 873.7 s on one GPU | D | chapter 19b |
+| Context-parallel decode merges | 16 all-gathers, 0.196 ms in total | D | chapter 19b |
+| Ulysses against the ring, bytes per rank over 16 layers at 1,048,576 tokens, P=4 | 90.19 GB against 51.54 GB, under the assumption that Ulysses all-to-alls Q, K, V, and the output | D | chapter 19b |
+| Llama 3 context parallelism | the input is split into 2 x CP chunks and rank i gets chunks i and 2 x CP - 1 - i | C | [LLAMA3] section 3.3.2 |
+| Llama 3 uses an all-gather of K and V, not a ring | stated reasons: masks such as the document mask are easier, and K and V are much smaller than Q under GQA | C | [LLAMA3] section 3.3.2 |
+| Striped Attention | assigns each device tokens spread uniformly through the sequence; up to 1.45x end-to-end throughput over Ring Attention at 256k tokens on A100 and TPUv4 | C | [STRIPED] |
+| Ring Attention | overlaps K and V block communication with blockwise attention; supports sequences up to the device count times longer | C | [RING] |
+| DeepSpeed Ulysses | sequence split plus all-to-all for attention; constant communication volume when sequence length and device count grow proportionally | C | [ULYSSES] |
+| Stanford CS336, Spring 2026 | Lecture 7 "Parallelism" and Lecture 8 "Parallelism" on the course schedule | C | [CS336] |
+
+| Key | Page |
+|---|---|
+| [RING] | Liu, Zaharia, and Abbeel, Ring Attention with Blockwise Transformers for Near-Infinite Context, arXiv:2310.01889. https://arxiv.org/abs/2310.01889 |
+| [STRIPED] | Brandon et al., Striped Attention: Faster Ring Attention for Causal Transformers, arXiv:2311.09431. https://arxiv.org/abs/2311.09431 |
+| [ULYSSES] | Jacobs et al., DeepSpeed Ulysses: System Optimizations for Enabling Training of Extreme Long Sequence Transformer Models, arXiv:2309.14509. https://arxiv.org/abs/2309.14509 |
+| [GPIPE] | Huang et al., GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism, arXiv:1811.06965. https://arxiv.org/abs/1811.06965 |
+| [MEGATRON-SCALE] | Narayanan et al., Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM, arXiv:2104.04473. https://arxiv.org/abs/2104.04473 |
+| [LLAMA3] | Llama Team, The Llama 3 Herd of Models, arXiv:2407.21783, section 3.3.2. https://arxiv.org/abs/2407.21783 |
+| [CS336] | Stanford CS336 schedule, fetched for this chapter. https://cs336.stanford.edu/ |

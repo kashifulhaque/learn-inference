@@ -9,6 +9,8 @@ import GroupQuant from "./18-group-quant";
 import GptqMargin from "./18a-gptq-margin";
 import ColumnRowSplit from "./19-column-row-split";
 import RingAllReduce from "./19-ring-all-reduce";
+import PipelineGantt from "./19b-pipeline-gantt";
+import RingWork from "./19b-ring-work";
 import AcceptResidual from "./20-accept-residual";
 import SpeedupCurve from "./20-speedup-curve";
 import BestTree from "./20a-best-tree";
@@ -25,6 +27,8 @@ const figures: VizRegistry = {
   "18a-gptq-margin": GptqMargin,
   "19-column-row-split": ColumnRowSplit,
   "19-ring-all-reduce": RingAllReduce,
+  "19b-pipeline-gantt": PipelineGantt,
+  "19b-ring-work": RingWork,
   "20-accept-residual": AcceptResidual,
   "20-speedup-curve": SpeedupCurve,
   "20a-best-tree": BestTree,

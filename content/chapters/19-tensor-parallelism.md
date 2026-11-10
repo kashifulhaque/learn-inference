@@ -692,7 +692,8 @@ step is 12.5 ms, against 6.3 ms in the previous table. A ring is the right
 algorithm for large messages, because it keeps every link busy. For tiny
 messages, libraries such as NCCL choose other algorithms, so treat the flat
 table as the best case and this one as the cost of a plain ring. The choice of
-collective algorithm, and pipeline schedules, are a later topic.
+collective algorithm is a later topic, and [chapter 19b](/c/19b-pipeline-and-context-parallelism)
+covers pipeline schedules and ring attention.
 
 > [!NOTE] CUDA graphs shrink the fixed term
 > CUDA graphs collapse the launch overhead of a whole decode step, collectives
@@ -725,9 +726,10 @@ or even Ethernet between nodes.
 
 Its cost is the *bubble*, the time a stage sits idle waiting for work. During
 decode there's one token in flight, so GPU 1 idles while GPU 0 works and vice
-versa: latency is unchanged and utilization is $1/P$. You fill the bubble with
-micro-batches, several small batches in flight at once, which requires many
-concurrent requests. That's exactly what you don't have at low load.
+versa: latency is unchanged and utilization is $1/P$. Several micro-batches in
+flight fill the bubble, which requires many concurrent requests, and that's
+exactly what you don't have at low load. [Chapter 19b](/c/19b-pipeline-and-context-parallelism)
+builds the schedule and checks the bubble fraction.
 
 **Tensor parallelism** is the only one of the three that reduces single-request
 decode latency, because it's the only one that reduces the bytes each GPU reads
