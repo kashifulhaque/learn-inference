@@ -4,7 +4,7 @@ slug: 17-benchmarks
 part: "Part 5 — Serving"
 summary: TTFT, inter-token latency, throughput, and goodput, each defined from per-request timestamps, with what each one hides and how to measure it honestly.
 minutes: 105
-gpu: true
+gpu: false
 objectives:
   - Define TTFT, ITL, end-to-end latency, throughput, and goodput as formulas over five per-request values.
   - Explain why p50 and p99 diverge under batching, and compute the gap from a mixture of step times.
@@ -12,6 +12,8 @@ objectives:
   - Time GPU code correctly, and say how many repeats a claim needs.
   - Build a load generator that models arrivals and length distributions rather than sending everything at once.
   - Read a latency-throughput curve and find the knee.
+  - Explain coordinated omission, and measure latency from the intended send time.
+  - Drive an engine in process on a fixed trace, and find the knee of a goodput sweep.
 lab: 17-benchmark
 ---
 
@@ -610,6 +612,54 @@ and it's what `benchmark` in `engine/bench.py` is for. It ==isn't a serving
 benchmark==, and reporting it as one overstates the engine by a large and
 unpredictable factor.
 
+## Coordinated omission
+
+A load generator can lie about latency even when its arrival process is right.
+Picture a shop with one till. A *closed-loop* client is a customer who joins the
+queue only after the previous customer has left. If the till jams for five
+seconds, exactly one customer waits five seconds, and nobody else is recorded
+as waiting, because nobody else had arrived yet. An *open-loop* client is a
+crowd that walks in on a schedule, jammed till or not. Every customer who
+arrives during the jam waits, and the benchmark has to charge each of them.
+
+The closed-loop client under-samples the bad period, because it stops sending
+while the server is stuck. Gil Tene named this *coordinated omission*: the
+client and the server coordinate, and the samples that would have been slow are
+omitted.
+
+Make it concrete. A server takes 5 ms per request, one at a time. Request 100
+stalls it for 5 s. The open-loop client sends one request every 10 ms, so
+request 100 is due at 1.00 s and returns at 6.00 s. Request $100+k$ is due at
+$1.00 + 0.01k$ s. The server drains the backlog at 5 ms per request, so it
+returns at $6.00 + 0.005k$ s, and its latency, measured from when it was due, is
+
+$$
+L_{100+k} = 5 - 0.005\,k \ \text{seconds}, \qquad k = 0, 1, \dots, 899.
+$$
+
+The two clients, each sending 1000 requests, report these numbers:
+
+| Client | Slow samples | p99 latency |
+|---|---|---|
+| Closed loop, from the actual send time | 1 of 1000 | 5 ms |
+| Open loop, from the intended send time | 900 of 1000 | 4.95005 s |
+
+The p99 sits at sorted position $0.99 \times 999 = 989.01$. In the closed-loop
+run only position 999 is slow, so p99 is the 5 ms base time. In the open-loop
+run the ten largest values run from 5.000 s down to 4.955 s, and the p99
+interpolates between 4.950 s and 4.955 s. The same server and the same stall
+give a p99 that differs by a factor of about 990.
+
+> [!KEY] Measure from the intended send time
+> An open-loop client schedules each request in advance and measures latency
+> from that scheduled time. Measuring from the moment the client actually got to
+> send puts the stall back where it started: a client that blocks on a busy
+> connection sends late, measures only the service time, and reports the
+> closed-loop number again.
+
+With no stall, the two clients agree. They differ only when the server falls
+behind, which is the case a benchmark exists to find.
+
 ## The latency-throughput curve
 
 One curve brings throughput and latency together and tells you how much load to
@@ -630,6 +680,65 @@ Past the knee, adding load makes everything worse and improves nothing.
 > a maximum rather than a bend, and the rate at which goodput peaks is the rate
 > to admit at.
 
+### Driving an engine in process
+
+The lab's client drives chapter 16a's `EngineCore` directly, with no network in
+the way. The engine's `step()` advances an integer `clock` and returns one event
+per running request. The client reads that clock after each step, so a token's
+time is `clock * tick_s`. It does three jobs:
+
+1. It adds every request whose arrival has passed, up to `max_running` at a
+   time. The rest wait in the client's own queue, as they would behind a
+   server's concurrency limit.
+2. It jumps the clock forward to the next arrival when nothing is running.
+3. It stamps each request's arrival as the *intended* arrival, not the tick at
+   which it called `add`. The client can only add between steps, so a request
+   that arrives mid-step waits for the boundary, and that wait belongs in TTFT.
+
+A small trace shows the third point. A step takes 10 ticks of 1 ms. Request A
+arrives at 0.000 s and wants 3 tokens. Request B arrives at 0.005 s and wants 2.
+Steps end at 0.010, 0.020, and 0.030 s. A's first token is at 0.010 s. B joins at
+the 0.010 s boundary and gets its first token at 0.020 s, so its TTFT is
+$0.020 - 0.005 = 0.015$ s. Stamping B's arrival when `add` ran gives 0.010 s and
+hides a third of its wait.
+
+### Sweeping the rate to find the knee
+
+Run the same trace shape at several rates and compute goodput at each one, with
+chapter 17's $G$ over the records. The lab's engine holds 4 requests at a time.
+Each request needs 10 tokens at 10 ms a step, so it holds a slot for 100 ms, and
+four slots serve at most $4 / 0.1 = 40$ requests per second. The SLOs are a TTFT
+of 100 ms and an ITL of 15 ms. Each run sends 300 Poisson arrivals from seed 7:
+
+| Rate $\lambda$ (req/s) | $G$ | Goodput (req/s) | p99 TTFT | Throughput (tok/s) |
+|---|---|---|---|---|
+| 10 | 0.997 | 10.0 | 0.064 s | 104 |
+| 20 | 0.960 | 19.2 | 0.157 s | 207 |
+| 30 | 0.813 | 24.4 | 0.234 s | 307 |
+| 40 | 0.033 | 1.3 | 0.597 s | 397 |
+| 50 | 0.027 | 1.3 | 1.690 s | 398 |
+| 60 | 0.027 | 1.6 | 2.640 s | 398 |
+| 80 | 0.023 | 1.9 | 3.839 s | 398 |
+
+Throughput climbs to about 400 tokens per second, the 40 requests per second the
+slots allow, and stays there. Goodput falls away well before that ceiling:
+Poisson bursts queue requests behind full slots at 30 requests per second, long
+before the average load reaches 40.
+
+The *knee* is the largest rate at which $G$ stays at or above a threshold. With
+a threshold of 0.9 it is 20 requests per second. The definition stops at the
+first rate that misses. If $G$ were to dip at one rate and recover at a higher
+one, that later rate would not count, because a service that fails at a lower
+load is not safe to run at a higher one. On the sweep above, a rule that scanned
+for any rate at or above 0.9 would also give 20, so the lab pins the difference
+with a hand-made case: $G = 1.0, 0.98, 0.6, 0.95, 0.5, 0.2$ at rates 1 to 6
+gives a knee of 2, not 4.
+
+Chapter 17a's `max_goodput` answers a different question. It asks which steady
+batch still meets the SLOs, with no arrivals. This sweep has arrivals, so it
+shows what bursts do to that ceiling: the knee, 20 requests per second, is half
+of the 40 requests per second the slots could carry.
+
 ## Comparing against a production engine
 
 Comparing your engine against a production one is the honest test, and it's
@@ -644,6 +753,16 @@ fused GEMM stack, and a great deal of tuning. Decompose the gap rather than
 report it: time prefill and decode separately, then compare each against its
 roofline floor from chapter 10. A decode step at 40% of its floor with prefill
 at 90% is a completely different problem from the reverse.
+
+**Optional: measure vLLM on the same trace.** The lab runs on a CPU, so this
+step is for a machine with a GPU. Save the arrival times and token counts your
+sweep used, and replay them against a vLLM server with `vllm bench serve`. Its
+`--request-rate` flag sets an open-loop rate, `--num-prompts` sets the trace
+length, and `--seed` fixes the draw. Use the same rate list, the same prompt and
+output lengths, and the same SLOs, then compute $G$ and the knee with the lab's
+`goodput` and `find_knee` over its per-request results. Compare the knees, not
+the peak throughputs. Check first that the tool measures from the intended send
+time, as the coordinated-omission section requires.
 
 ## What goes wrong
 
@@ -661,6 +780,10 @@ Each of these mistakes produces a number that looks reasonable:
 - **Reporting the mean of a right-skewed distribution.** GPU timings have long
   tails from allocator activity, scheduling, and clock throttling. The mean sits
   between p50 and p90 and describes neither.
+- **Measuring open-loop latency from the actual send time.** A client that
+  blocks on a busy connection sends late and reports only the service time, so
+  a stall shrinks to one slow sample. The p99 of the planted run drops from
+  4.95 s to 5 ms.
 - **Comparing runs from different cards, drivers, or tenancy.** This failure
   produces confident, wrong conclusions, because nothing in the numbers looks
   anomalous.
@@ -673,6 +796,8 @@ Each of these mistakes produces a number that looks reasonable:
 > - Warm up, synchronize, stay on one card, and run $n \ge 2(1.96\,c/d)^2$
 >   times to resolve a difference $d$.
 > - Load with Poisson arrivals and variable lengths, and admit below the knee.
+> - Measure latency from the intended send time, or a stall hides in the tail.
+> - The knee of a goodput sweep is the largest rate before the first miss.
 
 ## Check your understanding
 
@@ -705,8 +830,10 @@ Each of these mistakes produces a number that looks reasonable:
 
 > [!TRY]
 > Implement the metric functions over the record format in this chapter, plus a
-> Poisson arrival generator. You pass when each formula matches its
-> hand-computable case and your arrival gaps look exponential.
+> Poisson arrival generator. Then show coordinated omission on a planted stall,
+> drive an engine in process, and find the knee of a goodput sweep. The lab runs
+> on a CPU. You pass when each formula matches its hand-computable case, the
+> open-loop p99 sees the stall, and the knee lands where the sweep puts it.
 
 Implement the following functions:
 
@@ -718,12 +845,23 @@ Implement the following functions:
   both TTFT and ITL, and throughput over the wall-clock span.
 - `goodput`, against a TTFT target and an ITL target.
 - `poisson_arrivals`, returning arrival times whose gaps are exponential.
+- `closed_loop_latencies` and `open_loop_latencies`, for a single-server queue.
+- `drive_engine`, a client that runs an `EngineCore`-style engine on a trace and
+  returns one record per request.
+- `sweep` and `find_knee`, for goodput against rate.
 
 The harness checks each formula against hand-computable cases: the 9.7-second
 span, the 110 tokens, the $10/11$ goodput, and the p99 that moves while p50
 doesn't. It also checks that your arrival gaps have a mean of $1/\lambda$ and a
 coefficient of variation near 1, which distinguishes exponential gaps from
 uniform ones.
+
+The new checks use a planted stall: a closed-loop p99 of 0.005 s against an
+open-loop p99 of 4.95005 s. They run the 3-token and 2-token trace above and
+expect a TTFT of 0.015 s for the second request. They sweep seven rates and
+expect a knee below 40 requests per second. The harness loads chapter 16a's
+reference `EngineCore` when it is present and a stand-in with the same contract
+otherwise, and the numbers match either way.
 
 Your results are saved, so you can compare runs as you optimize in later
 chapters.
@@ -733,4 +871,5 @@ chapters.
 - [The vLLM benchmarking suite](https://github.com/vllm-project/vllm/tree/main/benchmarks)
 - [DistServe: disaggregating prefill and decoding for goodput-optimized LLM serving](https://arxiv.org/abs/2401.09670)
 - [Little's law as viewed on its 50th anniversary](https://pubsonline.informs.org/doi/10.1287/opre.1110.0940)
+- [Benchmark CLI, `vllm bench serve`](https://docs.vllm.ai/en/latest/benchmarking/cli/) — the `--request-rate`, `--num-prompts`, and `--seed` flags used in the optional step.
 - [How NOT to measure latency](https://www.youtube.com/watch?v=lJ8ydIuPFeU) — Gil Tene on the mean, the tail, and coordinated omission.
