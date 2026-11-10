@@ -901,6 +901,100 @@ batch at once:
 The result is one launch, graph-capturable, and bound by the one unavoidable
 read of the logits.
 
+## Batched, sort-free, and hookable
+
+This section answers three questions the single-row pipeline leaves open: how a
+batch gets one setting per row, how top-p avoids the sort, and where a
+constraint plugs in.
+
+### One setting per row
+
+A serving batch holds requests with different settings, so `temperature`,
+`top_k`, and `top_p` become `(batch,)` tensors, and each is broadcast along the
+vocabulary axis with `.unsqueeze(-1)`. ==Row $i$ uses element $i$ and nothing
+else.== The wrong broadcast axis applies row 0's temperature to every row, and
+the output stays fluent, so the lab checks each row against the single-row
+functions in a loop.
+
+> [!EXAMPLE] Three rows, three settings
+> Take the lab's logits $z = (3, 2, 1, 0, -1)$ in all three rows:
+>
+> - **Row 0, $T = 1$, $p = 0.7$.** The probabilities are
+>   $0.6364, 0.2341, \dots$, so $C_1 = 0.6364 < 0.7$ keeps rank 2. Two tokens.
+> - **Row 1, $T = 0.5$, $p = 0.7$.** Halving the temperature sharpens the row to
+>   $0.8647, 0.1170, \dots$, and $C_1 = 0.8647 \ge 0.7$. One token.
+> - **Row 2, $T = 2$, $k = 3$, $p = 0.9$.** Top-k keeps the logits
+>   $(1.5, 1.0, 0.5)$ after scaling, which renormalize to
+>   $0.5065, 0.3072, 0.1863$. The mass before each rank is $0, 0.5065, 0.8137$,
+>   all below $0.9$. Three tokens.
+>
+> With row 0's settings applied to every row, the kept counts would be
+> $2, 2, 2$ instead of $2, 1, 3$.
+
+### Top-p without a sort
+
+The sort is the expensive step in the cost table. The nucleus doesn't need an
+order, only a *threshold probability* $t$: keep every token with
+$p_i \ge t$, and choose the largest $t$ whose kept mass still reaches $p$.
+The kept mass is non-increasing in $t$, so bisection finds it:
+
+$$
+\boxed{\, t^\star = \max \{\, t : \textstyle\sum_{i:\, p_i \ge t} p_i \ge p \,\}
+\,}
+$$
+
+Each step is one comparison and one masked sum over the row, which is the
+elementwise-plus-reduction work a fused kernel handles well. Start with
+$[0, p_{\max}]$ and halve the bracket 40 times.
+
+> [!EXAMPLE] Eight bisection steps on the five-logit row
+> At $p = 0.7$ and $p_{\max} = 0.6364$, the first midpoint is $0.3182$. It keeps
+> only the top token, mass $0.6364 < 0.7$, so the upper end moves down. The next
+> midpoint, $0.1591$, keeps two tokens with mass $0.8705 \ge 0.7$, so the lower
+> end moves up. After eight steps the bracket is $[0.2337, 0.2362]$, and the
+> second token's probability, $0.2341$, sits inside it. The set
+> $\{p_i \ge 0.2337\}$ is the top two tokens, the same set as the sort gives.
+
+The caveat is ties. A sort breaks a tie at the boundary arbitrarily, and the
+threshold keeps every tied token.
+
+On a $V = 248{,}320$ row the difference is easy to see. Float32 is the trap: a
+float32 `cumsum` over one softmax row ends at $1.00007$, not $1$, because the
+errors accumulate across a quarter of a million additions. Each tail token
+carries about $10^{-6}$, so at $p = 0.99$ that drift moves the cutoff by
+hundreds of tokens. The lab sums in float64 and compares against a float64
+sort. For four rows at $p = 0.5, 0.9, 0.95, 0.99$ both give nuclei of 436,
+12,048, 22,994, and 60,458 tokens. The sort-free version takes about 0.02
+seconds for all four on a CPU.
+
+> [!WARNING]
+> Compare kept sets in float64, or accept differences. Two correct float32
+> implementations can disagree on the nucleus of a 248,320-entry row.
+
+A cheaper variant runs `torch.topk` first, say $k = 1024$, and does the exact
+cumulative sum on the survivors, which is what the fused kernel above does. It is exact only when the nucleus fits in $k$ tokens, and the row
+above at $p = 0.99$ needs 60,458.
+
+### The processor hook
+
+Penalties and masks are the same shape of operation: take the tokens so far and
+the raw logits, and return new logits. The lab names that shape,
+`(input_ids, logits) -> logits`, and applies a list of such callables, in order,
+*before* temperature:
+
+```python
+def apply_logits_processors(input_ids, logits, processors):
+    for processor in processors or ():
+        logits = processor(input_ids, logits)
+    return logits
+```
+
+A processor that sets a banned token's logit to $-\infty$ is the simplest
+example. Processors run before temperature because a mask must hold at any
+temperature, and a scaled $-\infty$ is still $-\infty$. Constrained decoding,
+where a grammar state decides which tokens are legal at each step, plugs in
+here as one more processor that returns the mask for its state.
+
 ## What goes wrong
 
 **`NaN` in the output distribution.** A missing max subtraction, or a softmax
@@ -973,7 +1067,9 @@ distribution a second time.
 
 > [!TRY]
 > Implement the full pipeline on CPU: `apply_repetition_penalty`,
-> `top_k_filter`, `top_p_filter`, `min_p_filter`, and `sample`. You pass when
+> `top_k_filter`, `top_p_filter`, `min_p_filter`, and `sample`. Then add the
+> batched and sort-free variants: `apply_logits_processors`,
+> `top_p_filter_sortfree`, `filter_batched`, and `sample_batched`. You pass when
 > every harness check succeeds, including the top-p boundary case at `p = 0.7`.
 
 The harness works on the five-logit row from the worked example and checks,
@@ -996,7 +1092,21 @@ among others, the following:
   whose other 507 are `-10`, every draw with `top_p = 0.9` comes from those
   five.
 
-The lab reports `nucleus_size` and `seed_reproducible` as metrics. Its `sample`
+The batched checks add the following:
+
+- Processors run in list order, receive `input_ids`, and see the raw logits
+  before temperature. A ban-token processor removes the top token.
+- `filter_batched` keeps the same tokens as looping the single-row filters over
+  rows with temperatures `[0.5, 1.0, 1.5, 2.0]`. Applying row 0's settings to
+  every row fails here.
+- In a mixed batch, a temperature-0 row is greedy, a `top_k = 1` row always
+  draws its argmax, and a `top_k = 3` row stays in its top three.
+- `top_p_filter_sortfree` keeps 2 tokens at `p = 0.7` and 1 at `p = 0.5`
+  on the five-logit row, and matches a float64 sort on four 248,320-entry rows.
+  Dropping the token that crosses `p` fails both.
+
+The lab reports `nucleus_size`, `seed_reproducible`, and `sortfree_seconds` as
+metrics. Its `sample`
 takes its parameters as keyword arguments rather than a `SamplingParams` object,
 so read the starter's signature before you begin.
 

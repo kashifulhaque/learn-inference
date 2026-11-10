@@ -40,6 +40,21 @@ does not remeasure it.
 | [OPENAI-STREAM] | OpenAI Chat Completions streaming events. https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events |
 | [CS336] | Stanford CS336, Language Modeling from Scratch, syllabus. Lecture 10 is "Inference", taught by Percy Liang. https://cs336.stanford.edu/ |
 
+## Chapter 11
+
+Numbers introduced by the batched, sort-free, and hook section. They come from the lab's own computation, not from a source. The logits are `torch.randn(4, 248320) * 3` with `torch.manual_seed(2)`, and the exact kept counts are the ones `content/labs/11-sampling/tests.py` checks.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Worked batch on logits (3, 2, 1, 0, -1), rows (T=1, p=0.7), (T=0.5, p=0.7), (T=2, k=3, p=0.9) | kept 2, 1, and 3 tokens | D | chapter 11 |
+| Row 3 of that batch, top three at T=2 | probabilities 0.5065, 0.3072, 0.1863 | D | chapter 11 |
+| Bisection on the T=1 row at p=0.7, 8 steps | threshold bracket 0.2337 to 0.2362, boundary probability 0.2341 | D | chapter 11 |
+| Top-p nucleus size on 248,320 entries, p = 0.5, 0.9, 0.95, 0.99, float64 | 436, 12,048, 22,994, 60,458 tokens | D | chapter 11 |
+| Sum of a float32 `cumsum` over one 248,320-entry softmax row | 1.00007 instead of 1 | D | chapter 11 |
+| Sort-free top-p, 40 bisection steps, four rows on CPU | 0.02 s, about the same as one 248,320-entry sort | D | chapter 11 |
+
+The timing row is a CPU run on the author's machine, not an A100 measurement. The lab reports it as `sortfree_seconds`.
+
 ## Chapter 17a
 
 Numbers introduced by the performance-model chapter. A time here is a floor
