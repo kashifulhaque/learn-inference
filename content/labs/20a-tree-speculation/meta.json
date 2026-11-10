@@ -1,0 +1,23 @@
+{
+  "id": "20a-tree-speculation",
+  "title": "Tree speculation",
+  "brief": "Build a tree attention mask, verify several candidates per node without changing the output distribution, choose the best tree under a node budget, and set the draft length from batch load.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 300,
+  "metrics": [
+    "joint_total_variation",
+    "best_tree_expected_length_8",
+    "adaptive_gamma_batch_32"
+  ],
+  "hints": [
+    "mask[i, j] is True when j is i or an ancestor of i. A lower-triangular mask lets a node see its earlier siblings.",
+    "A node's position id is the committed length plus its depth, not its index in the array.",
+    "Try the candidates in order. After each rejection replace the target with the normalized positive part of p - q, and keep q the same.",
+    "A node's path probability is its parent's times its edge acceptance. Expected accepted length is the sum over non-root nodes.",
+    "Pick nodes by path probability, not edge acceptance. A child never beats its parent, so the greedy pick is always a connected tree.",
+    "Each node's recurrent state starts from its parent's state. One shared state advanced in index order mixes sibling branches."
+  ]
+}
