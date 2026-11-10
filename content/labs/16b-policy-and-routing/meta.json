@@ -1,0 +1,16 @@
+{
+  "id": "16b-policy-and-routing",
+  "title": "Scheduling policy and routing",
+  "brief": "Add aging to a priority queue, keep Virtual Token Counter shares fair for a late joiner, and route a seeded trace across replicas by prefix hit rate with a bounded load.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "needs_weights": false,
+  "device_agnostic": true,
+  "timeout": 120,
+  "metrics": ["max_vtc_gap", "hit_rate_bounded", "p99_ttft_bounded_ms"],
+  "hints": [
+    "A step costs base + per_token * tokens. Solve for tokens and round down.",
+    "Lift a client's counter when it arrives with an empty queue: take the larger of its own counter and the smallest counter among the backlogged clients. Without the lift, a newcomer at 0 takes every slot.",
+    "Rank replicas by match, then by queued work. Cap the in-flight count at ceil((1 + epsilon) * (total + 1) / n) so one hot prefix cannot pile onto one replica."
+  ]
+}
