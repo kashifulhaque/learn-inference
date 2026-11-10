@@ -5,6 +5,8 @@ import LayerTypes from "./01-layer-types";
 import SafetensorsOffsets from "./01-safetensors-offsets";
 import BatchBudget from "./02-batch-budget";
 import Breakeven from "./02-breakeven";
+import DecodeShapes from "./02a-decode-shapes";
+import LifetimeCost from "./02a-lifetime-cost";
 import StreamingDetokenizer from "./03-streaming-detokenizer";
 import Bf16Stall from "./04-bf16-stall";
 import RmsNormScaleShift from "./04-rmsnorm-scale-shift";
@@ -17,6 +19,8 @@ const figures: VizRegistry = {
   "01-layer-types": LayerTypes,
   "02-breakeven": Breakeven,
   "02-batch-budget": BatchBudget,
+  "02a-lifetime-cost": LifetimeCost,
+  "02a-decode-shapes": DecodeShapes,
   "03-streaming-detokenizer": StreamingDetokenizer,
   "04-rmsnorm-scale-shift": RmsNormScaleShift,
   "04-bf16-stall": Bf16Stall,

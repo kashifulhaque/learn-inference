@@ -1,0 +1,19 @@
+{
+  "id": "02a-model-design",
+  "title": "Model design for serving",
+  "brief": "Fit the loss, find the model that minimizes training plus lifetime inference FLOPs, and rank candidate shapes by decode bytes per token.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "needs_weights": false,
+  "timeout": 120,
+  "device_agnostic": true,
+  "metrics": [
+    "optimal_N_billions_at_1e13_served",
+    "decode_gb_per_token_b32_32k"
+  ],
+  "hints": [
+    "Compute-optimal N is G (C/6)^a with a = beta/(alpha+beta) and G = (alpha A / (beta B))^(1/(alpha+beta)). D follows from C = 6 N D.",
+    "With served tokens the optimum has no closed form. Each N fixes D through the loss target, so search over N alone.",
+    "Decode reads every weight once per step, shared by the batch. The KV cache and the recurrent state belong to each sequence."
+  ]
+}

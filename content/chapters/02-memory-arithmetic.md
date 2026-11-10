@@ -659,6 +659,10 @@ you subtract each sequence's 147.8 MiB of recurrent state, it holds batch 11 at
 `PagedKVCache` in chapter 15 turns this budget into a pool of blocks, so a short
 request doesn't reserve space for a length it never reaches.
 
+For how a model's size and shape, such as its KV head count and its share of
+full-attention layers, change these numbers, see
+[chapter 2a](/c/02a-inference-aware-model-design).
+
 ## What goes wrong
 
 These mistakes turn a budget that fits on paper into an out-of-memory error.
