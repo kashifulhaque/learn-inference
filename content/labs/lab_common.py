@@ -164,5 +164,8 @@ def enforce_perf_thresholds(result: dict[str, Any], meta: dict[str, Any]) -> dic
                            "detail": f"measured {value:g}, need {op} {bound:g}"})
     for c in checks[first_new:]:
         print(f"[{'PASS' if c['passed'] else 'FAIL'}] {c['name']} — {c['detail']}", flush=True)
-    result["passed"] = bool(checks) and all(c["passed"] for c in checks)
+    # Thresholds can only turn a pass into a failure, never the reverse: a
+    # result that already failed (for example, a harness error) stays failed.
+    prior = bool(result.get("passed", True))
+    result["passed"] = prior and all(c["passed"] for c in checks[first_new:])
     return result
