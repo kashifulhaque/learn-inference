@@ -72,7 +72,7 @@ def a100():
         "launch_us": 5.0,
         "launches": 400,
         "allreduce_us": 8.0,
-        "link_gbs": 600.0,
+        "link_gbs": 300.0,
         "memory_bytes": 80 * 1024**3,
         "tp": 1,
     }

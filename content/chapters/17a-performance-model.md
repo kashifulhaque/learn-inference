@@ -50,7 +50,7 @@ That is 52,734,208,000 bytes. The dense KV is 256 KiB per token, and it has no r
 
 **Latency names, from [chapter 17](/c/17-benchmarks).** Time to first token (TTFT) is the wait until the first generated token. Inter-token latency is the mean gap after that. When every sequence in the step waits on the same decode, the gap equals the step time. DistServe calls that gap time per output token (TPOT). This chapter uses the step time as TPOT, and the prefill of one prompt as TTFT. It does not replay chapter 17's trace statistics.
 
-**Communication, from [chapter 19](/c/19-tensor-parallelism).** This model has four KV heads, so the degrees worth considering are 1, 2, and 4. Each of the 64 layers ends its attention or linear sub-block and its MLP in one all-reduce, 128 collectives in a forward pass. Chapter 19 prices each at about 8 µs, and the hidden state at 10,240 bytes, so the ring moves $40{,}960 \times (P-1)/P$ bytes per token per layer per rank. NVLink between two A100s is 600 GB/s. PCIe Gen4 x16 is about 64 GB/s. The pairing that makes one all-reduce enough is chapter 19's subject. This chapter spends the cost and does not rebuild the split.
+**Communication, from [chapter 19](/c/19-tensor-parallelism).** This model has four KV heads, so the degrees worth considering are 1, 2, and 4. Each of the 64 layers ends its attention or linear sub-block and its MLP in one all-reduce, 128 collectives in a forward pass. Chapter 19 prices each at about 8 µs, and the hidden state at 10,240 bytes, so the ring moves $40{,}960 \times (P-1)/P$ bytes per token per layer per rank. This model uses chapter 19's one-way rates: 300 GB/s for A100 NVLink and 32 GB/s for PCIe Gen4 x16. The datasheet ratings of 600 GB/s and 64 GB/s count both directions together. The pairing that makes one all-reduce enough is chapter 19's subject. This chapter spends the cost and does not rebuild the split.
 
 ## The step, in one expression
 
@@ -122,7 +122,7 @@ The same arithmetic on the dense stack, at batch 1 and context 1, is 29.255 ms. 
 >
 > The weight matmuls inside that compute are $2 \times 26{,}895{,}979{,}520 \times 2048 / (312 \times 10^{12}) = 353.3$ ms. That is the same product chapter 19 writes as 353 ms for a 4096-token prefill split across two GPUs. The attention triangle and the chunked recurrence add the other 4.8 ms.
 
-At degree 2, chapter 19's prefill example moves $64 \times 4096 \times 20{,}480 = 5.369 \times 10^{9}$ bytes, 5.37 GB. At this model's 600 GB/s, the rated total of both directions, that is 8.95 ms. Chapter 19 divides by 300 GB/s, one direction, and gets 17.9 ms. This model adds the 1.024 ms of collective latency on top, 9.97 ms. Against a prefill of a third of a second, the latency term is small. Against a decode step it is most of the communication.
+At degree 2, chapter 19's prefill example moves $64 \times 4096 \times 20{,}480 = 5.369 \times 10^{9}$ bytes, 5.37 GB. At this model's 300 GB/s, one direction, that is 17.9 ms, the same figure chapter 19 gets. This model adds the 1.024 ms of collective latency on top, 18.9 ms. Against a prefill of a third of a second, the latency term is small. Against a decode step it is most of the communication.
 
 ## The batch where decode would cross the ridge
 
@@ -280,14 +280,14 @@ The following table is four GPUs, a 128-token prompt, context 1,024, and a searc
 
 | TPOT SLO | 4 replicas | Degree 2, two replicas | Degree 4 |
 |---|---|---|---|
-| 25 ms | 0 | 6,332 | 11,123 |
-| 40 ms | 5,121 | 11,352 | 13,890 |
-| 80 ms | 9,906 | 14,981 | 16,203 |
-| 1 s | 9,906 | 14,981 | 16,217 |
+| 25 ms | 0 | 6,180 | 10,486 |
+| 40 ms | 5,121 | 11,108 | 13,100 |
+| 80 ms | 9,906 | 14,740 | 15,276 |
+| 1 s | 9,906 | 14,740 | 15,398 |
 
-On NVLink, degree 4 wins every row. The 25 ms row is the sharp one: a single GPU's step is 30.0 ms, so a replica cannot meet 25 ms at any batch, and the sharded step can. On PCIe at 64 GB/s, with the same 1 s SLO, the order changes. Four replicas still do 9,906. Degree 2 does 13,175. Degree 4 does 11,222. ==The loose SLO on PCIe picks degree 2 with two replicas.== The extra ring bytes at degree 4, on the 64 GB/s link, cost more than the second split of the weights returns.
+On NVLink, degree 4 wins every row. The 25 ms row is the sharp one: a single GPU's step is 30.0 ms, so a replica cannot meet 25 ms at any batch, and the sharded step can. On PCIe at 32 GB/s, with the same 1 s SLO, the order changes. Four replicas still do 9,906. Degree 2 does 11,609. Degree 4 does 8,345. ==The loose SLO on PCIe picks degree 2 with two replicas.== The extra ring bytes at degree 4, on the 32 GB/s link, cost more than the second split of the weights returns.
 
-The same comparison at context 4,096 and at context 32,768, still on NVLink with a 1 s SLO, also picks degree 4: 10,569 tokens/s against 9,323 and 5,729 at context 4,096, and 2,484 against 2,060 and 1,122 at context 32,768. That is this workload, not a theorem about every model. The script prints the three contexts. A different prompt length changes the TTFT term and can zero out a layout the table accepts.
+The same comparison at context 4,096 and at context 32,768, still on NVLink with a 1 s SLO, also picks degree 4: 10,215 tokens/s against 9,229 and 5,729 at context 4,096, and 2,464 against 2,055 and 1,122 at context 32,768. That is this workload, not a theorem about every model. The script prints the three contexts. A different prompt length changes the TTFT term and can zero out a layout the table accepts.
 
 A search that stops at batch 64 never sees the batches where degree 4's extra room pays off. On that shorter search the loose SLO picks four replicas, and a TPOT SLO near 21 ms still picks degree 4, because replicas cannot meet it. The lab uses the shorter search so the brute-force check stays small. Set `max_batch` at least as high as the number of sequences that fit before you treat the answer as a capacity plan.
 

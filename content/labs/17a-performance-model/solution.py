@@ -12,8 +12,8 @@ C is the rated bfloat16 tensor-core peak. beta is the bandwidth you pass in
 (the rated 1935 GB/s for the floor in chapter 10). t_launch is chapter 10's
 worked example, 400 launches at 5 µs. t_comm is 0 at tensor-parallel degree 1.
 Otherwise it is chapter 19's 128 all-reduces at 8 µs each, plus the ring
-all-reduce bytes at the link rate you pass in (600 GB/s is NVLink in that
-chapter).
+all-reduce bytes at the link rate you pass in (300 GB/s is A100 NVLink one way in that
+chapter; 600 GB/s is the datasheet total of both directions).
 
 `kind` is "hybrid" (16 full-attention layers and 48 linear layers) or "dense"
 (chapter 2's hypothetical stack in which all 64 layers are full attention).
