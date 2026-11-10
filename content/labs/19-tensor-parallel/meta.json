@@ -7,7 +7,13 @@
   "device_agnostic": true,
   "needs_weights": false,
   "timeout": 900,
-  "metrics": ["mlp_error", "attention_error", "comm_bytes_per_layer"],
+  "metrics": [
+    "mlp_error",
+    "attention_error",
+    "comm_bytes_per_layer",
+    "decode_all_reduce_ms_tp2",
+    "decode_all_reduce_ms_tp8"
+  ],
   "hints": [
     "Column parallel splits the output dimension; row parallel splits the input dimension.",
     "A row-parallel layer produces partial sums, so its shards must be added, not concatenated.",

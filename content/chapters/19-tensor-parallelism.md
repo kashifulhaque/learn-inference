@@ -29,10 +29,11 @@ lab: 19-tensor-parallel
 >   linear-attention layers by value head, with their recurrent state going
 >   along. This model's head counts allow 1, 2, or 4 GPUs, and nothing more.
 > - The data each GPU sends stays small, but prefill still needs a fast
->   GPU-to-GPU link: communication takes 2.5% as long as the compute over
->   NVLink, and 24% as long over PCIe.
+>   GPU-to-GPU link: communication takes 5.1% as long as the compute over
+>   NVLink, and 48% as long over PCIe.
 > - In decode, each of the 128 small all-reduces has a fixed start-up cost, so
->   two GPUs make decode 1.91 times faster, not 2.
+>   two GPUs make decode 1.91 times faster, not 2. A ring all-reduce pays
+>   that latency on every hop, so the cost grows with the number of GPUs.
 
 Your engine fits on one A100 80GB, but barely. In bfloat16 the weights take
 53.8 GB, which leaves about 19 GiB for the *KV cache*, the keys and values that
@@ -574,14 +575,19 @@ $B_{\text{total}} = 64\,T\,B(P)$.
 
 *Prefill* runs the whole prompt in one forward pass, so it's limited by
 arithmetic, not memory, and the question is whether the link keeps up. NVLink,
-NVIDIA's direct GPU-to-GPU link, runs at 600 GB/s between two A100s. PCIe Gen4
-x16, the general-purpose bus a GPU sits on, runs at about 64 GB/s. So moving
-5.37 GB takes the following:
+NVIDIA's direct GPU-to-GPU link, is rated at 600 GB/s per A100. That figure
+adds both directions together. An A100 has 12 NVLink links of 25 GB/s in each
+direction, so one GPU sends at 300 GB/s and receives at 300 GB/s at the same
+time. PCIe Gen4 x16, the general-purpose bus a GPU sits on, is rated at
+64 GB/s, which is also both directions together: 32 GB/s each way.
+
+A ring all-reduce sends its bytes in one direction around the ring, so the
+one-direction rate is the one that matters. Moving 5.37 GB takes the following:
 
 $$
-t_{\text{NVLink}} = \frac{5.37}{600} = 8.95 \text{ ms},
+t_{\text{NVLink}} = \frac{5.37}{300} = 17.9 \text{ ms},
 \qquad
-t_{\text{PCIe}} = \frac{5.37}{64} = 83.9 \text{ ms}
+t_{\text{PCIe}} = \frac{5.37}{32} = 168 \text{ ms}
 $$
 
 Now compare that with the compute. Each of the model's 26.9 billion parameters
@@ -596,10 +602,10 @@ t_{\text{compute}} = \frac{2.20 \times 10^{14}}{2 \times 312 \times 10^{12}}
 = 353 \text{ ms}
 $$
 
-So communication takes 2.5% as long as the compute over NVLink, and 24% as long
+So communication takes 5.1% as long as the compute over NVLink, and 48% as long
 over PCIe. That's the whole argument for tensor parallelism as a within-node
-technique: the same sharding that costs nothing over NVLink ==costs a quarter
-of your prefill over PCIe==.
+technique: the same sharding that costs a twentieth of your prefill over NVLink
+==costs nearly half of it over PCIe==.
 
 ### Where it stops paying, in decode
 
@@ -612,7 +618,8 @@ $$
 t_{\text{comm}} \approx 128 \times 8\,\mu\text{s} = 1.02 \text{ ms}
 $$
 
-That figure barely changes with $P$. The weight read does: each rank reads $1/P$
+That figure assumes each all-reduce costs the same at every $P$. The next
+section tests that assumption. The weight read does: each rank reads $1/P$
 of the 53.8 GB at the measured copy bandwidth of 1275 GB/s:
 
 $$
@@ -637,6 +644,55 @@ Decode latency improves more slowly than $P$, and the loss compounds. The fixed
 The two terms are equal at $42.2 / P = 1.02$, or $P = 41$, but efficiency is
 already down to 73% long before that. On this model the question is academic,
 because $P \le 4$ is the architectural limit anyway.
+
+### A ring pays the latency on every hop
+
+The flat 8 microseconds hides how a ring all-reduce spends its time. The
+*alpha-beta model* splits the cost of a message into a fixed part per hop and a
+part that grows with the bytes:
+
+$$
+t(S, P) = \hlc{2(P-1)}\,\hla{\alpha} + \hlc{\frac{2(P-1)}{P}}\,\frac{\hld{S}}{\hlb{\beta}}
+$$
+
+Here $\hla{\alpha}$ is the latency of one hop, $\hlb{\beta}$ is the link
+bandwidth in one direction, and $\hld{S}$ is the message size in bytes. The
+ring runs $\hlc{2(P-1)}$ hops, $P-1$ to reduce-scatter and $P-1$ to all-gather,
+and each hop pays $\hla{\alpha}$ whatever it carries. The bytes term is the
+same ring factor as before.
+
+The hop latency is an assumption, not a measurement: this chapter uses
+$\alpha = 4\,\mu\text{s}$, which gives 8 microseconds at $P = 2$ and matches
+the flat figure above. Use $\beta = 300$ GB/s for NVLink.
+
+> [!EXAMPLE] One decode message against one prefill message at $P = 2$
+> A decode message is one token: $S = 5120 \times 2 = 10240$ bytes. The latency
+> term is $2 \times 4 = 8\,\mu\text{s}$ and the bytes term is
+> $10240 / (300 \times 10^{9}) = 0.034\,\mu\text{s}$. The all-reduce takes
+> 8.03 microseconds, and ==99.6% of that is latency==. A prefill message of 4096
+> tokens is $S = 41.9$ MB. Its bytes term is 139.8 microseconds against the same
+> 8 for latency, so latency is only 5.4% of 147.8 microseconds.
+
+The two terms are equal at $S^{*} = P\,\alpha\,\beta$. At $P = 2$ that's
+2.4 MB, about 234 tokens, so a decode batch of a few dozen sequences is still
+latency bound.
+
+The latency term grows with $P$, while the weight read shrinks. The following
+table sums 128 all-reduces of one decode token, and adds them to the weight
+read from the previous table:
+
+| $P$ | Per layer (2 all-reduces) | Per token (128) | Step | Speedup |
+|---|---|---|---|---|
+| 2 | 16.1 µs | 1.03 ms | 22.1 ms | 1.91 |
+| 4 | 48.1 µs | 3.08 ms | 13.6 ms | 3.10 |
+| 8 | 112.1 µs | 7.18 ms | 12.5 ms | 3.39 |
+
+Past $P = 2$, the ring is slower than the flat figure promised: at $P = 8$ the
+step is 12.5 ms, against 6.3 ms in the previous table. A ring is the right
+algorithm for large messages, because it keeps every link busy. For tiny
+messages, libraries such as NCCL choose other algorithms, so treat the flat
+table as the best case and this one as the cost of a plain ring. The choice of
+collective algorithm, and pipeline schedules, are a later topic.
 
 > [!NOTE] CUDA graphs shrink the fixed term
 > CUDA graphs collapse the launch overhead of a whole decode step, collectives
@@ -695,6 +751,9 @@ order, a sum where a concatenation belongs, and a missing all-reduce. It doesn't
 catch device placement, the real latency, or the configuration of NCCL,
 NVIDIA's collective library. All of those need real devices.
 
+The lab also simulates the ring itself: it moves chunks between neighbouring
+ranks, so the result and the bytes each rank sends are checked, not assumed.
+
 > [!TIP] Compare with a tolerance, not bitwise
 > Summing $P$ partial products in a different order from the unsharded matmul
 > changes the floating-point result. Demand agreement to about $10^{-3}$ in
@@ -741,6 +800,9 @@ Seed identically, or sample on one rank and broadcast.
 >   capped at 40 KiB. Prefill needs NVLink, not PCIe.
 > - Decode pays about 1.02 ms of fixed all-reduce latency per step, so speedup
 >   is sublinear: 1.91x at $P = 2$.
+> - A ring all-reduce pays latency on each of its $2(P-1)$ hops. A 10 KB decode
+>   message is over 99% latency, so a plain ring costs 7.2 ms per token at
+>   $P = 8$.
 
 ## Check your understanding
 
@@ -806,9 +868,30 @@ The harness checks the following:
 - A 2-way all-reduce moves exactly one tensor's worth per rank, while a 4-way
   all-reduce moves more but stays under twice the tensor size.
 
+Then add the collective itself. `ring_all_reduce(shards)` takes one tensor per
+simulated rank, runs the reduce-scatter and the all-gather by passing chunks
+between neighbours, and returns every rank's result and the bytes each rank
+sent. It must cut the tensor into chunks that cover every element, including
+when the length doesn't divide by the number of ranks. `all_reduce_time` and
+`step_all_reduce_time` implement the alpha-beta model above. The harness also
+checks the following:
+
+- Every rank ends with the sum of the shards, bit for bit identical, and the
+  inputs are untouched.
+- Lengths of 10, 7, and 5 on 4, 3, and 8 ranks, which don't divide evenly,
+  still reduce correctly.
+- Each rank sends $2(P-1)/P$ of the message on 2, 4, and 8 ranks, and a
+  non-divisible length moves $2(P-1)$ messages in total. The naive count of
+  $(P-1)$ messages per rank fails.
+- A 10240-byte decode message is more than 99% latency on 2, 4, and 8 ranks,
+  and a 4096-token prefill message is bandwidth bound.
+- 128 decode all-reduces take 1.028, 3.079, and 7.176 ms at $P = 2$, 4, and 8.
+
 ## Further reading
 
 - [Megatron-LM: training multi-billion parameter language models using model parallelism](https://arxiv.org/abs/1909.08053)
 - [Efficiently scaling transformer inference](https://arxiv.org/abs/2211.05102)
 - [Reducing activation recomputation in large transformer models](https://arxiv.org/abs/2205.05198) — sequence parallelism, which shards the norms tensor parallelism leaves replicated.
+- [NVIDIA A100 Tensor Core GPU datasheet](https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf) — the 600 GB/s NVLink and 64 GB/s PCIe Gen4 ratings.
+- [NVIDIA Ampere architecture in depth](https://developer.nvidia.com/blog/nvidia-ampere-architecture-in-depth/) — 12 NVLink links at 25 GB/s in each direction.
 - [NCCL: collective communication primitives](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/index.html)
