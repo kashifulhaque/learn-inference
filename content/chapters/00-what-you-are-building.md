@@ -422,8 +422,8 @@ that works.
 
 **Part 6, scaling: past one card and one token per step.**
 
-15. **Scale.** Quantization, tensor parallelism, and speculative decoding.
-    Chapters 18 to 20.
+15. **Scale.** Quantization, int4 weights and the KV cache, tensor parallelism,
+    and speculative decoding. Chapters 18, 18a, 19, and 20.
 
 By the end, the pieces fit together as one step that repeats:
 

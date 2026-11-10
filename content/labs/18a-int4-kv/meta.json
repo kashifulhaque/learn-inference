@@ -1,0 +1,20 @@
+{
+  "id": "18a-int4-kv",
+  "title": "Int4 weights and KV quantization",
+  "brief": "Pack int4, beat round-to-nearest with a GPTQ update and an AWQ scale search, quantize keys and values on different axes, and cast to FP8. A Triton matmul runs only when CUDA is available.",
+  "gpu": "A100-80GB",
+  "needs_gpu": true,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 120,
+  "metrics": ["compression", "gptq_margin", "kv_key_over_value"],
+  "hints": [
+    "The low nibble of an int32 word is the first value, stored as value + 8. Eight values fill one word.",
+    "Symmetric int4 uses amax/7 and codes from -7 to 7. A short last group still stores one scale. Bytes per weight are 0.5 plus 2 bytes for each scale.",
+    "GPTQ adds 1% of the mean diagonal to the Hessian, takes the upper Cholesky factor of the inverse, and subtracts each column's error times that row from the later columns. Skipping the subtraction is round-to-nearest.",
+    "An AWQ scale is (per-channel activation mean, divided by its mean) raised to alpha. The smallest output error wins. A tie keeps the smaller alpha.",
+    "Keys take one scale per channel, reduced over tokens. Values take one scale per token, reduced over channels.",
+    "FP8 rounds ties to even. A rounded E4M3 magnitude above 448 is NaN. A rounded E5M2 magnitude above 57344 is infinity.",
+    "w4a16_matmul is checked only when CUDA is available. This machine does not time it."
+  ]
+}

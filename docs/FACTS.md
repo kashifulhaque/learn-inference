@@ -207,3 +207,38 @@ Numbers introduced by the skinny-decode chapter. The arithmetic peak is 312 TFLO
 | [CS336] | Stanford CS336, Language Modeling from Scratch, schedule. Lecture 2 is resource accounting. Lecture 6 is Kernels, Triton. https://cs336.stanford.edu/ |
 | [CS229S] | CS 229S calendar, Fall 2023. 4 October, Hardware Aware Algorithm Design. https://cs229s.stanford.edu/fall2023/calendar/ |
 | [TRITON-GEMM] | Triton tutorial, Matrix Multiplication. https://triton-lang.org/main/getting-started/tutorials/03-matrix-multiplication.html |
+
+## Chapter 18a
+
+Numbers introduced by the int4 and KV chapter. Errors are computed by `scripts/figures/18a-int4-and-kv-quantization.py` on synthetic tensors. They are not an A100 measurement, and they are not a perplexity for Qwen3.8-27B. The W4A16 byte count $33/64$ is chapter 13a's. This chapter does not recompute that product's roofline.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Worked int32 word for codes $(1,-2,7,0,-8,3,-1,4)$, low nibble first | `-944730263` (`0xc7b08f69`) | D | chapter 18a |
+| Short rows $(1,-2,7)$ and $(-8,4,0)$ | words $3945$ and $2240$ | D | chapter 18a |
+| Bytes per weight, group 128, one 2-byte scale | $0.5 + 2/128 = 33/64 = 0.515625$ | D | chapter 18a, chapter 13a |
+| Bytes per weight, 10 weights, group 4 | $0.5 + 6/10 = 1.1$ | D | chapter 18a |
+| Toy row $(0.20, 0.10, 0.40)$, seed 0, correlation 0.9 | round-to-nearest codes $(4,2,7)$ error $0.0620$; GPTQ codes $(4,1,7)$ error $0.0197$ | D | chapter 18a |
+| Seeded layer, $\rho = 0.95$, group 8 | round-to-nearest $0.041674$, GPTQ $0.015605$, margin $0.026069$ | D | chapter 18a |
+| Lab GPTQ gate | error greater than $0.005$, margin at least $0.01$ | D | chapter 18a |
+| AWQ wide layer, seed 4, errors at $\alpha = 0, 0.25, 0.5, 0.75, 1$ | $0.330230$, $0.139580$, $0.065805$, $0.036474$, $0.099206$ | D | chapter 18a |
+| AWQ alphas selected by the brute-force grid | $0.75$ on the wide layer, $0.25$ on the narrow layer (seed 1) | D | chapter 18a |
+| Seeded head, relative attention error | per-token key $0.277654$, per-channel key $0.071986$, per-token value $0.079503$, per-channel value $0.147489$ | D | chapter 18a |
+| Per-token key error divided by per-token value error | $0.277654 / 0.079503 = 3.492$ | D | chapter 18a |
+| E4M3 bias, max finite, min normal, min subnormal | $7$, $448$, $2^{-6}$, $2^{-9}$; no infinity; NaN is `S.1111.111` | C | [FP8] |
+| E5M2 bias, max finite, min normal, min subnormal | $15$, $57344$, $2^{-14}$, $2^{-16}$; infinity at exponent field all ones and mantissa 0 | C | [FP8] |
+| E4M3 cast, round ties to even | $1.0625 \to 1$, $1.1875 \to 1.25$, $464 \to 448$, $480 \to \mathrm{NaN}$ | D | chapter 18a |
+| E5M2 cast, round ties to even | $1.125 \to 1$, $60000 \to 57344$, $61440 \to \infty$ | D | chapter 18a |
+| GPTQ on OPT-175B, 4-bit WikiText-2, as reported | GPTQ loses $0.03$ perplexity; round-to-nearest drops $2.2$ | C | [GPTQ] |
+| GPTQ damping | $1\%$ of the mean Hessian diagonal | C | [GPTQ] |
+| AWQ scale | $s = s_X^{\alpha}$, $\alpha$ searched on $[0, 1]$, $s_X$ the per-channel mean activation magnitude | C | [AWQ] |
+| KIVI axis choice | per-channel keys, per-token values | C | [KIVI] |
+
+| Key | Page |
+|---|---|
+| [GPTQ] | Elias Frantar, Saleh Ashkboos, Torsten Hoefler, and Dan Alistarh, GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers. https://arxiv.org/abs/2210.17323 |
+| [AWQ] | Ji Lin, Jiaming Tang, Haotian Tang, Shang Yang, Wei-Ming Chen, Wei-Chen Wang, Guangxuan Xiao, Xingyu Dang, Chuang Gan, and Song Han, AWQ: Activation-aware Weight Quantization for On-Device LLM Compression and Acceleration. https://arxiv.org/abs/2306.00978 |
+| [SMOOTHQUANT] | Guangxuan Xiao, Ji Lin, Mickael Seznec, Hao Wu, Julien Demouth, and Song Han, SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models. https://arxiv.org/abs/2211.10438 |
+| [KIVI] | Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, Vladimir Braverman, Beidi Chen, and Xia Hu, KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache. https://arxiv.org/abs/2402.02750 |
+| [FP8] | Paulius Micikevicius, Dusan Stosic, Patrick Judd, John Kamalu, Stuart Oberman, Mohammad Shoeybi, Michael Siu, Hao Wu, Neil Burgess, Sangwon Ha, Richard Grisenthwaite, Naveen Mellempudi, Marius Cornea, Alexander Heinecke, and Pradeep Dubey, FP8 Formats for Deep Learning. https://arxiv.org/abs/2209.05433 |
+| [MIT6.5940] | MIT 6.5940, TinyML and Efficient Deep Learning Computing, Fall 2024, schedule. Lecture 5, Quantization (Part I), 19 September. Lecture 6, Quantization (Part II), 24 September. Lecture 13, Efficient LLM Deployment, 22 October. https://hanlab.mit.edu/courses/2024-fall-65940 |
