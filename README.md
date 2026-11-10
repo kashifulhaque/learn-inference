@@ -11,8 +11,8 @@ The target model is [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B).
 
 | Path | Contents |
 |---|---|
-| `content/chapters/` | 28 chapters, in Markdown with YAML front matter. |
-| `content/labs/` | 27 labs: a starter file, a test harness, and a worked solution. |
+| `content/chapters/` | 29 chapters, in Markdown with YAML front matter. |
+| `content/labs/` | 28 labs: a starter file, a test harness, and a worked solution. |
 | `engine/` | The reference engine the labs check against, and the chapters read. |
 | `gpu/` | The RunPod worker and the lab runner it uses. |
 | `backend/` | FastAPI: auth, content, progress, and the run stream. |
@@ -35,7 +35,7 @@ caching.
 
 **Part 5 — Serving.** Continuous batching, the serving loop, benchmarks that mean something, and a model of step time and goodput.
 
-**Part 6 — Scaling.** Quantization on Ampere, tensor parallelism, speculative
+**Part 6 — Scaling.** Quantization on Ampere, int4 weights and KV quantization, tensor parallelism, speculative
 decoding.
 
 ## Why this model is interesting
@@ -189,7 +189,7 @@ curl -s https://qwen.ifkash.dev/api/health
 The output is similar to the following:
 
 ```json
-{"ok":true,"chapters":28,"commit":"a1b2c3d","book_pages":498}
+{"ok":true,"chapters":29,"commit":"a1b2c3d","book_pages":498}
 ```
 
 The server's `.env` is untracked and stays where it is; the database lives in a
