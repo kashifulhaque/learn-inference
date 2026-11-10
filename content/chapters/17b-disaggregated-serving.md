@@ -37,7 +37,7 @@ The lab runs on the CPU. The simulator advances a clock, not a GPU, and the step
 
 **The state, from [chapter 2](/c/02-memory-arithmetic) and [chapter 9](/c/09-the-kv-cache).** The 16 full-attention layers keep 64 KiB of KV per prompt token. Each of the 48 linear layers keeps 3,227,648 bytes: a 3,145,728-byte delta-rule matrix plus an 81,920-byte convolution window. The 48 layers together hold 154,927,104 bytes, 147.75 MiB, however long the prompt is. Full attention sits on every fourth layer, counting from index 3.
 
-**Link rates, one way.** Chapter 19 uses NVLink at 300 GB/s per A100 in each direction and PCIe 4.0 x16 at 32 GB/s in each direction. Chapter 17a's tensor-parallel model still uses 600 GB/s for NVLink. That figure adds both directions. A KV copy goes one way, so this chapter uses 300 GB/s. Between nodes, InfiniBand HDR is 200 Gbit/s and NDR is 400 Gbit/s per 4x port, which is 25 and 50 GB/s. Ethernet at 100 and 25 Gbit/s is 12.5 and 3.125 GB/s. Those last two are the line rate divided by 8, and they ignore protocol overhead.
+**Link rates, one way.** Chapter 19 uses NVLink at 300 GB/s per A100 in each direction and PCIe 4.0 x16 at 32 GB/s in each direction. Chapter 17a's tensor-parallel model uses the same one-way rates. The datasheet's 600 GB/s for NVLink adds both directions, and a KV copy goes one way. Between nodes, InfiniBand HDR is 200 Gbit/s and NDR is 400 Gbit/s per 4x port, which is 25 and 50 GB/s. Ethernet at 100 and 25 Gbit/s is 12.5 and 3.125 GB/s. Those last two are the line rate divided by 8, and they ignore protocol overhead.
 
 ## What interference looks like
 
