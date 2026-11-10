@@ -7,6 +7,7 @@ import ThroughputLatency from "./17a-throughput-latency";
 import ChunkVsDisagg from "./17b-chunk-vs-disagg";
 import GroupQuant from "./18-group-quant";
 import GptqMargin from "./18a-gptq-margin";
+import WandaError from "./18b-wanda-error";
 import ColumnRowSplit from "./19-column-row-split";
 import RingAllReduce from "./19-ring-all-reduce";
 import PipelineGantt from "./19b-pipeline-gantt";
@@ -26,6 +27,7 @@ const figures: VizRegistry = {
   "17b-chunk-vs-disagg": ChunkVsDisagg,
   "18-group-quant": GroupQuant,
   "18a-gptq-margin": GptqMargin,
+  "18b-wanda-error": WandaError,
   "19-column-row-split": ColumnRowSplit,
   "19-ring-all-reduce": RingAllReduce,
   "19b-pipeline-gantt": PipelineGantt,

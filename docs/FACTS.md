@@ -739,3 +739,42 @@ latency are chapter 19's.
 | [DEEPEP] | DeepSeek DeepEP README. https://github.com/deepseek-ai/DeepEP |
 | [VLLM-FUSED] | vLLM, fused_moe.py. https://github.com/vllm-project/vllm/blob/main/vllm/model_executor/layers/fused_moe/fused_moe.py |
 | [CS336] | Stanford CS336 Spring 2025 syllabus: Lecture 4, Mixture of experts, Thursday 10 April. http://cs336.stanford.edu/spring2025/ |
+
+# Fact entries for chapter 18b
+
+Numbers introduced by the sparsity and pruning chapter. A C row is a claim from a cited abstract. A D row is arithmetic from `content/labs/18b-sparsity/solution.py`, printed by `scripts/figures/18b-sparsity-and-pruning.py`. An S row is seeded synthetic data from the lab. Nothing here is an A100 measurement or a perplexity for Qwen3.8-27B. The 53.8 GB weight size and the 1275 GB/s copy rate are chapter 2's and chapter 0's. The byte rows are upper bounds that assume every byte is a prunable weight.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Deep Compression stages and result | prune, trained quantization, Huffman coding; 35x to 49x storage reduction; pruning alone 9x to 13x fewer connections | C | [DEEPCOMP] |
+| Wanda score | magnitude times the matching input activation norm; no retraining and no weight update; outperforms magnitude pruning and is competitive with weight-update methods on LLaMA and LLaMA-2 | C | [WANDA] |
+| SparseGPT claims | at least 50% sparsity one-shot on GPT-family models; OPT-175B and BLOOM-176B in under 4.5 hours; 2:4 and 4:8 supported; negligible perplexity increase at 60% unstructured | C | [SPARSEGPT] |
+| NVIDIA 2:4 claim | sparse tensor cores give twice the math throughput of dense units; a training workflow keeps accuracy across tasks and models | C | [NVSPARSE] |
+| Minitron | 15B Nemotron-4 pruned and distilled to 8B and 4B; up to 40x fewer training tokens per model than from scratch | C | [MINITRON] |
+| Sparse tensor core peak at twice the dense 312 TFLOP/s | 624 TFLOP/s | D | chapter 18b |
+| MIT 6.5940 Fall 2024 lecture titles | 3 Pruning and Sparsity (Part I), 12 Sep; 4 Pruning and Sparsity (Part II), 17 Sep; 9 Knowledge Distillation, 3 Oct | C | [MIT6.5940] |
+| Worked row $(0.9,-0.1,0.4,-0.7)$, column norms $(1,1,3,1)$ | Wanda scores $(0.9,0.1,1.2,0.7)$; magnitude keeps channels 0 and 3, Wanda keeps 0 and 2; relative error 0.846 against 0.615 | D | chapter 18b |
+| Seeded layer, 32 by 64, 256 tokens, seed 18, channels 3, 17, 40, 58 scaled by 12 | mean column norm 191.16 on the outlier channels, 15.89 on the other 60 | S | chapter 18b |
+| Row-wise relative output error at 25%, 50%, 75% | magnitude 0.115543, 0.248337, 0.549705; Wanda 0.030871, 0.091117, 0.178512 | S | chapter 18b |
+| Wanda over magnitude error at 50% | 0.091117 / 0.248337 = 0.367 | S | chapter 18b |
+| 2:4 relative output error | magnitude 0.332604, Wanda 0.123251; 0.332604 / 0.248337 = 1.339 | S | chapter 18b |
+| Kept weights in the 128 outlier-channel slots at 50% | 65 for magnitude, 119 for Wanda | S | chapter 18b |
+| Unstructured 50%, bfloat16 value plus 16-bit column index | 4 bytes per kept weight, 2 bytes per dense weight, the dense size | D | chapter 18b |
+| 4096 by 4096 bfloat16, 2:4 compressed | dense 33,554,432 B; values 16,777,216 B; 2-bit indices 2,097,152 B; total 18,874,368 B; metadata is 1/8 of the values and 1/9 of the total | D | chapter 18b |
+| Bytes per dense weight | dense bfloat16 2; 2:4 bfloat16 1.125; group-128 int4 0.515625 | D | chapter 18b, chapter 18a |
+| Decode weight read, 53.8 GB at 1275 GB/s, upper bound | 42.196 ms dense; 30.262 GB and 23.735 ms for 2:4 (1.778x); 13.870 GB and 10.879 ms for int4 (3.879x) | D | chapter 18b |
+| KD loss, teacher $(2,0)$, student $(0,0)$ | loss 0.327813, 0.443776, 0.484798 and gradient magnitude 0.380797, 0.462117, 0.489837 at T = 1, 2, 4 | D | chapter 18b |
+| Same row at T = 1 | total variation 0.380797; acceptance 0.619203; Pinsker bound 0.404854 | D | chapter 18b |
+| KD loss and gradient | $T^2$ times the batch-mean KL; gradient with respect to student logits $T(p^s - p^t)/B$ | D | [HINTON], chapter 18b |
+
+## Sources for chapter 18b
+
+| Key | Page |
+|---|---|
+| [DEEPCOMP] | Han et al., Deep Compression, arXiv:1510.00149. https://arxiv.org/abs/1510.00149 |
+| [SPARSEGPT] | Frantar and Alistarh, SparseGPT, arXiv:2301.00774. https://arxiv.org/abs/2301.00774 |
+| [WANDA] | Sun et al., A Simple and Effective Pruning Approach for Large Language Models, arXiv:2306.11695. https://arxiv.org/abs/2306.11695 |
+| [NVSPARSE] | Mishra et al., Accelerating Sparse Deep Neural Networks, arXiv:2104.08378. https://arxiv.org/abs/2104.08378 |
+| [MINITRON] | Muralidharan et al., Compact Language Models via Pruning and Knowledge Distillation, arXiv:2407.14679. https://arxiv.org/abs/2407.14679 |
+| [HINTON] | Hinton, Vinyals, and Dean, Distilling the Knowledge in a Neural Network, arXiv:1503.02531. https://arxiv.org/abs/1503.02531 |
+| [MIT6.5940] | MIT 6.5940 Fall 2024 schedule. https://hanlab.mit.edu/courses/2024-fall-65940 |

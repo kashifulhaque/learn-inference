@@ -1,0 +1,19 @@
+{
+  "id": "18b-sparsity",
+  "title": "Sparsity and pruning",
+  "brief": "Score weights by magnitude and by Wanda, build and compress a 2:4 mask, and check the temperature-scaled distillation loss with a finite-difference gradient. A PyTorch semi-structured check runs only on CUDA.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 60,
+  "metrics": ["wanda_over_magnitude"],
+  "hints": [
+    "Wanda scores are abs(W) times the L2 norm of each input channel over the calibration tokens. The norm is one number per column, shared by every output row.",
+    "prune_rowwise compares weights inside one output row. Sort the scores with stable=True so a tie drops the lower index first.",
+    "A 2:4 group is four consecutive input columns. Keep the two highest scores. Check the mask with a count per group of four, not with the overall density.",
+    "Compressed 2:4 stores two values and two 2-bit positions per group of four, in ascending column order. Use the mask, because a kept weight can be 0.",
+    "kd_loss is T squared times the batch mean of KL(softmax(teacher/T) || softmax(student/T)). The gradient with respect to the student logits is T times (p_student - p_teacher) divided by the batch size.",
+    "sparse_semi_structured_check returns None on a CPU. It was never run on a GPU."
+  ]
+}

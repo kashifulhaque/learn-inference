@@ -409,6 +409,7 @@ The first check calls only `pack_int4`. A correct pack passes that check before 
 
 ## Further reading
 
+- [Chapter 18b, sparsity and pruning](/c/18b-sparsity-and-pruning). Removes weights instead of rounding them, and reuses the Hessian update from this chapter in SparseGPT.
 - [GPTQ: accurate post-training quantization for generative pre-trained transformers](https://arxiv.org/abs/2210.17323). Algorithm 1 is the column update. The $0.03$ and $2.2$ perplexity figures are their OPT-175B result.
 - [AWQ: activation-aware weight quantization for on-device LLM compression and acceleration](https://arxiv.org/abs/2306.00978). The scale is $s_X^{\alpha}$ with $\alpha$ searched on $[0, 1]$.
 - [SmoothQuant: accurate and efficient post-training quantization for large language models](https://arxiv.org/abs/2211.10438). The per-channel scale that moves outliers from activations into weights.
