@@ -911,6 +911,8 @@ and one that always charges $\gamma + 1$ steps loses at batch 1.
 
 ## Further reading
 
+For tree drafts, EAGLE-style drafting, and choosing the draft length under load, see [chapter 20a](/c/20a-tree-speculation).
+
 - [Fast inference from transformers via speculative decoding](https://arxiv.org/abs/2211.17192)
 - [Accelerating large language model decoding with speculative sampling](https://arxiv.org/abs/2302.01318)
 - [Medusa: simple LLM inference acceleration framework with multiple decoding heads](https://arxiv.org/abs/2401.10774)

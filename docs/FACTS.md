@@ -553,3 +553,57 @@ Tag **A** marks an assumption.
 | [SPLITWISE] | Patel et al., Splitwise. https://arxiv.org/abs/2311.18677 |
 | [MOONCAKE] | Qin et al., Mooncake. https://arxiv.org/abs/2407.00079 |
 | [SARATHI-SERVE] | Agrawal et al., Sarathi-Serve. https://arxiv.org/abs/2403.02310 |
+
+# Fact entries for chapter 20a
+
+Numbers introduced by the tree speculation chapter. Rows tagged D are
+arithmetic on the chapter's A100 rates (53.8 GB of weights, 26.9 billion active
+parameters, 312 TFLOP/s, 1935 GB/s) and on chapter 15's 154,927,104 bytes of
+recurrent state per sequence, evaluated by
+`content/labs/20a-tree-speculation/solution.py` and printed by
+`scripts/figures/20a-tree-speculation.py`. None is an A100 measurement. The
+acceptance table comes from a Zipf target and a noisy draft, in closed form, so
+it is not a measured acceptance rate. Rows tagged C are what the cited paper's
+abstract or section reports, and this course did not reproduce them.
+
+| Tag | Meaning |
+|---|---|
+| **C** | Confirmed in the cited page. |
+| **D** | Derived. The arithmetic is in the chapter and in the figure script. |
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Seven-node tree, parents [-1, 0, 0, 1, 1, 2, 3], committed length 7 | positions [7, 8, 8, 9, 9, 9, 10]; 18 of 49 mask entries set; lower-triangular mask would set 28 | D | chapter 20a |
+| Same tree as separate path runs | 10 tokens (paths of length 3, 3, 4) against 7 as a tree | D | chapter 20a |
+| Branch acceptance, p (0.5, 0.3, 0.2), q (0.2, 0.3, 0.5), 3 candidates | a = (0.7, 0.06, 0.048); total 0.808 against 0.7 for one | D | chapter 20a |
+| Multi-candidate rule is exact for candidates drawn iid from q | induction on candidates left | D | chapter 20a, [SPECINFER] |
+| Lab statistical check, first two emitted tokens, 30,000 streams | total variation 0.0100 from the target's joint, 0.4419 from the draft's | D | chapter 20a |
+| Expected accepted drafts, tree [-1, 0, 0, 1, 1], r1 (0.6, 0.3), r2 (0.5, 0.2) | path probabilities 0.6, 0.3, 0.3, 0.12; sum 1.32 | D | chapter 20a |
+| Best tree against a chain on the chapter's table, budgets 1, 4, 6, 8, 12, 16 | 0.795, 1.775, 1.899, 1.996, 2.146, 2.258 against 0.795, 1.775, 1.867, 1.867, 1.867, 1.867 (the table has six levels) | D | chapter 20a |
+| Best-tree greedy equals exhaustive search | three tables, budgets 1 to 8, to 1e-9 | D | chapter 20a |
+| Batch-1 optimum draft length at c 0.05 | continuous 3.088, 5.480, 7.857, 13.292 for alpha 0.5, 0.7, 0.8, 0.9; integer 3, 6, 8, 13 | D | chapter 20a |
+| Adaptive draft length, alpha 0.8, c 0.05, batches 1, 8, 16, 32, 64, 96, 128, 160 | 8, 8, 8, 4, 2, 1, 1, 0 | D | chapter 20a |
+| Largest batch with speedup of at least 1, alpha 0.8, c 0.05 | 101 for a fixed draft length 4; 141 for the adaptive length | D | chapter 20a |
+| Node budget at c 0.05, batches 1, 4, 8, 16, 32, 64, 128 | 32, 32, 19, 9, 4, 2, 1 | D | chapter 20a |
+| Same with one 154,927,104-byte state written per node | 32, 10, 3, 3, 3, 1, 0 | D | chapter 20a |
+| Per-node state, 17 nodes | 2,633,760,768 bytes, 2.453 GiB per sequence; 1.361 ms of writes at 1935 GB/s; 0.0801 ms per node | D | chapter 20a |
+| Same at batch 32 | 43.6 ms of writes against a 27.80 ms plain step | D | chapter 20a |
+| Flattened root-to-leaf paths of the chapter's best 16-node tree | 37 tokens against 17 as a tree | D | chapter 20a |
+| Medusa speedup | about 2.2 times (Medusa-1), 2.3 to 3.6 times (Medusa-2) | C | [MEDUSA] |
+| EAGLE speedup on LLaMA2-Chat 70B | 2.7 to 3.5 times latency, distribution unchanged | C | [EAGLE] |
+| EAGLE-2 speedup | 3.05 to 4.26 times, from draft confidence as an acceptance estimate | C | [EAGLE2] |
+| EAGLE-3 speedup | up to 6.5 times, about 1.4 times EAGLE-2; 1.38 times throughput at batch 64 in SGLang | C | [EAGLE3] |
+| DeepSeek-V3 MTP | depth D = 1 (section 4.2); second-token acceptance 85% to 90% and 1.8 times TPS (section 5.4.3) | C | [DSV3] |
+
+Tag **A** marks an assumption. This chapter has none beyond the ones stated in
+its text: the draft costs 0.05 target passes per tree level, and a tree
+verification writes one recurrent state per node.
+
+| Key | Page |
+|---|---|
+| [MEDUSA] | Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads, arXiv 2401.10774. |
+| [EAGLE] | EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty, arXiv 2401.15077. |
+| [EAGLE2] | EAGLE-2: Faster Inference of Language Models with Dynamic Draft Trees, arXiv 2406.16858. |
+| [EAGLE3] | EAGLE-3: Scaling up Inference Acceleration of Large Language Models via Training-Time Test, arXiv 2503.01840. |
+| [DSV3] | DeepSeek-V3 Technical Report, arXiv 2412.19437, sections 2.2, 4.2, and 5.4.3. |
+| [SPECINFER] | SpecInfer: Accelerating Generative Large Language Model Serving with Tree-based Speculative Inference and Verification, arXiv 2305.09781; the multi-step speculative sampling procedure. |

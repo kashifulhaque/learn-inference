@@ -11,6 +11,7 @@ import ColumnRowSplit from "./19-column-row-split";
 import RingAllReduce from "./19-ring-all-reduce";
 import AcceptResidual from "./20-accept-residual";
 import SpeedupCurve from "./20-speedup-curve";
+import BestTree from "./20a-best-tree";
 
 // Figures for this group's chapters, keyed by the name a ```viz fence uses.
 const figures: VizRegistry = {
@@ -26,6 +27,7 @@ const figures: VizRegistry = {
   "19-ring-all-reduce": RingAllReduce,
   "20-accept-residual": AcceptResidual,
   "20-speedup-curve": SpeedupCurve,
+  "20a-best-tree": BestTree,
 };
 
 export default figures;
