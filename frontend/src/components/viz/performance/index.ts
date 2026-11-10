@@ -6,6 +6,7 @@ import TemperatureOrder from "./TemperatureOrder";
 import TruncationRules from "./TruncationRules";
 import WaveQuantization from "./WaveQuantization";
 import PaddingWaste from "./10a-padding-waste";
+import TokenMask from "./11a-token-mask";
 
 // Figures for this group's chapters, keyed by the name a ```viz fence uses.
 const figures: VizRegistry = {
@@ -16,6 +17,7 @@ const figures: VizRegistry = {
   "10a-padding-waste": PaddingWaste,
   "11-truncation-rules": TruncationRules,
   "11-temperature-order": TemperatureOrder,
+  "11a-token-mask": TokenMask,
 };
 
 export default figures;

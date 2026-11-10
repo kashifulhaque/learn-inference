@@ -1110,6 +1110,9 @@ metrics. Its `sample`
 takes its parameters as keyword arguments rather than a `SamplingParams` object,
 so read the starter's signature before you begin.
 
+For a processor that carries state between steps, see
+[chapter 11a](/c/11a-constrained-decoding), which builds a grammar mask on this hook.
+
 ## Further reading
 
 - [The curious case of neural text degeneration](https://arxiv.org/abs/1904.09751) — the nucleus sampling paper.

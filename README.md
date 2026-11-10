@@ -11,8 +11,8 @@ The target model is [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B).
 
 | Path | Contents |
 |---|---|
-| `content/chapters/` | 29 chapters, in Markdown with YAML front matter. |
-| `content/labs/` | 28 labs: a starter file, a test harness, and a worked solution. |
+| `content/chapters/` | 30 chapters, in Markdown with YAML front matter. |
+| `content/labs/` | 29 labs: a starter file, a test harness, and a worked solution. |
 | `engine/` | The reference engine the labs check against, and the chapters read. |
 | `gpu/` | The RunPod worker and the lab runner it uses. |
 | `backend/` | FastAPI: auth, content, progress, and the run stream. |
@@ -27,7 +27,7 @@ the rest of the course assumes, the model on disk, memory arithmetic.
 the gated delta rule, grouped-query attention, assembling and validating the
 stack.
 
-**Part 3 — Making it fast.** The KV cache, the roofline, CUDA graphs and launch overhead, sampling.
+**Part 3 — Making it fast.** The KV cache, the roofline, CUDA graphs and launch overhead, sampling, constrained decoding.
 
 **Part 4 — Kernels.** Your first CUDA kernel, fusion in Triton, skinny decode
 GEMMs, FlashAttention, split-KV decode attention, paged attention, and prefix
