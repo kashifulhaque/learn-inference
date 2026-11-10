@@ -65,3 +65,23 @@ def storage_bytes(shape, group_size: int | None = None,
     """
     # TODO
     raise NotImplementedError
+
+
+def smooth(weight: torch.Tensor, x_absmax: torch.Tensor,
+           w_absmax: torch.Tensor, alpha: float):
+    """SmoothQuant migration: move activation outliers into the weight.
+
+    Args:
+        weight: (out_features, in_features)
+        x_absmax: (in_features,) largest activation magnitude per input channel
+        w_absmax: (in_features,) largest weight magnitude per input channel,
+            taken over the output rows
+        alpha: how much difficulty to migrate, in [0, 1]
+
+    Returns (smoothed_weight, s) where s has shape (in_features,) and
+    s = x_absmax**alpha / w_absmax**(1 - alpha). The caller divides the
+    activations by s, so (x / s) @ smoothed_weight.T == x @ weight.T.
+    Clamp both absmax vectors to at least 1e-5 first.
+    """
+    # TODO
+    raise NotImplementedError

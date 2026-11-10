@@ -602,8 +602,8 @@ Three things follow from that formula:
 - **Every term is a lever.** Halving $\hld{W}$ with int8 quantization, storing
   each weight in 1 byte instead of 2, moves the numerator from 23.9 GiB to
   48.9 GiB, which roughly doubles the batch. Chapter 18 covers what that costs
-  in quality, and why FP8, which does it better, isn't available to you on the
-  A100's Ampere architecture.
+  in quality. FP8 does it better, but the A100's Ampere architecture has no FP8
+  tensor cores, so you can store and round FP8 there and not multiply in it.
 
 ## Activations
 

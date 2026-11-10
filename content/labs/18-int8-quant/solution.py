@@ -51,3 +51,11 @@ def storage_bytes(shape, group_size: int | None = None,
         in_features // group_size
     )
     return weights + scales * scale_bytes
+
+
+def smooth(weight: torch.Tensor, x_absmax: torch.Tensor,
+           w_absmax: torch.Tensor, alpha: float):
+    x_absmax = x_absmax.float().clamp_min(1e-5)
+    w_absmax = w_absmax.float().clamp_min(1e-5)
+    s = x_absmax.pow(alpha) / w_absmax.pow(1.0 - alpha)
+    return weight.float() * s, s
