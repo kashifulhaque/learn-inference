@@ -909,6 +909,8 @@ the ridge and the break-even batches in the table: 101, 125, 70, and 85 with a
 snapshot. A model that treats verification as always free never breaks even,
 and one that always charges $\gamma + 1$ steps loses at batch 1.
 
+Chapter 21's [capstone](/c/21-capstone-the-engine) puts this rollback problem beside chunked prefill, preemption, and seeded sampling in one engine.
+
 ## Further reading
 
 For tree drafts, EAGLE-style drafting, and choosing the draft length under load, see [chapter 20a](/c/20a-tree-speculation).

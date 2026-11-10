@@ -1,0 +1,17 @@
+{
+  "id": "21-capstone",
+  "title": "Capstone: the engine, end to end",
+  "brief": "Wire the paged cache, the recurrent state, the scheduler, and the sampler into one engine, keep outputs exact under chunking and preemption, and score goodput on a simulated clock.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 300,
+  "metrics": ["preemptions", "goodput_tokens_per_s", "serial_floor_tokens_per_s", "trace_preemptions", "trace_steps"],
+  "hints": [
+    "A recurrent-state slot lives exactly as long as its request is in the scheduler's running set. Free it when the request leaves that set, and give any request that restarts prefill at position 0 a fresh, zeroed slot and a fresh generator.",
+    "The scheduler can preempt a request after it joined this step's decode list, and can re-admit it in the same step. Check every scheduled item against what your cache holds before you run it.",
+    "A prefill chunk that follows a cached prefix needs a causal mask aligned to the bottom-right corner. Use attn_impl='naive', whose mask offsets by kv_len - q_len, not 'sdpa'.",
+    "Seed one torch.Generator per request, and drop it when the request is preempted so the recompute draws the same numbers again."
+  ]
+}
