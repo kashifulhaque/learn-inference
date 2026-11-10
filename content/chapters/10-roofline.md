@@ -13,6 +13,7 @@ objectives:
   - Predict whether prefill or decode limits a given workload.
   - Use measured bandwidth to tell a slow kernel from a memory-bound one.
   - Quantify what kernel launch overhead and idle SMs cost a decode step.
+  - Price a step as the sum of per-kernel maxima of launch and roofline time, and label it launch, memory, or compute bound.
 lab: 10-roofline
 ---
 
@@ -30,8 +31,9 @@ lab: 10-roofline
 >   byte. For all three, the only fix is to move fewer bytes.
 > - Judge a memory-bound kernel against the speed a plain copy really reaches on
 >   the card, 1275 GB/s, not the 1935 GB/s on the spec sheet.
-> - At batch 1, two costs the roofline doesn't model dominate decode: starting
->   hundreds of small kernels, and leaving most of the GPU's processors idle.
+> - At batch 1, two costs the roofline doesn't model matter: starting hundreds
+>   of small kernels, and leaving most of the GPU's processors idle. Take the
+>   max of launch time and roofline time per kernel to price the first one.
 
 Before you optimize anything, decide what limits it. The roofline model answers
 that with one number per operation, and it's usually right.
@@ -655,6 +657,57 @@ model's 129 norms, that's 0.65 ms of launching to do 1.4 µs of normalizing.
 > and replays it as one launch, which removes almost all of this overhead. Every
 > production engine uses graphs for decode. None of them use graphs for prefill,
 > where shapes change every step and the arithmetic is large enough not to care.
+> [Chapter 10a](/c/10a-cuda-graphs-and-launch-overhead) shows how to capture a
+> step and what capture rejects.
+
+## How much launch time shows up in a step
+
+This section asks how much of the 2.0 ms a real step pays, because a launch only
+costs time when the GPU would otherwise be waiting for it.
+
+The CPU queues launches ahead of the GPU. While the GPU runs a long kernel, the
+CPU queues the next one, so that launch costs nothing. A kernel shorter than a
+launch is different: the GPU finishes it and waits for the next one. Each
+kernel's time is therefore the larger of two floors, with $t_{\text{launch}} = 5\ \mu\text{s}$:
+
+$$
+\boxed{t_k = \max\bigl(\hla{t_{\text{launch}}},\ \max(F_k/C,\ B_k/\beta)\bigr)}
+$$
+
+The inner term is the kernel's roofline floor from earlier in this chapter. The
+step is the sum of $t_k$ over its kernels, because the kernels run one after
+another. A graph replay pays one launch for the whole step, so $t_{\text{graph}}
+= t_{\text{launch}} + \sum_k \max(F_k/C,\ B_k/\beta)$.
+
+> [!EXAMPLE] The 400-kernel decode step, eager and graphed
+> Split the step into 129 RMSNorms and 271 kernels that share the 53.8 GB of
+> weights, all at intensity 1. Each norm moves 20,480 bytes, a 10.6 ns floor, so
+> its launch sets its time: 5 µs. Each weight kernel moves 53.8 GB / 271 = 198.5
+> MB, a 0.1026 ms floor, so its launch hides.
+>
+> - **Eager:** $129 \times 5\ \mu\text{s} + 271 \times 0.1026\ \text{ms} = 28.449$ ms.
+> - **Graph:** $5\ \mu\text{s} + 129 \times 10.6\ \text{ns} + 271 \times 0.1026\ \text{ms} = 27.810$ ms.
+> - **Saved:** 0.639 ms, or 2.2% of the eager step. The step is memory bound.
+>
+> Now take 400 kernels that are all norm-sized. Eager is $400 \times 5\ \mu\text{s} = 2.000$
+> ms, and the step is launch bound. The 2.0 ms in the table above is the most
+> launches can cost, and a step pays all of it only when every kernel is tiny.
+
+Take one max per kernel, not one max over the step. A single
+$\max(N \cdot t_{\text{launch}}, \sum_k \text{floor}_k)$ lets one big kernel hide
+the launches of the tiny kernels around it. With three norm-sized kernels and
+the one-token MLP, it gives 0.2764 ms where the per-kernel sum gives 0.2914 ms.
+==A launch is hidden only by the kernel that runs while it is queued==, not by a
+kernel elsewhere in the step.
+
+The lab implements `step_time_ms` and `classify_step` for this model. Chapter
+[10a](/c/10a-cuda-graphs-and-launch-overhead) measures a captured step against an
+eager one. On a CUDA device, the lab also times 400 tiny kernels eager and
+graphed, and it reports both times as metrics without a threshold. This
+chapter's model is arithmetic on the course's 5 µs. It is not that measurement.
+[Chapter 17a](/c/17a-performance-model) adds the whole 2.000 ms to the memory
+floor, which is the upper bound from the table. The per-kernel model gives
+0.639 ms for the same step, once the launches that long kernels hide drop out.
 
 ## Idle SMs and occupancy
 
@@ -714,6 +767,8 @@ MLP table started.
   per product. Count $mkn$ and every intensity comes out half size.
 - **Charging the weights per token.** The MLP reads its weights once per forward
   pass, whatever $T$ is. Multiply them by $T$ and every pass looks memory bound.
+- **One max over the whole step.** It hides the tiny kernels' launches behind the
+  big kernels' time. Take the max per kernel, then sum.
 - **Reading all 24 heads of KV.** The cache holds $H_{kv} = 4$ heads. Counting $H$
   instead gives an intensity of 1, not 6.
 
@@ -729,6 +784,8 @@ MLP table started.
 >   is fewer bytes.
 > - At batch 1, 400 launches cost 12x to 23x the arithmetic floor, and one block
 >   per row fills 1 of 108 SMs. Batching and CUDA graphs are the fixes.
+> - A step is the sum of per-kernel maxima of launch and roofline time. The
+>   400-kernel decode step is memory bound: a graph saves 0.639 ms of 28.449.
 
 ## Check your understanding
 
@@ -757,14 +814,21 @@ MLP table started.
 > a finished kernel, and the remaining work is to move less data, not to move it
 > faster.
 
+> [!QUESTION] A step has one 0.28 ms kernel and three 10 ns kernels. What does a graph save?
+> Eager takes $0.28 + 3 \times 0.005 = 0.295$ ms, because each short kernel
+> exposes its launch. A graph takes $0.005 + 0.28 + 3 \times 0.00001 = 0.285$
+> ms, so it saves about 0.01 ms, 3.4%. The long kernel's launch was hidden
+> already, so a graph can't save it.
+
 ## Lab
 
 > [!TRY]
 > Write the roofline calculator that the rest of the course uses: FLOP and byte
 > counts for a matmul, an MLP block, and decode attention, plus the ridge point
-> and a floor that says which resource binds. You pass when the harness confirms
-> the counts, the GQA intensity of 6, and the memory-bound and compute-bound
-> verdicts at 1 and 2048 tokens.
+> and a floor that says which resource binds. Then add a launch floor under each
+> kernel. You pass when the harness confirms the counts, the GQA intensity of 6,
+> the memory-bound and compute-bound verdicts at 1 and 2048 tokens, and the
+> 28.449 ms eager and 27.810 ms graphed times for the 400-kernel step.
 
 Implement the following functions:
 
@@ -787,10 +851,28 @@ Implement the following functions:
   `intensity`, and `bound_by`, with the floor equal to the larger of the two
   times, the MLP at one token memory bound, and the MLP at 2048 tokens compute
   bound.
+- `launch_floor_ms(num_kernels)` returns the launch time at 5 µs each. The
+  harness checks that 400 kernels come to 2.000 ms.
+- `kernel_time_ms(flops, bytes)` returns the larger of one launch and the
+  kernel's roofline floor. A 20 KB kernel takes 0.005 ms, and the one-token MLP
+  takes its 0.2764 ms floor.
+- `step_time_ms(kernels, graph=False)` takes a list of `(flops, bytes)` pairs.
+  Eager sums `kernel_time_ms`. With `graph=True` it pays one launch, then each
+  kernel's roofline floor. The harness compares both with the example above and
+  with three norm-sized kernels plus an MLP, where one max over the whole step
+  returns 0.2764 ms instead of 0.2914 ms.
+- `classify_step(kernels)` returns `"launch"`, `"memory"`, or `"compute"`:
+  charge each kernel's time to the launch when the launch wins, and to the
+  roofline's bound otherwise, then return the label with the most time.
+
+On a CUDA device the harness also times 400 tiny kernels eager and under one
+graph and reports `tiny_eager_ms`, `tiny_graph_ms`, and `tiny_speedup`. With no
+device it skips that timing, and the CPU checks still decide pass or fail.
 
 ## Further reading
 
 - [Roofline: an insightful visual performance model for multicore architectures](https://dl.acm.org/doi/10.1145/1498765.1498785)
 - [Making deep learning go brrrr from first principles](https://horace.io/brrr_intro.html)
 - [Efficiently scaling transformer inference](https://arxiv.org/abs/2211.05102) — the same analysis applied to a serving system end to end.
+- [Chapter 10a, CUDA graphs and launch overhead](/c/10a-cuda-graphs-and-launch-overhead) — capture, batch-size buckets, and what capture rejects.
 - [NVIDIA A100 tensor core GPU architecture](https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/nvidia-ampere-architecture-whitepaper.pdf) — where the two peak rates come from.
