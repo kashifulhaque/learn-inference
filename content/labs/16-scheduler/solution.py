@@ -10,6 +10,8 @@ class Request:
     prefilled: int = 0
     generated: int = 0
     finished: bool = False
+    arrival: float = 0.0   # when the request reaches the server, in ms
+    priority: int = 0      # higher is admitted first; ties go first come, first served
 
     @property
     def needs_prefill(self) -> bool:
@@ -86,10 +88,17 @@ class Scheduler:
             return False
         return self.pool.allocate(request.id, tokens)
 
+    def _head_index(self) -> int:
+        return max(range(len(self.waiting)),
+                   key=lambda i: (self.waiting[i].priority, -i))
+
     def preempt(self) -> None:
         if not self.running:
             return
-        victim = self.running.pop()
+        # The lowest priority goes first. Among equals, the newest goes first.
+        index = max(range(len(self.running)),
+                    key=lambda i: (-self.running[i].priority, i))
+        victim = self.running.pop(index)
         self.pool.release(victim.id)
         victim.prefilled = 0
         victim.generated = 0
@@ -146,13 +155,15 @@ class Scheduler:
                 batch.prefill.append((request, chunk))
                 budget -= chunk
 
-        # 4: admit from the head of the queue.
+        # 4: admit from the head of the queue. The head is the waiting request
+        # with the highest priority, and the earliest position among equals.
         while self.waiting and budget > 0 and len(self.running) < self.max_batch_size:
-            candidate = self.waiting[0]
+            index = self._head_index()
+            candidate = self.waiting[index]
             chunk = min(self.chunk_size, budget, candidate.prompt_len)
             if not self._reserve(candidate, chunk):
                 break
-            self.waiting.popleft()
+            del self.waiting[index]
             self.running.append(candidate)
             batch.prefill.append((candidate, chunk))
             budget -= chunk
@@ -166,3 +177,72 @@ class Scheduler:
         request.generated += 1
         if request.generated >= request.max_new_tokens:
             request.finished = True
+
+
+def percentile(values, q):
+    """Linear-interpolation percentile, the definition in chapter 17."""
+    x = sorted(values)
+    r = q / 100 * (len(x) - 1)
+    i = int(r)
+    if i + 1 >= len(x):
+        return x[-1]
+    return x[i] + (r - i) * (x[i + 1] - x[i])
+
+
+def replay(scheduler, requests, overhead=2.0, per_token=0.125):
+    """Replay an arrival trace on a simulated clock and report latency.
+
+    A step that carries `n` tokens takes `overhead + per_token * n` ms. The
+    clock starts at 0. Before each step, every request whose `arrival` is at or
+    before the clock joins the scheduler. When nothing is waiting or running,
+    the clock jumps to the next arrival. A token's time is the clock at the end
+    of the step that produced it, and a request's first token is the one its
+    last prefill chunk produces. The trace must not trigger preemption.
+    """
+    pending = sorted(requests, key=lambda r: r.arrival)
+    clock = 0.0
+    token_times = {r.id: [] for r in requests}
+    order = []
+    while pending or scheduler.has_work:
+        while pending and pending[0].arrival <= clock:
+            scheduler.add(pending.pop(0))
+        if not scheduler.has_work:
+            clock = pending[0].arrival
+            continue
+        batch = scheduler.step()
+        if batch.empty:
+            # The step that retires the last finished request returns an empty
+            # batch. Loop again to jump to the next arrival, if there is one.
+            if scheduler.has_work:
+                break
+            continue
+        clock += overhead + per_token * batch.token_count
+        for request, chunk in batch.prefill:
+            if request.id not in order:
+                order.append(request.id)
+            scheduler.commit_prefill(request, chunk)
+            if not request.needs_prefill:
+                scheduler.commit_token(request)
+                token_times[request.id].append(clock)
+        for request in batch.decode:
+            scheduler.commit_token(request)
+            token_times[request.id].append(clock)
+
+    ttft, itl, gaps = {}, {}, {}
+    for request in requests:
+        times = token_times[request.id]
+        ttft[request.id] = times[0] - request.arrival
+        gaps[request.id] = [b - a for a, b in zip(times, times[1:])]
+        if len(times) >= 2:
+            itl[request.id] = (times[-1] - times[0]) / (len(times) - 1)
+    pooled = [g for gs in gaps.values() for g in gs]
+    return {
+        "ttft": ttft,
+        "itl": itl,
+        "gaps": gaps,
+        "order": order,
+        "makespan": clock,
+        "p99_ttft": percentile(list(ttft.values()), 99),
+        "p99_itl": percentile(pooled, 99),
+        "max_gap": max(pooled),
+    }

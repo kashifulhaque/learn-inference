@@ -11,6 +11,7 @@ objectives:
   - Derive how batch size moves arithmetic intensity toward the ridge point, and what it does to inter-token latency.
   - Size a prefill chunk from the decode step's memory floor.
   - Explain preemption, admission watermarks, and what a fairness policy does to tail latency.
+  - Replay an arrival trace on a simulated clock and report p99 TTFT and p99 ITL.
 lab: 16-scheduler
 ---
 
@@ -30,7 +31,10 @@ lab: 16-scheduler
 >   prompts in chunks puts the idle arithmetic units to work, and about 250
 >   prompt tokens per step come free.
 > - When memory runs out, evict the newest sequence and requeue it at the front.
->   Keep a reserve of free blocks, and never let a request jump the queue.
+>   Keep a reserve of free blocks, and admit only from the head of the queue.
+> - Measure the scheduler with an arrival trace on a simulated clock. On the
+>   lab's planted trace, chunked prefill cuts the decoders' worst stall from
+>   122.5 ms to 10.0 ms.
 
 Your kernels are about as fast as you're going to make them. The next question
 is what to run on them.
@@ -571,6 +575,14 @@ The reference does *first-come-first-served* (FCFS) on the head of the queue.
 It's predictable, it bounds your wait by the work ahead of you, and it's straightforward
 to reason about when a customer asks why their request took 40 seconds.
 
+The lab adds one knob to that rule: an integer `priority` on each request, where
+higher is admitted first and equal priorities stay FCFS. The head of the queue
+becomes the highest-priority waiting request, and the earliest one among equals.
+A tighter latency target maps to a higher number. Preemption follows the same
+order: the victim is the lowest-priority running request, and the newest among
+equals. With every priority at 0, both rules reduce to plain FCFS and
+newest-first.
+
 If you need differentiated service, the policies and their costs are as follows:
 
 | Policy | Mean latency | Tail latency | Notes |
@@ -590,6 +602,110 @@ whose stream was arriving at 45 ms per token sees 176 ms per token the moment
 someone else's 1024-token prefill chunk joins the step. Smaller chunks and a
 capped `max_batched_tokens` keep that jitter within a range users don't notice.
 
+## Replaying a trace
+
+How do you show that chunked prefill smooths the stream, and what it costs? Replay
+a small arrival trace on a simulated clock, and read the latency off the clock
+instead of off the step count.
+
+The picture is a metronome. Four users decode, and each step is a tick that gives
+every one of them a token. A long prompt lands, and the next tick takes as long as
+its whole prefill. The users see no token until it ends, so one long tick is
+the whole difference between the two policies.
+
+The lab's clock needs a step-time model, and the simplest honest one is a line.
+[Chapter 17a](/c/17a-performance-model) fits the same shape, $t = x/\alpha + \tau$,
+a fixed overhead plus a term that grows with the work. Here the work is the token
+count $n$ in the step:
+
+$$
+\boxed{t_{\text{step}} = \hla{\tau} + \hlb{c}\,n}
+$$
+
+The lab plants $\hla{\tau} = 2$ ms and $\hlb{c} = 0.125$ ms per token. Both are
+powers of two, so every time in the lab is exact in floating point. They are
+toy constants, not A100 measurements. Chapter 16's earlier tables, in which a
+decode step costs tens of milliseconds, are the numbers to quote for the real
+card.
+
+> [!EXAMPLE] One long prompt, two policies
+> Four requests, each with an 8-token prompt and 40 output tokens, decode from
+> time 0. A fifth request with a 960-token prompt arrives at 10 ms. Every
+> decode-only step carries 4 tokens, so it costs $2 + 0.125 \times 4 = 2.5$ ms.
+>
+> With whole-prompt prefill, the step that admits the long prompt carries
+> $960 + 4 = 964$ tokens:
+>
+> $$
+> 2 + 0.125 \times 964 = 122.5\ \text{ms}
+> $$
+>
+> With a budget of 64 tokens, each step carries 4 decodes and a 60-token chunk,
+> so it costs $2 + 0.125 \times 64 = 10.0$ ms, and the prompt takes
+> $960 / 60 = 16$ steps.
+
+The metrics come from the same definitions as [chapter 17](/c/17-benchmarks).
+With arrival $a_i$, first token $f_i$, last token $c_i$, and $n_i$ tokens:
+
+$$
+\operatorname{TTFT}_i = f_i - a_i,
+\qquad
+\operatorname{ITL}_i = \frac{c_i - f_i}{n_i - 1}
+$$
+
+TTFT counts from arrival, so queueing is in it. ITL averages the $n_i - 1$ gaps
+between $n_i$ tokens, and the mean hides a single long gap, so the lab also
+pools every gap from every request and reports the 99th percentile of that
+list as `p99_itl`. `p99_ttft` is the 99th percentile of the per-request TTFTs,
+with the linear-interpolation percentile from chapter 17.
+
+| Policy | Step with the prompt | Decoders' max gap | `p99_itl` | Long prompt's TTFT | `p99_ttft` |
+|---|---|---|---|---|---|
+| Whole prompt | 122.5 ms | 122.5 ms | 122.5 ms | 123.5 ms | 118.8 ms |
+| Chunks of 60 | 10.0 ms | 10.0 ms | 10.0 ms | 161.0 ms | 154.8 ms |
+
+Chunking cuts the worst stall by 12.25 times and raises the long prompt's TTFT
+by 37.5 ms. ==The trade is the one the previous section named==: one user's first
+token arrives later so that four streams stop stuttering. The two runs finish at
+the same time, 223.875 ms, because the decoders' tokens ride along on the
+chunk steps and the per-step overhead of the extra steps is repaid by the
+decode steps they replace.
+
+The replay loop is short:
+
+```python
+while pending or scheduler.has_work:
+    while pending and pending[0].arrival <= clock:
+        scheduler.add(pending.pop(0))      # arrivals join before the step
+    if not scheduler.has_work:
+        clock = pending[0].arrival         # idle: jump to the next arrival
+        continue
+    batch = scheduler.step()
+    clock += overhead + per_token * batch.token_count
+    # stamp every token produced by this step with `clock`
+```
+
+The priority knob has a trace of its own. Requests A and B, both priority 0,
+wait from 0 ms, and C arrives at 1 ms with priority 5. The budget is 32 tokens,
+so a step admits one 32-token prompt. A goes first in both runs. After that, FCFS
+admits B and then C, and priority admits C and then B:
+
+| Order | B's TTFT | C's TTFT |
+|---|---|---|
+| FCFS | 18.0 ms | 19.25 ms |
+| C at priority 5 | 20.25 ms | 17.0 ms |
+
+C gains 2.25 ms and B loses 2.25 ms. A priority is a transfer of latency between
+requests, not a way to create it. Without aging, a steady stream of high-priority
+arrivals can starve B indefinitely.
+
+> [!WARNING] Two silent mistakes in the metrics
+> Measuring TTFT from admission instead of arrival drops the queue wait. On the
+> priority trace it reports 12.0 ms for C and 8.25 ms for B, where the real
+> values are 17.0 ms and 20.25 ms, so the loaded system looks healthy.
+> Dividing by $n_i$ instead of $n_i - 1$ understates ITL: request A emits two
+> tokens 6 ms apart and would report 3.0 ms.
+
 ## Verifying a scheduler
 
 You can test a scheduler thoroughly without a GPU, and it's worth doing, because
@@ -608,6 +724,9 @@ properties that matter are as follows:
 - **An empty batch means an empty system.** Returning an empty batch while
   sequences are resident deadlocks the serving loop, because nothing will ever
   change to unblock it.
+- **Latency matches the planted trace.** The simulated clock gives exact
+  expected values for max gap, TTFT, and ITL, so a wrong formula fails with the
+  number it should have produced.
 
 The reference implementation drains 12 requests, with prompts from 40 to 700
 tokens and outputs from 5 to 50 tokens, in 73 steps, returning every block:
@@ -647,6 +766,14 @@ behind it, the tests still pass. In a real engine, a user watching a stream
 would see their output rewind, so production code keeps the generated token ids
 and recomputes only their KV.
 
+**Measuring TTFT from admission.** The number looks better and means less. A
+request that waits 5 seconds in the queue and prefills for 20 ms has a TTFT of
+5.02 seconds, and only the arrival-based clock says so.
+
+**Judging chunked prefill by its mean.** The mean ITL of the four decoders is
+the same in both runs of the planted trace, 5.59 ms. The stall shows up only in
+the largest gap and in `p99_itl`.
+
 **Tuning `max_batched_tokens` in isolation.** Too low, and prefill crawls and
 TTFT climbs. Too high, and you're back to stalling decodes. It interacts with
 `chunk_size`, with the batch size, and with your traffic's prompt length
@@ -665,6 +792,10 @@ preemption rate.
 >   under the decode step's memory floor; beyond that, every user's ITL pays.
 > - Preempt newest-first to the front of the queue, keep a watermark, admit only
 >   from the head, and bound the retry loop.
+> - Replay an arrival trace on a simulated clock. Count TTFT from arrival and ITL
+>   over $n - 1$ gaps, and read the stall in `p99_itl`, not in the mean.
+> - A priority moves latency from one request to another. Break ties first come,
+>   first served, and age low priorities so they can't starve.
 
 ## Check your understanding
 
@@ -721,6 +852,27 @@ invariants at every step:
 - **One sequence decoding with a 512-token prompt waiting** must put the decode
   in the batch, which proves decode is scheduled ahead of admission.
 
+The lab then replays arrival traces on a simulated clock, where a step costs
+2 ms plus 0.125 ms per token. You implement `percentile` and `replay`, and the
+checks use exact expected values:
+
+- **A percentile** by linear interpolation: $P_{25}$ of $[0, 10]$ is 2.5, and
+  $P_{99}$ of ten values of 0.2 and one of 5.0 is 4.52.
+- **An idle gap**: a request that arrives at 100 ms, after everything else has
+  finished, has a TTFT of 3.0 ms, and the run ends at 105.125 ms.
+- **A priority trace** with A, B, and a later C at priority 5 admits in the
+  order A, C, B, and in the order A, B, C when every priority is 0. The highest
+  priority waiting is admitted first, and preemption evicts the lowest priority
+  and then the newest. TTFTs are 6.0, 20.25, and 17.0 ms, and ITLs are 6.0,
+  2.125, and 2.25 ms.
+- **A stall trace** of four decoders and one 960-token prompt at 10 ms. Whole-prompt
+  prefill gives a max gap and `p99_itl` of 122.5 ms. A 64-token budget with
+  60-token chunks gives 10.0 ms. The long prompt's TTFT is 123.5 ms against
+  161.0 ms, and both runs end at 223.875 ms.
+
+The lab reports `p99_ttft` and `p99_itl` for the chunked run, beside `steps`,
+`budget_utilisation`, and `preemptions`.
+
 Throughout, `batch.token_count` must never exceed `max_batched_tokens`,
 `len(batch.decode)` must never exceed `max_batch_size`, and an empty batch must
 never be returned while work remains.
@@ -731,3 +883,5 @@ never be returned while work remains.
 - [SARATHI: efficient LLM inference by piggybacking decodes with chunked prefills](https://arxiv.org/abs/2308.16369)
 - [Taming throughput-latency tradeoff in LLM inference with Sarathi-Serve](https://arxiv.org/abs/2403.02310)
 - [Efficient memory management for large language model serving with PagedAttention](https://arxiv.org/abs/2309.06180)
+- [Chapter 17](/c/17-benchmarks) defines TTFT, ITL, and the percentile the replay uses, and [chapter 17a](/c/17a-performance-model) fits the step-time line.
+- [Chapter 16a](/c/16a-the-serving-loop-and-api) runs this scheduler inside `EngineCore`.

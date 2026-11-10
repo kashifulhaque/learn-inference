@@ -40,6 +40,25 @@ does not remeasure it.
 | [OPENAI-STREAM] | OpenAI Chat Completions streaming events. https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events |
 | [CS336] | Stanford CS336, Language Modeling from Scratch, syllabus. Lecture 10 is "Inference", taught by Percy Liang. https://cs336.stanford.edu/ |
 
+## Chapter 16
+
+Numbers introduced by the trace-replay section. They come from the lab's own computation on a simulated clock, not from a source. A step costs 2 ms plus 0.125 ms per token. The constants are planted toy values, not an A100 measurement, and `content/labs/16-scheduler/tests.py` checks every row below.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Decode-only step, 4 tokens | 2 + 0.125 × 4 = 2.5 ms | D | chapter 16 |
+| Step that admits a 960-token prompt whole, with 4 decodes | 2 + 0.125 × 964 = 122.5 ms | D | chapter 16 |
+| Step with 4 decodes and a 60-token chunk | 2 + 0.125 × 64 = 10.0 ms; 960 / 60 = 16 steps | D | chapter 16 |
+| Four decoders with a 960-token prompt arriving at 10 ms, whole versus chunked | max gap and `p99_itl` 122.5 ms versus 10.0 ms | D | chapter 16 |
+| Same trace, TTFT of the long prompt | 123.5 ms versus 161.0 ms | D | chapter 16 |
+| Same trace, `p99_ttft` over ttft 6.0 four times and the long prompt | 118.8 ms versus 154.8 ms | D | chapter 16 |
+| Same trace, end of run and mean ITL of each decoder | 223.875 ms for both, 217.875 / 39 = 5.5865 ms | D | chapter 16 |
+| A, B at priority 0 and C at priority 5 arriving at 1 ms, budget 32, TTFT of B and C | FCFS 18.0 and 19.25 ms; priority 20.25 and 17.0 ms | D | chapter 16 |
+| Same trace, TTFT from admission instead of arrival (wrong) | B 8.25 ms, C 12.0 ms | D | chapter 16 |
+| Same trace, A's ITL over n instead of n - 1 gaps (wrong) | 3.0 ms instead of 6.0 ms | D | chapter 16 |
+| Percentile with linear interpolation, ten values 0.2 and one 5.0 | P99 = 0.2 + 0.9 × 4.8 = 4.52 | D | chapter 17 |
+
+
 ## Chapter 11
 
 Numbers introduced by the batched, sort-free, and hook section. They come from the lab's own computation, not from a source. The logits are `torch.randn(4, 248320) * 3` with `torch.manual_seed(2)`, and the exact kept counts are the ones `content/labs/11-sampling/tests.py` checks.
