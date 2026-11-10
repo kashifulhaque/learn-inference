@@ -1,16 +1,24 @@
 {
   "id": "17-benchmark",
   "title": "Benchmarks that mean something",
-  "brief": "Compute TTFT, ITL, throughput, and goodput, and generate Poisson load.",
-  "gpu": "A100-80GB",
-  "needs_gpu": true,
+  "brief": "Compute TTFT, ITL, throughput, and goodput, generate Poisson load, show coordinated omission on a stalled server, drive an engine in process, and find the knee of a goodput sweep.",
+  "gpu": "cpu",
+  "needs_gpu": false,
   "device_agnostic": true,
   "needs_weights": false,
-  "timeout": 900,
-  "metrics": ["p99_ttft", "throughput", "goodput_ratio"],
+  "timeout": 120,
+  "metrics": [
+    "p99_ttft",
+    "throughput",
+    "goodput_ratio",
+    "open_loop_p99_s",
+    "knee_rate"
+  ],
   "hints": [
     "Inter-token latency spans the gaps between tokens, so a run of n tokens has n - 1 gaps.",
     "Poisson arrivals means exponential gaps: -ln(U) / rate for U uniform on (0, 1].",
-    "Goodput counts only the requests that met the target, not all of them."
+    "Goodput counts only the requests that met the target, not all of them.",
+    "A closed-loop client waits for each reply, so a stall costs it one slow sample. Measure the open-loop client from the intended send time, not from when it actually got to send.",
+    "The knee is the largest rate before the first rate whose goodput drops below the threshold. Stop at the first miss."
   ]
 }

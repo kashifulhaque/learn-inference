@@ -330,3 +330,22 @@ expected value.
 | Launch time a graph removes from that step | 0.639 ms, 2.2% of eager | D | chapter 10 |
 | 400 norm-sized kernels, eager | 2.000 ms, launch bound | D | chapter 10 |
 | Three norm-sized kernels and the one-token MLP, per-kernel sum against one max over the step | 0.2914 ms against 0.2764 ms | D | chapter 10 |
+
+## Chapter 17
+
+Numbers introduced by the coordinated-omission, in-process client, and knee sections. They come from the lab's own computation in `content/labs/17-benchmark/tests.py`, not from a source. None is a GPU measurement.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Planted stall: 1000 requests of 5 ms, request 100 takes 5 s, sent every 10 ms; closed-loop p99 | 0.005 s, one slow sample | D | chapter 17 |
+| Same stall, open loop, latency from the intended send time; request 100+k latency | 5 - 0.005k s for k = 0 to 899; p99 4.95005 s | D | chapter 17 |
+| Tene named the effect of a client that stops sending while the server stalls | coordinated omission | C | [TENE] |
+| Engine trace: 10-tick steps of 1 ms, A at 0 s with 3 tokens, B at 0.005 s with 2 tokens | B first token 0.020 s, TTFT 0.015 s | D | chapter 17 |
+| Sweep: 4 slots, 10 tokens at 10 ms a step, SLO TTFT 100 ms and ITL 15 ms, 300 Poisson arrivals, seed 7 | slot capacity 40 req/s; G 0.997, 0.960, 0.813, 0.033 at 10, 20, 30, 40 req/s | D | chapter 17 |
+| Knee at threshold 0.9 on that sweep | 20 req/s | D | chapter 17 |
+| vLLM `vllm bench serve` flags | `--request-rate`, `--num-prompts`, `--seed` | C | [VLLM-BENCH] |
+
+| Key | Page |
+|---|---|
+| [TENE] | Gil Tene, How NOT to measure latency. https://www.youtube.com/watch?v=lJ8ydIuPFeU |
+| [VLLM-BENCH] | vLLM benchmark CLI. https://docs.vllm.ai/en/latest/benchmarking/cli/ |
