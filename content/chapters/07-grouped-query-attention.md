@@ -812,3 +812,4 @@ The harness checks that:
 - [Attention is all you need](https://arxiv.org/abs/1706.03762) — where the scaled dot product and the multi-head split come from.
 - [Efficient memory management for large language model serving with PagedAttention](https://arxiv.org/abs/2309.06180) — what chapter 15 builds.
 - [Efficient streaming language models with attention sinks](https://arxiv.org/abs/2309.17453) — the null-target behavior the output gate removes the need for.
+- [KV economy: MLA, windows, sinks, and eviction](/c/07a-kv-economy-attention-variants) — chapter 7a, four more ways to shrink the cache beyond sharing heads.

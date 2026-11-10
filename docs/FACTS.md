@@ -451,3 +451,61 @@ measurement. The timing rows are pure-Python CPU timings on the author's machine
 | [SGLANG-CFSM] | Fast JSON Decoding for Local LLMs with Compressed Finite State Machine, LMSYS blog, 2024-02-05. https://lmsys.org/blog/2024-02-05-compressed-fsm/ |
 | [LLGUIDANCE] | llguidance README. https://github.com/guidance-ai/llguidance |
 | [VLLM-SO] | vLLM, Structured Outputs. https://docs.vllm.ai/en/latest/features/structured_outputs/ |
+
+## Fact entries for chapter 07a
+
+Numbers introduced by the KV-economy chapter. The DeepSeek-V2 dimensions and the quoted paper claims are confirmed against the cited paper text. Every other number is arithmetic on those dimensions or on this course's geometry (16 full-attention layers, 24 query heads, 4 KV heads, head width 256, bfloat16), evaluated by `content/labs/07a-kv-economy/solution.py` and printed by `scripts/figures/07a-kv-economy-attention-variants.py`. The MLA rows for this course's model are hypothetical, because the model has no MLA layers. The sink and H2O numbers come from seeded synthetic data. None is an A100 measurement.
+
+| Tag | Meaning |
+|---|---|
+| **C** | Confirmed in the cited paper. |
+| **D** | Derived. The arithmetic is in the chapter and in the figure script. |
+| **S** | Seeded synthetic data from the lab. It shows a mechanism and says nothing about a real model. |
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| DeepSeek-V2 layers, hidden size, heads, head width | 60, 5120, 128, 128 | C | [DSV2] section 3.1.2 |
+| DeepSeek-V2 latent width d_c, query latent d_c', RoPE key width d_r | 512, 1536, 64 | C | [DSV2] section 3.1.2 |
+| DeepSeek-V3 layers, hidden size, heads, head width | 61, 7168, 128, 128 | C | [DSV3] hyperparameters |
+| DeepSeek-V3 d_c, d_c', d_r | 512, 1536, 64 | C | [DSV3] hyperparameters |
+| MLA cache per token | (d_c + d_r) l elements, about 9/2 d_h l; equal to GQA with 2.25 groups | C | [DSV2] section 2.1.4, Table 1 |
+| MLA scores scale with the decoupled key | 1 / sqrt(d_h + d_r) | C | [DSV2] equation 18 |
+| W_UK absorbs into W_Q, W_UV into W_O | stated as possible during inference | C | [DSV2] section 2.1.2 |
+| DeepSeek-V2 KV cache reduction against DeepSeek 67B | 93.3%, as reported; not reproduced here | C | [DSV2] abstract |
+| DeepSeek-V2 elements per token, MHA and MLA | 1,966,080 and 34,560; ratio 56.89 | D | chapter 07a |
+| DeepSeek-V2 bytes per token in bfloat16, MHA and MLA | 3,932,160 and 69,120 (67.5 KiB) | D | chapter 07a |
+| DeepSeek-V3 MLA bytes per token | 61 x 576 x 2 = 70,272 | D | chapter 07a |
+| Decoupled key share of the MLA cache | 64 / 576 = 11.1% | D | chapter 07a |
+| MLA on this geometry at d_c 1024, d_r 128, and at d_c 512, d_r 64 | 2304 and 1152 bytes per layer per token against GQA's 4096; ratios 1.78 and 3.56 | D | chapter 07a |
+| MLA bytes per token on this geometry, 16 layers | 36 KiB and 18 KiB against GQA's 64 KiB | D | chapter 07a |
+| DeepSeek-V2 absorbed FLOPs per cached token per layer, and the fixed part | 278,528 and 33,554,432; equal at T = 120.5 | D | chapter 07a |
+| DeepSeek-V2 decode attention at T = 4096, 60 layers, absorbed and naive | 70,464,307,200 and 8,266,469,867,520 FLOPs; ratio 117.3 | D | chapter 07a |
+| DeepSeek-V2 absorbed intensity at T = 4096, and for large T | 248.889 and 241.778 FLOPs per byte; ridge 161.2 | D | chapter 07a |
+| DeepSeek-V2 rated-A100 floor per cached token per layer, MHA and absorbed MLA | 33.869 ns and 0.893 ns; ratio 37.9 | D | chapter 07a |
+| Merged W_UV and W_O against separate, per layer, V2 | 335,544,320 against 92,274,688 entries | D | chapter 07a |
+| MLA absorbed intensity on this geometry, 24 heads | 45.3 for large T, 45.667 at 32,768 | D | chapter 07a |
+| Window 4096 plus 4 sinks, this model, 32,768 tokens | 4100 slots, 268,697,600 bytes (256.25 MiB) against 2 GiB; ratio 7.992 | D | chapter 07a |
+| Half local (4096) and half global, this model, 32,768 tokens | 1152 MiB | D | chapter 07a |
+| Mistral 7B window, layers, theoretical span | 4096, 32, about 131K tokens | C | [MISTRAL] |
+| Mistral 7B rolling buffer | position i mod W; 8x less cache at 32k tokens | C | [MISTRAL] |
+| Gemma 2 local window and global span, alternating in every other layer | 4096 and 8192 | C | [GEMMA2] section 2 |
+| StreamingLLM claims | stable at up to 4 million tokens; up to 22.2x over sliding-window recomputation; window attention fails when the text exceeds the cache | C | [STREAMING] abstract |
+| Planted sink head, seed 1, 200 tokens, d 16, window 32 | mass on token 0 is 0.9999; error 1.069187 with 0 sinks, 0.000096 with 1, 0.000094 with 4 | S | chapter 07a |
+| H2O heavy hitters and policy | accumulated attention follows a power law; keeps recent and heavy-hitter tokens, budget split evenly in the baselines | C | [H2O] |
+| H2O budget claim | comparable performance with under 20% of the KV budget, on the paper's models | C | [H2O] |
+| Planted H2O layers, 128 tokens, budget 24, recent 8, seeds 0 and 5 | oracle 100.201 and 99.967; H2O 97.816 and 97.500 (0.9762, 0.9753); window 4.094 and 3.616 (0.0409, 0.0362) | S | chapter 07a |
+| SnapKV selection | observation window of 16, max pooling kernel 5, top-k per head, prompt-only | C | [SNAPKV] sections 4.1 and 5.1.1 |
+| SnapKV claims | 3.6x generation speedup and 8.2x memory efficiency at 16K-token inputs | C | [SNAPKV] abstract |
+| This model's attention FLOPs per decode token at 32,768, 16 layers | 12.885 GFLOP for MHA and GQA; 1.612 for window plus sinks; 7.248 for half local; 55.163 and 27.582 for the two MLA rows | D | chapter 07a |
+
+## Sources for chapter 07a
+
+| Key | Page |
+|---|---|
+| [DSV2] | DeepSeek-AI, DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model. https://arxiv.org/abs/2405.04434 |
+| [DSV3] | DeepSeek-AI, DeepSeek-V3 Technical Report. https://arxiv.org/abs/2412.19437 |
+| [MISTRAL] | Jiang et al., Mistral 7B. https://arxiv.org/abs/2310.06825 |
+| [STREAMING] | Xiao et al., Efficient Streaming Language Models with Attention Sinks. https://arxiv.org/abs/2309.17453 |
+| [H2O] | Zhang et al., H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. https://arxiv.org/abs/2306.14048 |
+| [SNAPKV] | Li et al., SnapKV: LLM Knows What You Are Looking for Before Generation. https://arxiv.org/abs/2404.14469 |
+| [GEMMA2] | Gemma Team, Gemma 2: Improving Open Language Models at a Practical Size. https://arxiv.org/abs/2408.00118 |

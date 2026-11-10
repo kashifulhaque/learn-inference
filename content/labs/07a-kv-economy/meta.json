@@ -1,0 +1,17 @@
+{
+  "id": "07a-kv-economy",
+  "title": "KV economy: MLA, windows, sinks, and eviction",
+  "brief": "Count MLA's latent bytes, show the absorbed form matches the naive one, hold a rolling window with sinks against masked attention, and evict with H2O against an oracle.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 120,
+  "metrics": ["intensity_absorbed", "sink_error_with_sinks", "h2o_mass_ratio"],
+  "hints": [
+    "MLA caches the latent (d_c) and one shared RoPE key (d_rope) per layer per token. Forgetting the RoPE key gives 61,440 bytes for DeepSeek-V2, not 69,120.",
+    "The absorbed form reads the cache directly. Multiply the query by W_UK first, so scores are q_lat dot c_kv. Apply W_UV after the weighted sum of the latents. The scale stays 1/sqrt(d_h + d_r).",
+    "Token p >= sinks goes to slot sinks + (p - sinks) % window. The first `sinks` slots are never overwritten. The window counts the current token.",
+    "H2O softmaxes each query over the cached keys only, adds those probabilities to every cached key's score, and evicts the lowest score outside the newest `recent` tokens."
+  ]
+}
