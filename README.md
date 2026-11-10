@@ -152,8 +152,13 @@ listing files.
 ## Deploy with Docker Compose
 
 ```bash
-docker compose up -d --build
+docker compose pull && docker compose up -d
 ```
+
+The compose file runs the prebuilt image
+`ghcr.io/kashifulhaque/learn-inference:latest`. The host never builds from
+source and holds no copy of this repository's code. Put a `.env` file next to
+the compose file; see [.env.example](.env.example).
 
 The container joins the external `edge` network and answers on port 8000, which
 is where a reverse proxy should send traffic. See
@@ -170,17 +175,18 @@ through an SSH tunnel if the proxy or its certificate is ever the problem:
 ssh -L 8087:127.0.0.1:8087 ifkash@vm.ifkash.dev
 ```
 
-For the deployment this repository targets, push first, then deploy:
+### How a release reaches the server
 
-```bash
-git push && ./scripts/deploy.sh
-```
+To release a change, merge it to `main`. The `build-and-deploy` workflow
+(`.github/workflows/deploy.yml`) then does the following:
 
-The server holds a clone of this repository, so a deploy is a commit the server
-fetches, not a directory someone copied over. The script refuses to run with a
-dirty tree or an unpushed commit, resets the server's checkout to the commit
-being released, rebuilds, and waits for the health check. `/api/health` reports
-the commit it is running:
+1. Builds the image on GitHub Actions, including the PDF book, and pushes it to
+   GHCR as `latest` and as `sha-COMMIT`.
+2. Connects to the server and runs `deploy learn-inference`, which pulls the new
+   image and restarts the container.
+
+What runs is therefore an image built from a commit you can name. `/api/health`
+reports the commit it was built from:
 
 ```bash
 curl -s https://qwen.ifkash.dev/api/health
@@ -193,9 +199,7 @@ The output is similar to the following:
 ```
 
 The server's `.env` is untracked and stays where it is; the database lives in a
-Docker volume, untouched by either step. To convert a server that has no
-checkout yet, or to set up a new one, run `./scripts/deploy.sh --init` once. The
-clone pulls over HTTPS, so the server needs no deploy key.
+Docker volume, untouched by a deploy.
 
 ## The PDF book
 
@@ -219,10 +223,13 @@ The PDF lands in `book/`, which is untracked. The script finds Chrome through
 `CHROME_PATH` or in the usual install locations, and without `--force` it skips
 the build when no chapter, lab, or layout file has changed.
 
-`scripts/deploy.sh` builds the book on the workstation and copies it to the
-server, where the container mounts it read-only. Set `LI_SKIP_BOOK=1` to deploy
-without touching the PDF. A server without a PDF shows no download link. The
-download requires an authenticated Authelia identity, like the chapters.
+The Docker image builds the book in its own `book` stage and copies only the
+PDF and its manifest into `/app/book`, so every image carries the PDF that
+matches its chapters. Chromium and the build's dependencies stay out of the
+final image. The manifest's `commit` is `unknown` in the image, because the
+build context has no `.git` directory. A checkout without a built book shows no
+download link. The download requires an authenticated Authelia identity, like
+the chapters.
 
 ## Access
 

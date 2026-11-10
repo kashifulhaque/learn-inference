@@ -3,25 +3,19 @@
 # Caddy on this host terminates TLS and proxies to learn-inference:8000 over the
 # shared `edge` network, the same way the other services here are reached.
 #
-#   docker compose up -d --build
+#   docker compose pull && docker compose up -d
 #
-# This directory is a clone of the repository. A deploy is `git fetch` to the
-# commit being released, then the line above; scripts/deploy.sh does both from a
-# workstation. The PDF book in ./book is built on that workstation too, copied
-# here, and mounted read-only; without it the app runs as before, with no
-# download link.
+# The host never builds the image. A merge to main runs the build-and-deploy
+# workflow, which builds the image on GitHub Actions, pushes it to GHCR, and runs
+# the host's `deploy learn-inference` command, which is the two commands above.
+# The PDF book is built inside the image, so this file mounts nothing for it.
+# Next to this file, keep a `.env` with the app's settings; see .env.example.
 
 name: learn-inference
 
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        # scripts/deploy.sh sets this to the commit being deployed.
-        GIT_SHA: ${GIT_SHA:-unknown}
-    image: learn-inference:local
+    image: ghcr.io/kashifulhaque/learn-inference:latest
     container_name: learn-inference
     restart: unless-stopped
     expose:
@@ -38,7 +32,6 @@ services:
       DATA_DIR: /data
     volumes:
       - learn-inference-data:/data
-      - ./book:/app/book:ro
     networks:
       - edge
     # This service only proxies lab runs to RunPod, so the container stays small.

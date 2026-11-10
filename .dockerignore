@@ -18,7 +18,7 @@ frontend/tsconfig.tsbuildinfo
 .ruff_cache
 .DS_Store
 frontend/dist-book
-# Mounted into the container instead, see docker-compose.yml.
+# A local build of the book. The image builds its own in the `book` stage.
 book
 
 # The lecture render pipeline and its multi-GB build output. The manifests the

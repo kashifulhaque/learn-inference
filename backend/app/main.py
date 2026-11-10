@@ -144,9 +144,9 @@ def lab_solution(lab_id: str, user: str = Depends(current_user)) -> dict[str, st
 def book_info(settings: Settings) -> dict[str, Any] | None:
     """The PDF book on disk, as the book build's manifest describes it.
 
-    The PDF is built on the deploying machine and copied beside the app, so a
-    fresh checkout has none. Then this is None and the sidebar shows no
-    download link, rather than one that leads to a 404.
+    The Docker image builds the PDF and copies it to `book_dir`. A checkout that
+    hasn't run the book build has none. Then this is None and the sidebar shows
+    no download link, rather than one that leads to a 404.
     """
     try:
         manifest = json.loads((settings.book_dir / "manifest.json").read_text(encoding="utf-8"))

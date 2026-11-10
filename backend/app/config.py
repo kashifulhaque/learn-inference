@@ -34,8 +34,9 @@ class Settings(BaseSettings):
     public_url: str = "http://localhost:8000"
     content_dir: Path = REPO_ROOT / "content"
     frontend_dist: Path = REPO_ROOT / "frontend" / "dist"
-    # The PDF book and its manifest, written by frontend/scripts/build-book.mjs
-    # on the deploying machine and mounted into the container.
+    # The PDF book and its manifest, written by frontend/scripts/build-book.mjs.
+    # The Docker image runs that script in its `book` stage and copies the
+    # result here.
     book_dir: Path = REPO_ROOT / "book"
 
     # GPU providers
