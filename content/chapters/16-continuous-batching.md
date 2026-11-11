@@ -885,3 +885,4 @@ never be returned while work remains.
 - [Efficient memory management for large language model serving with PagedAttention](https://arxiv.org/abs/2309.06180)
 - [Chapter 17](/c/17-benchmarks) defines TTFT, ITL, and the percentile the replay uses, and [chapter 17a](/c/17a-performance-model) fits the step-time line.
 - [Chapter 16a](/c/16a-the-serving-loop-and-api) runs this scheduler inside `EngineCore`.
+- [Chapter 16b](/c/16b-scheduling-policy-and-routing) adds aging to the priority knob, fair sharing between clients, and routing across replicas.

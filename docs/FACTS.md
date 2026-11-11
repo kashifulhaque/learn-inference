@@ -813,3 +813,40 @@ Tag **C** marks a claim confirmed in the cited page and **D** a derived value.
 | [PUNICA] | Chen et al., Punica: Multi-Tenant LoRA Serving. https://arxiv.org/abs/2310.18547 |
 | [DLORA] | Wu et al., dLoRA, OSDI 2024. https://www.usenix.org/conference/osdi24/presentation/wu-bingyang |
 | [VLLM-LORA] | vLLM documentation, LoRA Adapters. https://docs.vllm.ai/en/latest/features/lora/ |
+
+# Fact entries for chapter 16b
+
+Numbers introduced by the scheduling-policy and routing chapter. A D row is
+arithmetic in the chapter, or the output of
+`content/labs/16b-policy-and-routing/solution.py` on the seeded traces in that
+lab's `tests.py`, printed by `scripts/figures/16b-scheduling-policy-and-routing.py`.
+None is an A100 or a network measurement. Tag **A** marks an assumption.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Token budget for a step target T, on chapter 16's clock of 2 ms plus 0.125 ms per token | floor((T - 2) / 0.125): 64 at 10 ms, 144 at 20 ms, 304 at 40 ms, 0 at 2 ms or less | D | chapter 16b |
+| Aging: one priority-3 request per ms against one priority-0 request | the low request starts at 30 ms with aging of 10 ms, 60 ms with 20 ms, never without aging | D | chapter 16b |
+| VTC weights in the lab | input 1, output 2; the whole request is charged at admission | A | chapter 16b |
+| VTC trace, seed 18: A (8 to 48 in), B (128 to 256 in), C (32 to 96 in), outputs 16 to 64, C joins at admission 200 | counters at the join 15,583 and 15,738; largest request cost 378; bound 2U = 756 | D | chapter 16b |
+| Same trace, with the lift | service 9,990 / 9,795 / 10,033; worst gap 360 | D | chapter 16b |
+| Same trace, without the lift | service 4,321 / 4,444 / 19,993; worst gap 15,931 | D | chapter 16b |
+| VTC fairness result | a "2x tight upper bound on the service difference between two backlogged clients" | C | [VTC] |
+| Cluster trace, seed 18: 4 replicas, 600 requests, 40 per second, 12 prefixes of 16 blocks with weights 1/(k+1), 4-block unique suffix, 24 output tokens, 96-block LRU cache, 16 tokens per block | prefill 2 + 0.125 per uncached token, decode 2.125 per token | A | chapter 16b |
+| Round-robin | hit rate 0.4397; p99 TTFT 175.57 ms; busiest replica 25.0% | D | chapter 16b |
+| Least-loaded | hit rate 0.4310; p99 165.89 ms; busiest 27.5% | D | chapter 16b |
+| Pure prefix affinity | hit rate 0.7577; p99 273.28 ms; busiest 32.7% | D | chapter 16b |
+| Bounded prefix affinity, epsilon 0.1, 0.25, 0.5, 1.0 | hit 0.666, 0.663, 0.709, 0.7177; p99 118.88, 135.90, 118.78, 177.21 ms | D | chapter 16b |
+| Bounded-load cap | ceil((1 + epsilon)(total + 1) / n); with `<=` in place of `<`, 97 of 600 routings land on a replica at or over the cap | D | chapter 16b, [BOUNDED] |
+| Bounded-load guarantee for consistent hashing | no bin holds more than ceil(c m / n) with c = 1 + epsilon | C | [BOUNDED] |
+| Weight bytes of the hybrid | 53,791,959,040 | D | chapter 2 |
+| Cold start, fixed setup 20 s, read rate 1, 2, 5, 12.5 GB/s | 73.792, 46.896, 30.758, 24.303 s; load part 53.792, 26.896, 10.758, 4.303 s | A | chapter 16b |
+| Replicas at service 0.07 s and target utilisation 0.7 | 2, 4, 6, 10 at 20, 40, 60, 100 requests per second | D | chapter 16b |
+| Mean service at hit rate 0.663 | about 66.5 ms (13.5 + 2 prefill, 51.0 decode), rounded to 0.07 s | D | chapter 16b |
+
+| Key | Page |
+|---|---|
+| [VTC] | Sheng et al., Fairness in Serving Large Language Models. https://arxiv.org/abs/2401.00588 |
+| [BOUNDED] | Mirrokni, Thorup, Zadimoghaddam, Consistent Hashing with Bounded Loads. https://arxiv.org/abs/1608.01350 |
+| [PREBLE] | Srivatsa et al., Preble: Efficient Distributed Prompt Scheduling for LLM Serving. https://arxiv.org/abs/2407.00023 |
+| [LLUMNIX] | Sun et al., Llumnix: Dynamic Scheduling for Large Language Model Serving. https://arxiv.org/abs/2406.03243 |
+| [SARATHI-SERVE] | Agrawal et al., Sarathi-Serve. https://arxiv.org/abs/2403.02310 |

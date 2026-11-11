@@ -2,6 +2,7 @@ import type { VizRegistry } from "../registry";
 import BatchTimeline from "./16-batch-timeline";
 import ChunkBudget from "./16-chunk-budget";
 import ScheduleOverlap from "./16a-schedule-overlap";
+import RoutingTradeoff from "./16b-routing-tradeoff";
 import TailVsMean from "./17-tail-vs-mean";
 import ThroughputLatency from "./17a-throughput-latency";
 import ChunkVsDisagg from "./17b-chunk-vs-disagg";
@@ -23,6 +24,7 @@ const figures: VizRegistry = {
   "16-batch-timeline": BatchTimeline,
   "16-chunk-budget": ChunkBudget,
   "16a-schedule-overlap": ScheduleOverlap,
+  "16b-routing-tradeoff": RoutingTradeoff,
   "17-tail-vs-mean": TailVsMean,
   "17a-throughput-latency": ThroughputLatency,
   "17b-chunk-vs-disagg": ChunkVsDisagg,
