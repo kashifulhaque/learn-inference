@@ -1,3 +1,49 @@
+# Fact entries for chapter 21
+
+This section records numbers introduced by the capstone chapter. A number in
+chapter 21 is arithmetic shown there, a row below, or a value the lab computes on
+a CPU with a seeded tiny model. Step times are chapter 17a's floors for the 27B
+hybrid model at the rated 1935 GB/s, applied to batches the tiny engine
+scheduled. None is an A100 measurement, and none comes from real weights.
+
+| Tag | Meaning |
+|---|---|
+| **C** | Confirmed in the cited page. |
+| **D** | Derived. The arithmetic is in the chapter and in `scripts/figures/21-capstone-the-engine.py`. |
+| **S** | Simulated. Produced by the lab solution on a seeded tiny model; not a device measurement. |
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Tiny model layout | 8 layers; full attention at layers 3 and 7, gated delta at 0, 1, 2, 4, 5, 6; hidden 48, vocabulary 128, float32 | S | chapter 21 |
+| Tiny recurrent state per sequence | 12,288 bytes | D | chapter 21 |
+| Weight read alone, 27B hybrid, rated bandwidth | 27.799 ms | D | chapter 17a |
+| Decode step at batch 1, context 1 | 29.962 ms | D | chapter 17a |
+| 16 decodes at context 24 plus one 16-token chunk, fused and as two passes | 32.601 ms and 62.400 ms | D | chapter 21 |
+| Chunk of 5 on 8 seeded prompts: `naive` mask and `sdpa` is_causal | 8 of 8 and 4 of 8 match the no-cache reference | S | chapter 21 |
+| 16 blocks of 4, batch 4, chunk 5, token budget 12, 8 prompts, 10 new tokens | 95 steps, 17 preemptions, 8 of 8 match, 16 blocks and 4 slots free | S | chapter 21 |
+| 14 blocks, batch 3, same prompts | 79 preemptions in 300 steps, no completion | S | chapter 21 |
+| Seeded sampling, 4 requests, 16 blocks | Solo, batched, and preempted (8 preemptions) outputs identical | S | chapter 21 |
+| Seeded trace: 64 requests, 40 arrivals per second, seed 31 | 482 output tokens | S | chapter 21 |
+| Trace run, 48 blocks, batch 16, token budget 48, chunk 16 | 94 steps, 18 preemptions, makespan 2.9075 s | S | chapter 21 |
+| Trace step times | 29.799 ms to 31.344 ms; at most 8 decodes and 45 prefill tokens per step | S | chapter 21 |
+| Trace latency | TTFT median 0.450 s, max 0.941 s; TPOT median 0.0311 s, max 0.1340 s | S | chapter 21 |
+| Serial floor, one request at a time | 14.444 s, 33.37 tokens/s; lab floor 2x is 66.74 tokens/s | D | chapter 21 |
+| Goodput at TTFT 1.0 s and TPOT 0.15 s | 165.78 tokens/s, 4.97 times serial | S | chapter 21 |
+| `Qwen/Qwen3.5-0.8B` config | 24 layers (6 full, 18 linear), 8 query heads, 2 KV heads, head dim 256, partial rotary 0.25, vocabulary 248,320, tied embeddings | C | [HFQ35] |
+| Checkpoint norms and attention layout | Zero-centred RMSNorm `x(1 + w)`; interleaved q and gate in `q_proj`; separate `in_proj_qkv`, `in_proj_z`, `in_proj_b`, `in_proj_a` | C | [TFQ35] (read from source, not checked against a checkpoint) |
+| Hub search for small Qwen3.8 checkpoints | None found; Qwen3.8 results were 27B, Flash-Next, and larger | C | [HFSEARCH] |
+
+## Sources for chapter 21
+
+| Key | Page |
+|---|---|
+| [HFQ35] | Qwen/Qwen3.5-0.8B config.json. https://huggingface.co/Qwen/Qwen3.5-0.8B/raw/main/config.json |
+| [TFQ35] | transformers, modeling_qwen3_5.py. https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3_5/modeling_qwen3_5.py |
+| [HFSEARCH] | Hugging Face model search, "Qwen3.8" and "Qwen3.5". https://huggingface.co/models?search=Qwen3.8 |
+| [NANOVLLM] | GeeeekExplorer/nano-vllm. https://github.com/GeeeekExplorer/nano-vllm |
+| [MINISGL] | sgl-project/mini-sglang. https://github.com/sgl-project/mini-sglang |
+| [VLLMARCH] | vLLM architecture overview. https://docs.vllm.ai/en/latest/design/arch_overview.html |
+
 # Fact entries for chapter 16a
 
 This file records numbers introduced by the serving-loop chapter. The rest of

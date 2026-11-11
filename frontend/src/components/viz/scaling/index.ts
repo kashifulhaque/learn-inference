@@ -19,6 +19,7 @@ import DistinctExperts from "./19a-distinct-experts";
 import AcceptResidual from "./20-accept-residual";
 import SpeedupCurve from "./20-speedup-curve";
 import BestTree from "./20a-best-tree";
+import TraceClock from "./21-trace-clock";
 
 // Figures for this group's chapters, keyed by the name a ```viz fence uses.
 const figures: VizRegistry = {
@@ -42,6 +43,7 @@ const figures: VizRegistry = {
   "20-accept-residual": AcceptResidual,
   "20-speedup-curve": SpeedupCurve,
   "20a-best-tree": BestTree,
+  "21-trace-clock": TraceClock,
 };
 
 export default figures;
