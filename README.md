@@ -34,9 +34,9 @@ attention sinks, and eviction), assembling and validating the stack.
 GEMMs, FlashAttention, split-KV decode attention, paged attention, and prefix
 caching.
 
-**Part 5 — Serving.** Continuous batching, the serving loop, scheduling policy and routing, benchmarks that mean something, a model of step time and goodput, and disaggregated prefill and decode.
-
-**Part 5 — Serving.** Continuous batching, the serving loop, benchmarks that mean something, a model of step time and goodput, and disaggregated prefill and decode, plus observability and cold start.
+**Part 5 — Serving.** Continuous batching, the serving loop, scheduling policy and routing, benchmarks
+that mean something, a model of step time and goodput, disaggregated prefill and decode, and
+observability and cold start.
 
 **Part 6 — Scaling.** Quantization on Ampere, int4 weights and KV quantization, sparsity and pruning,
 multi-LoRA serving, tensor parallelism, mixture-of-experts serving and expert parallelism, pipeline
