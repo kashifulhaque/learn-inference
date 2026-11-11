@@ -850,3 +850,56 @@ None is an A100 or a network measurement. Tag **A** marks an assumption.
 | [PREBLE] | Srivatsa et al., Preble: Efficient Distributed Prompt Scheduling for LLM Serving. https://arxiv.org/abs/2407.00023 |
 | [LLUMNIX] | Sun et al., Llumnix: Dynamic Scheduling for Large Language Model Serving. https://arxiv.org/abs/2406.03243 |
 | [SARATHI-SERVE] | Agrawal et al., Sarathi-Serve. https://arxiv.org/abs/2403.02310 |
+
+# Fact entries for chapter 02a
+
+Numbers introduced by the inference-aware model-design chapter. Each is arithmetic
+on the published fit, on chapter 2's geometry, or the output of
+`content/labs/02a-model-design/solution.py`, printed by
+`scripts/figures/02a-model-design.py`. None is an A100 measurement. Loss values
+are in the fit's own units, not this model's loss.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Parametric loss form | L(N, D) = E + A / N^alpha + B / D^beta; the FLOPs approximation is C = 6ND | C | [CHINCHILLA] section 3.3, equations 2 and 4 |
+| Frontier exponents the paper prints for the parametric fit | a = 0.46, b = 0.54 (Nopt proportional to C^a) | C | [CHINCHILLA] section 3.3 |
+| Digits of the fit, from the paper's TeX source | E = 1.6934, A = 406.4, B = 410.7, alpha = 0.3392, beta = 0.2849 | C | [BESIROGLU] equation 4 |
+| Same digits as rounded in the paper's text | E = 1.69, A = 406.4, B = 410.7, alpha = 0.34, beta = 0.28 | C | [BESIROGLU] section 3.1 |
+| Refit by Besiroglu et al. (partial reconstruction of the data from Figure 4) | E = 1.8172, A = 482.01, B = 2085.43, alpha = 0.3478, beta = 0.3658 | C | [BESIROGLU] equation 3 |
+| Chinchilla Table 3, Approach 1, 10 billion parameters | 205.1 billion tokens (20.5 per parameter) | C | [CHINCHILLA] Table 3 |
+| Closed-form optimum | N = G (C/6)^a, G = (alpha A / (beta B))^(1/(alpha+beta)), a = beta/(alpha+beta) | D | chapter 02a |
+| G and a, Hoffmann digits; a, Besiroglu refit | G = 1.3004, a = 0.4565; a = 0.5126 | D | chapter 02a |
+| Optimum at C = 1e24, Hoffmann digits | N = 51,854,284,861; D = 3,214,134,899,605 | D | chapter 02a |
+| Tokens per parameter at N = 1e9, 1e10, 26,895,979,520, Hoffmann digits | 29.2, 45.3, 54.7 (D = 1.471e12) | D | chapter 02a |
+| Same, Besiroglu refit | 22.7, 20.3, 19.3 (D = 5.193e11) | D | chapter 02a |
+| Training plus inference objective | minimize 6ND + 2N D_inf subject to L(N, D) = target; 6N per trained token and 2N per served token | C | [SARDANA] equation 3 |
+| No closed form with D_inf > 0 | the optimum is a root of an equation with two power-law terms in D | C | [SARDANA] appendix A |
+| Inference MFU against training MFU | about 1% against 40% to 60% | C | [SARDANA] section 6 |
+| Target loss: Hoffmann digits, compute-optimal at 26,895,979,520 parameters | 1.951487 | D | chapter 02a |
+| Lifetime optimum at that loss, 0 / 1e11 / 1e12 / 1e13 / 1e14 / 1e15 served tokens | N* = 26.896 / 25.984 / 21.012 / 12.070 / 6.920 / 4.749 billion; D* = 1.471 / 1.523 / 1.922 / 4.279 / 15.762 / 74.073 trillion | D | chapter 02a |
+| FLOPs saved against the compute-optimal 26.9B model, same volumes | 0.0 / 0.0 / 2.3 / 28.9 / 63.7 / 78.5 percent | D | chapter 02a |
+| Besiroglu refit, target 2.038929: N* at 1e12 / 1e13 / 1e14 | 17.622 / 10.180 / 6.738 billion; saved 8.7 / 44.3 / 68.5 percent | D | chapter 02a |
+| Served-token weight 1, 5, 50 at 1e13 served tokens, Hoffmann digits | N* = 12.070, 8.038, 5.224 billion | D | chapter 02a |
+| One-model sum, N = 1e9, D = 2e10, D_inf = 1e11 | 1.2e20 training + 2.0e20 serving = 3.2e20; 7.2e20 if a served token costs 6N | D | chapter 02a |
+| Llama 3: flagship and herd | 405B parameters on 15.6T tokens, approximately compute-optimal; corpus of about 15T tokens; smaller models trained much longer than compute-optimal | C | [LLAMA3] |
+| Decode bytes per token | weights/B + KV bytes per token x L + 2 x recurrent state; weights count every parameter, including both vocabulary matrices | D | chapter 02a |
+| This model, batch 1, context 0 | 54,101,813,248 bytes (53,791,959,040 weights + 309,854,208 state); 27.960 ms at 1935 GB/s | D | chapter 02a |
+| Input embedding as a gather | counting it as a read overstates the weight read by 2,542,796,800 bytes (4.73%) | D | chapter 02a |
+| This model, batch 32, context 32,768 | 4,138,336,576 bytes (1,680,998,720 + 2,147,483,648 + 309,854,208) | D | chapter 02a |
+| Same, all layers full attention with 4 KV heads; with 24 KV heads | 10,237,878,592; 53,397,266,752 bytes | D | chapter 02a |
+| Same, 15:1 hybrid; 2 KV heads; 24 KV heads (3:1); 1:1 hybrid; 8 KV heads | 2.613; 3.059; 14.928; 6.172; 6.296 GB | D | chapter 02a |
+| Same, 128k vocabulary; 32 layers (hidden 7424); 96 layers (hidden 4096) | 4.061; 2.916; 5.375 GB | D | chapter 02a |
+| Parameters: 24 KV heads; 128k vocabulary; all full attention | 27,734,840,320; 25,663,902,720; 26,367,104,000 | D | chapter 02a |
+| Context where KV read equals the weights share, batch 1 / 8 / 32 / 128 | 820,800 / 102,600 / 25,650 / 6,413 tokens | D | chapter 02a |
+| Same, all full attention, batch 32 | 6,286 tokens | D | chapter 02a |
+| CS336 Spring 2025 | Lecture 9 "Scaling laws" (slides: "Scaling laws basics"); Lecture 11 "Scaling laws" (slides: "Scaling details") | C | [CS336] |
+
+| Key | Page |
+|---|---|
+| [CHINCHILLA] | Hoffmann et al., Training Compute-Optimal Large Language Models. https://arxiv.org/abs/2203.15556 |
+| [BESIROGLU] | Besiroglu et al., Chinchilla Scaling: A replication attempt. https://arxiv.org/abs/2404.10102 |
+| [SARDANA] | Sardana et al., Beyond Chinchilla-Optimal: Accounting for Inference in Language Model Scaling Laws. https://arxiv.org/abs/2401.00448 |
+| [KAPLAN] | Kaplan et al., Scaling Laws for Neural Language Models. https://arxiv.org/abs/2001.08361 |
+| [LLAMA3] | Llama Team, The Llama 3 Herd of Models. https://arxiv.org/abs/2407.21783 |
+| [GQA] | Ainslie et al., GQA. https://arxiv.org/abs/2305.13245 |
+| [CS336] | Stanford CS336, Spring 2025 schedule. https://cs336.stanford.edu/spring2025/ |
