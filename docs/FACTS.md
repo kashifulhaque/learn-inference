@@ -778,3 +778,38 @@ Numbers introduced by the sparsity and pruning chapter. A C row is a claim from 
 | [MINITRON] | Muralidharan et al., Compact Language Models via Pruning and Knowledge Distillation, arXiv:2407.14679. https://arxiv.org/abs/2407.14679 |
 | [HINTON] | Hinton, Vinyals, and Dean, Distilling the Knowledge in a Neural Network, arXiv:1503.02531. https://arxiv.org/abs/1503.02531 |
 | [MIT6.5940] | MIT 6.5940 Fall 2024 schedule. https://hanlab.mit.edu/courses/2024-fall-65940 |
+
+# Fact entries for chapter 18c
+
+Numbers introduced by the multi-LoRA chapter. Config arithmetic uses the geometry in chapter 02 (hidden size 5120, MLP width 17408, 64 layers, bfloat16). A pool result is the output of `content/labs/18c-multi-lora/solution.py` on the seeded trace in `tests.py`, printed by `scripts/figures/18c-multi-lora-serving.py`. None is an A100 measurement. PCIe is 32 GB/s one way.
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| LoRA update | frozen weight plus a low-rank product, scaled by alpha / r | C | [LORA] |
+| S-LoRA keeps all adapters in main memory and loads the running batch's adapters to the GPU; Unified Paging shares one pool between adapters and KV tensors | stated in the abstract | C | [SLORA] |
+| S-LoRA throughput claim | up to 4x over HuggingFace PEFT and vLLM | C | [SLORA] |
+| Punica claim | 12x higher throughput on a fixed cluster, 2 ms added latency per token | C | [PUNICA] |
+| dLoRA merges and unmerges adapters dynamically with a credit-based batching algorithm | stated on the OSDI page | C | [DLORA] |
+| vLLM LoRA flags | `--enable-lora`, `--lora-modules`, `--max-lora-rank` | C | [VLLM-LORA] |
+| Worked example, alpha 4, rank 2 | y = (21, 16); scaling by alpha gives (35, 22) | D | chapter 18c |
+| Up projection LoRA FLOPs per token at rank 8, 16, 64 | 360,448; 720,896; 2,883,584 against 178,257,920 (0.2022%, 0.4044%, 1.6176%) | D | chapter 18c |
+| MLP adapter bytes (3 matrices, 64 layers, bfloat16) at rank 8, 16, 64 | 69,206,016; 138,412,032; 553,648,128 | D | chapter 18c |
+| Load time at 32 GB/s | 2.163, 4.325, 17.302 ms | D | chapter 18c |
+| Adapters that fit in 4 GiB at rank 8, 16, 64 | 62, 31, 7 | D | chapter 18c |
+| MLP weight bytes, 64 layers | 34,225,520,640 | D | chapter 02, 18c |
+| Distinct adapters that read as many bytes as the MLP, rank 8, 16, 64 | 494.5, 247.3, 61.8 | D | chapter 18c |
+| 64 distinct rank-16 adapters | 8,858,370,048 bytes, 25.9% of the MLP bytes | D | chapter 18c |
+| Seeded trace (seed 17, 300 batches, 48 adapters, 4 per batch), 4 GiB pool: loads and PCIe time, FIFO / LRU / freq | 484 / 493 / 340; 3016.9 / 3118.6 / 2428.7 ms | D | chapter 18c |
+| Same, freq over the better of FIFO and LRU | 0.805 | D | chapter 18c |
+
+Tag **C** marks a claim confirmed in the cited page and **D** a derived value.
+
+## Sources
+
+| Key | Page |
+|---|---|
+| [LORA] | Hu et al., LoRA. https://arxiv.org/abs/2106.09685 |
+| [SLORA] | Sheng et al., S-LoRA: Serving Thousands of Concurrent LoRA Adapters. https://arxiv.org/abs/2311.03285 |
+| [PUNICA] | Chen et al., Punica: Multi-Tenant LoRA Serving. https://arxiv.org/abs/2310.18547 |
+| [DLORA] | Wu et al., dLoRA, OSDI 2024. https://www.usenix.org/conference/osdi24/presentation/wu-bingyang |
+| [VLLM-LORA] | vLLM documentation, LoRA Adapters. https://docs.vllm.ai/en/latest/features/lora/ |

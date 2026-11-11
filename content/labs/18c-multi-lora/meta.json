@@ -1,0 +1,19 @@
+{
+  "id": "18c-multi-lora",
+  "title": "Multi-LoRA serving",
+  "brief": "Write the LoRA update, then serve many adapters in one batch with a gathered bgmv and a segmented sgmv. Count the adapter bytes and PCIe loads, and keep adapters resident with an eviction policy graded on a seeded trace.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 60,
+  "metrics": ["freq_over_best_plain_load_time", "freq_load_ms"],
+  "hints": [
+    "The update is x W + (x A) B times alpha / r. The scale is alpha divided by the rank, and the rank is A.shape[1].",
+    "bgmv gathers A_stack[adapter_ids] and B_stack[adapter_ids], so the gather index is the request's adapter id, not its position in the batch. An id of -1 means the base layer only.",
+    "sgmv sorts the rows with a stable argsort, runs one pair of matmuls per segment, and writes the result back with out[order] = sorted_out.",
+    "A rank-r adapter on a (d_in, d_out) layer holds r * (d_in + d_out) values. The MLP adapter covers gate, up, and down in all 64 layers, at 2 bytes per value.",
+    "Every adapter in the current batch is pinned. Choose a victim from the other resident adapters: FIFO by load order, LRU by last step used, freq by lifetime batch count then LRU.",
+    "Count the use of every adapter in the batch before any load, so the frequency counts do not depend on the order inside a batch."
+  ]
+}
