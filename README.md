@@ -11,8 +11,8 @@ The target model is [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B).
 
 | Path | Contents |
 |---|---|
-| `content/chapters/` | 40 chapters, in Markdown with YAML front matter. |
-| `content/labs/` | 39 labs: a starter file, a test harness, and a worked solution. |
+| `content/chapters/` | 41 chapters, in Markdown with YAML front matter. |
+| `content/labs/` | 40 labs: a starter file, a test harness, and a worked solution. |
 | `engine/` | The reference engine the labs check against, and the chapters read. |
 | `gpu/` | The RunPod worker and the lab runner it uses. |
 | `backend/` | FastAPI: auth, content, progress, and the run stream. |
@@ -34,7 +34,9 @@ attention sinks, and eviction), assembling and validating the stack.
 GEMMs, FlashAttention, split-KV decode attention, paged attention, and prefix
 caching.
 
-**Part 5 — Serving.** Continuous batching, the serving loop, scheduling policy and routing, benchmarks that mean something, a model of step time and goodput, and disaggregated prefill and decode.
+**Part 5 — Serving.** Continuous batching, the serving loop, scheduling policy and routing, benchmarks
+that mean something, a model of step time and goodput, disaggregated prefill and decode, and
+observability and cold start.
 
 **Part 6 — Scaling.** Quantization on Ampere, int4 weights and KV quantization, sparsity and pruning,
 multi-LoRA serving, tensor parallelism, mixture-of-experts serving and expert parallelism, pipeline

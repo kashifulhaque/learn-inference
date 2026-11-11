@@ -903,3 +903,61 @@ are in the fit's own units, not this model's loss.
 | [LLAMA3] | Llama Team, The Llama 3 Herd of Models. https://arxiv.org/abs/2407.21783 |
 | [GQA] | Ainslie et al., GQA. https://arxiv.org/abs/2305.13245 |
 | [CS336] | Stanford CS336, Spring 2025 schedule. https://cs336.stanford.edu/spring2025/ |
+
+# Fact entries for chapter 17c
+
+Numbers introduced by the observability and cold-start chapter. A D row is arithmetic in the chapter, in `scripts/figures/17c-observability-and-cold-start.py`, and in `content/labs/17c-observability/solution.py`, run on its seeded synthetic event log (seed 31, 400 requests, 8 requests a second) and gauge series. None is an A100, disk, registry, or network measurement. A rows are inputs the chapter chose.
+
+| Tag | Meaning |
+|---|---|
+| **C** | Confirmed in the cited page. |
+| **D** | Derived. The arithmetic is in the chapter and in the figure script. |
+| **A** | Assumption. A value the chapter picked, not a measurement. |
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| vLLM histogram metric names | `vllm:time_to_first_token_seconds`, `vllm:inter_token_latency_seconds`, `vllm:request_queue_time_seconds`, `vllm:e2e_request_latency_seconds`, `vllm:request_num_preemptions` | C | [VLLM-METRICS-DESIGN], [VLLM-METRICS-USAGE] |
+| vLLM gauge and counter names | gauges `vllm:num_requests_running`, `vllm:num_requests_waiting`, `vllm:kv_cache_usage_perc` (0 to 1); counter `vllm:num_preemptions` | C | [VLLM-METRICS-DESIGN], [VLLM-METRICS-USAGE] |
+| vLLM bucket boundaries | not fixed; the design page's example TTFT output shows bounds 0.001 to 0.1 s | C | [VLLM-METRICS-DESIGN] |
+| Classic histogram buckets | `le` is the inclusive upper bound; buckets are cumulative | C | [PROM-HIST] |
+| Quantile error of a classic histogram | limited by the width of the bucket that holds it | C | [PROM-HIST] |
+| `histogram_quantile` interpolation | linear inside the bucket; quantile in `+Inf` returns the highest finite bound; lowest bucket's lower bound is 0 when its upper bound is positive; aggregate with `sum by (le)` | C | [PROM-FUNCS] |
+| Alert `for` and `keep_firing_for` | `for` holds an alert pending until the condition has held that long; `keep_firing_for` keeps it firing after the condition clears | C | [PROM-ALERTS] |
+| Liveness probe failure | kubelet kills the container after `failureThreshold` failures; restart follows `restartPolicy` | C | [K8S-PROBES] |
+| Readiness probe failure | pod leaves Service endpoints; no restart | C | [K8S-PROBES] |
+| Startup probe | disables liveness and readiness until it succeeds; window is `failureThreshold` times `periodSeconds` | C | [K8S-PROBES] |
+| SRE golden signals | latency, traffic, errors, saturation; record latency in buckets; page on symptoms | C | [SRE-MONITORING] |
+| Tensorizer headline claim | GPT-J (20 GB) loads at wire speed, about 5 GB/s on 40 GbE | C | [TENSORIZER] |
+| Run:ai Model Streamer | multithreaded reads of safetensors into CPU buffers while tensors copy to the GPU; sources include file systems, S3, GCS, Azure; no speed figure on the page read | C | [RUNAI-STREAMER] |
+| Seeded log | 17,359 events, 2 bad lines, 400 requests, 78 preemptions, 15,603 ITL gaps | D | chapter 17c |
+| Seeded ITL cumulative counts at le 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5 | 0, 15,494, 15,525, 15,525, 15,536, 15,588, 15,603 | D | chapter 17c |
+| Hand example, 100 samples at 0.22 s, bounds 0.1, 0.2, 0.3, 0.5 | p95 estimate 0.295 s against exact 0.22 s | D | chapter 17c |
+| TTFT p99, lab bounds | 2.18421 s from buckets against 1.87076 s exact; coarse 4.15789 s; fine 1.875 s | D | chapter 17c |
+| ITL p50, lab bounds | 37.59 ms from buckets against 27.80 ms exact; coarse 25.18 ms; fine 28.54 ms | D | chapter 17c |
+| Replica p99s, 1,000 samples at 0.05 s and 10 at 2.0 s | 0.04975 s and 2.485 s; average 1.267 s; merged 0.0499975 s | D | chapter 17c |
+| KV alert, `kv >= 0.95`, for 30 s, keep 15 s | one interval (230, 335); keep 0 gives (230, 260) and (293, 320); for 0 gives 23 intervals | D | chapter 17c |
+| Preemption-rate alert, 30 s window, rate at least 1 a second, for 30 s, keep 15 s | one interval (238, 357); peak windowed rate 3.733 a second | D | chapter 17c |
+| Counter rate with a reset, samples (0,0), (10,50), (20,100), (30,4) over 30 s | (50 + 50 + 4) / 30 = 3.4667 a second | D | chapter 17c |
+| Startup probe for load plus warmup, 44.915625 s at a 10 s period | failureThreshold 5; 6 for the whole 52.915625 s | D | chapter 17c |
+| Host to GPU copy of 53.8 GB at 32 GB/s one way | 1.68125 s | D | chapter 17c, chapters 0 and 19 |
+| Image 8 GB at 1 GB/s; storage 2 GB/s; 9 graph captures of 2.0 s; 0.5 GB chunks | the inputs of the cold-start tables | A | chapter 17c |
+| Weight load at 2 GB/s | mmap 28.58125 s; streaming 26.915625 s; saved 1.665625 s | D | chapter 17c |
+| Streaming saving, source 1.25, 7, 25, 64 GB/s | 1.666 s, 1.666 s, 1.666 s, 0.833 s | D | chapter 17c |
+| Time to ready at 2 GB/s | streaming 52.915625 s (8.0 + 26.915625 + 18.0); mmap 54.58125 s | D | chapter 17c |
+| Warm pool, ceil(rate x 52.915625 s) | 3, 6, 27 for 0.05, 0.1, 0.5 replicas a second | D | chapter 17c |
+
+The lab models an mmap load as the read followed by the copy. Kernel readahead can overlap part of the two, and the model does not say how much. It also leaves out tensor-parallel loading, decompression, and pageable-memory copy rates below the PCIe figure.
+
+## Sources for chapter 17c
+
+| Key | Page |
+|---|---|
+| [VLLM-METRICS-DESIGN] | vLLM metrics design. https://docs.vllm.ai/en/latest/design/metrics/ |
+| [VLLM-METRICS-USAGE] | vLLM production metrics. https://docs.vllm.ai/en/latest/usage/metrics/ |
+| [PROM-HIST] | Prometheus, Histograms and summaries. https://prometheus.io/docs/practices/histograms/ |
+| [PROM-FUNCS] | Prometheus, Query functions, `histogram_quantile`. https://prometheus.io/docs/prometheus/latest/querying/functions/ |
+| [PROM-ALERTS] | Prometheus, Alerting rules. https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/ |
+| [K8S-PROBES] | Kubernetes, Configure liveness, readiness and startup probes. https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/ |
+| [SRE-MONITORING] | Google SRE book, Monitoring distributed systems. https://sre.google/sre-book/monitoring-distributed-systems/ |
+| [TENSORIZER] | CoreWeave Tensorizer README. https://github.com/coreweave/tensorizer |
+| [RUNAI-STREAMER] | Run:ai Model Streamer README. https://github.com/run-ai/runai-model-streamer |

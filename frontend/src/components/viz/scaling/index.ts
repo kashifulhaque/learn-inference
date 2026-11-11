@@ -6,6 +6,7 @@ import RoutingTradeoff from "./16b-routing-tradeoff";
 import TailVsMean from "./17-tail-vs-mean";
 import ThroughputLatency from "./17a-throughput-latency";
 import ChunkVsDisagg from "./17b-chunk-vs-disagg";
+import BucketQuantile from "./17c-bucket-quantile";
 import GroupQuant from "./18-group-quant";
 import GptqMargin from "./18a-gptq-margin";
 import WandaError from "./18b-wanda-error";
@@ -28,6 +29,7 @@ const figures: VizRegistry = {
   "17-tail-vs-mean": TailVsMean,
   "17a-throughput-latency": ThroughputLatency,
   "17b-chunk-vs-disagg": ChunkVsDisagg,
+  "17c-bucket-quantile": BucketQuantile,
   "18-group-quant": GroupQuant,
   "18a-gptq-margin": GptqMargin,
   "18b-wanda-error": WandaError,
