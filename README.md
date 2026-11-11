@@ -36,11 +36,8 @@ caching.
 **Part 5 — Serving.** Continuous batching, the serving loop, benchmarks that mean something, a model of step time and goodput, and disaggregated prefill and decode.
 
 **Part 6 — Scaling.** Quantization on Ampere, int4 weights and KV quantization, sparsity and pruning,
-tensor parallelism, mixture-of-experts serving and expert parallelism, pipeline schedules and ring
-attention, speculative decoding, and tree speculation with speculation under load.
-
-**Part 6 — Scaling.** Quantization on Ampere, int4 weights and KV quantization, multi-LoRA serving, tensor parallelism, speculative
-decoding.
+multi-LoRA serving, tensor parallelism, mixture-of-experts serving and expert parallelism, pipeline
+schedules and ring attention, speculative decoding, and tree speculation with speculation under load.
 
 ## Why this model is interesting
 
