@@ -329,7 +329,8 @@ The first check calls only `mla_kv_bytes`. Each later check adds one function. T
 - [DeepSeek-V2: a strong, economical, and efficient mixture-of-experts language model](https://arxiv.org/abs/2405.04434). Sections 2.1.2 to 2.1.4 and Table 1 give MLA, the decoupled RoPE, and the cache comparison. Section 3.1.2 gives the dimensions used here.
 - [DeepSeek-V3 technical report](https://arxiv.org/abs/2412.19437). Its hyperparameters section lists 61 layers and the same MLA widths.
 - [Mistral 7B](https://arxiv.org/abs/2310.06825). The sliding window, the rolling buffer cache, and the 8x memory claim at 32k.
-- [Efficient streaming language models with attention sinks](https://arxiv.org/abs/2309.17453). The StreamingLLM claims quoted here come from its abstract.
+- [Efficient streaming language models with attention sinks](https://arxiv.org/abs/2309.17453). The StreamingLLM claims quoted here come from its abstract. The [paper page](https://papers.ifkash.dev/streamingllm/) covers the perplexity collapse of window attention and the learnable sink token.
 - [H2O: heavy-hitter oracle for efficient generative inference of large language models](https://arxiv.org/abs/2306.14048). The power-law observation and the recent-plus-heavy-hitter policy.
 - [SnapKV: LLM knows what you are looking for before generation](https://arxiv.org/abs/2404.14469). The observation window, pooling, and the 3.6x and 8.2x figures.
 - [Gemma 2: improving open language models at a practical size](https://arxiv.org/abs/2408.00118). Section 2 describes the local and global alternation.
+- [DeepSeek-V3.2](https://arxiv.org/abs/2512.02556). DeepSeek Sparse Attention keeps the full cache but attends to only the top-k keys that a small lightning indexer picks for each query. The [paper page](https://papers.ifkash.dev/deepseek-v32/) builds the indexer and the top-k selection.
