@@ -5,6 +5,8 @@ import { chapterNumbers, splitPart } from "../lib/chapters";
 import Markdown from "../components/Markdown";
 import LabPane from "../components/LabPane";
 import LecturePlayer, { clock } from "../components/LecturePlayer";
+import { EditorRail } from "../components/EditorToolbar";
+import { modKey } from "../components/shellIcons";
 import SplitPane from "../components/SplitPane";
 import {
   ArrowLeftIcon,
@@ -35,6 +37,16 @@ const ChapterBody = memo(Markdown);
 
 const FOCUS_KEY = "li.reader.focus";
 const LECTURE_KEY = "li.reader.lecture";
+const LAB_HIDDEN_KEY = "inference.lab.hidden";
+
+/** Whether the reader folded the lab away on a wide screen. */
+function readLabHidden(): boolean {
+  try {
+    return window.localStorage.getItem(LAB_HIDDEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 function readFocus(): boolean {
   try {
@@ -79,6 +91,7 @@ export default function ChapterPage({ chapters, progress, onProgress }: Props) {
   const [focus, setFocus] = useState(readFocus);
   const [mapOpen, setMapOpen] = useState(false);
   const [lectureOpen, setLectureOpen] = useState(readLectureOpen);
+  const [labHidden, setLabHidden] = useState(readLabHidden);
   const lectureBox = useRef<HTMLDivElement>(null);
   const noteTimer = useRef<number | null>(null);
   const reading = useRef<HTMLDivElement>(null);
@@ -200,6 +213,25 @@ export default function ChapterPage({ chapters, progress, onProgress }: Props) {
     }
   }, [lectureOpen]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LAB_HIDDEN_KEY, labHidden ? "1" : "0");
+    } catch {
+      // The lab still folds, it just forgets between visits.
+    }
+  }, [labHidden]);
+
+  // Cmd or Ctrl with "." folds the lab away and brings it back.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key !== ".") return;
+      event.preventDefault();
+      setLabHidden((hidden) => !hidden);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   function toggleLecture() {
     // The closed panel stays mounted to keep its place, so it must not keep
     // talking.
@@ -298,6 +330,7 @@ export default function ChapterPage({ chapters, progress, onProgress }: Props) {
 
   const done = progress[slug] === "done";
   const hasLab = Boolean(chapter.lab_detail);
+  const labShown = hasLab && !(wide && labHidden);
   const position = sections.findIndex((section) => section.index === active);
   const current = position >= 0 ? sections[position] : null;
   const part = splitPart(chapter.part);
@@ -339,10 +372,10 @@ export default function ChapterPage({ chapters, progress, onProgress }: Props) {
   const readingPane = (
     <div className="@container flex h-full min-h-0 flex-col bg-paper">
       {/* One bar for the whole reader: where you are, a way to jump anywhere,
-          and the controls for the chapter. Its height matches the lab's
+          and the controls for the chapter. Its height matches the lab toolbar's
           header, so the two line up across the split. */}
       <div ref={tracker} className="relative shrink-0">
-        <header className="flex h-12 items-center gap-1 border-b border-line bg-paper px-2 sm:gap-1.5 sm:px-3">
+        <header className="flex h-10 items-center gap-1 border-b border-line bg-paper px-2 sm:gap-1.5 sm:px-3">
           <button
             type="button"
             onClick={() => setMapOpen((open) => !open)}
@@ -460,7 +493,7 @@ export default function ChapterPage({ chapters, progress, onProgress }: Props) {
       <div ref={reading} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
         <div
           className={`w-full max-w-[calc(var(--measure)+2.5rem)] px-5 pb-16 pt-8 @lg:max-w-[calc(var(--measure)+5rem)] @lg:px-10 @lg:pt-12 ${
-            hasLab ? "" : "mx-auto"
+            labShown ? "" : "mx-auto"
           }`}
         >
           <header className="mb-8">
@@ -495,7 +528,19 @@ export default function ChapterPage({ chapters, progress, onProgress }: Props) {
               {hasLab && (
                 <span className="flex items-center gap-1.5">
                   <FlaskIcon className="size-3.5 text-fg-faint" />
-                  {wide ? "Lab alongside" : (
+                  {wide ? (
+                    labHidden ? (
+                      <button
+                        type="button"
+                        onClick={() => setLabHidden(false)}
+                        className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+                      >
+                        Show the lab
+                      </button>
+                    ) : (
+                      "Lab alongside"
+                    )
+                  ) : (
                     <button
                       type="button"
                       onClick={() => setView("lab")}
@@ -653,7 +698,12 @@ export default function ChapterPage({ chapters, progress, onProgress }: Props) {
   }
 
   const labPane = (
-    <LabPane lab={chapter.lab_detail!} onPassed={() => onProgress(slug, "done")} />
+    <LabPane
+      lab={chapter.lab_detail!}
+      onPassed={() => onProgress(slug, "done")}
+      onCollapse={wide ? () => setLabHidden(true) : undefined}
+      collapseShortcut={`${modKey()} .`}
+    />
   );
 
   // Wide screens read on the left and build on the right. Narrow ones get the
@@ -670,6 +720,15 @@ export default function ChapterPage({ chapters, progress, onProgress }: Props) {
         label="Resize the chapter and the lab"
         first={readingPane}
         second={labPane}
+        collapsed={labHidden}
+        rail={
+          <EditorRail
+            label="Lab"
+            title={chapter.lab_detail!.title}
+            shortcut={`${modKey()} .`}
+            onOpen={() => setLabHidden(false)}
+          />
+        }
       />
     );
   }

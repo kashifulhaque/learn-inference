@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { Link, Navigate, Route, Routes } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api, type ChapterMeta } from "./lib/api";
+import { chapterNumbers, groupByPart, splitPart } from "./lib/chapters";
+import { doneCount, partNumber, useSearchEntries } from "./lib/shellData";
+import { setThemeChoice, useThemeChoice } from "./lib/theme";
+import AppSidebar, { type SidebarSection, type SidebarUtility } from "./components/AppSidebar";
 import { Mark } from "./components/Brand";
-import ComputeBadge, { useActiveCompute } from "./components/ComputeBadge";
-import { MenuIcon, SearchIcon } from "./components/icons";
-import SearchDialog, { useSlashKey } from "./components/SearchDialog";
-import Sidebar from "./components/Sidebar";
-import { IconButton, Loading } from "./components/ui";
+import { computeLabel, computeTitle, useActiveCompute } from "./components/ComputeBadge";
+import { useBook } from "./components/DownloadBook";
+import SearchDialog from "./components/SearchDialog";
+import StatusMark from "./components/StatusMark";
+import { Loading } from "./components/ui";
 import ChapterPage from "./pages/ChapterPage";
 import Compute from "./pages/Compute";
 import Dashboard from "./pages/Dashboard";
@@ -23,7 +27,7 @@ function wasCollapsed(): boolean {
 
 /** Pages that flow down the screen scroll inside the shell, not with it. */
 function Scroller({ children }: { children: ReactNode }) {
-  return <div className="h-full overflow-y-auto">{children}</div>;
+  return <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>;
 }
 
 export default function App() {
@@ -33,16 +37,15 @@ export default function App() {
   const [progress, setProgress] = useState<Record<string, string>>({});
   const [model, setModel] = useState("");
   const [gpu, setGpu] = useState("");
+  // menuOpen drives the drawer on a narrow screen; collapsed folds the
+  // sidebar to its icon rail on a wide one.
   const [menuOpen, setMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(wasCollapsed);
   const [searchOpen, setSearchOpen] = useState(false);
-  const openSearch = useCallback(() => {
-    setMenuOpen(false);
-    setSearchOpen(true);
-  }, []);
-  const closeSearch = useCallback(() => setSearchOpen(false), []);
-  useSlashKey(openSearch);
+  const location = useLocation();
+  const themeChoice = useThemeChoice();
   const active = useActiveCompute(Boolean(name));
+  const book = useBook(Boolean(name));
 
   useEffect(() => {
     const redirectToSso = () => {
@@ -72,6 +75,8 @@ export default function App() {
     });
   }, [name]);
 
+  useEffect(() => setMenuOpen(false), [location.pathname]);
+
   useEffect(() => {
     try {
       window.localStorage.setItem(COLLAPSED_KEY, collapsed ? "1" : "0");
@@ -80,17 +85,38 @@ export default function App() {
     }
   }, [collapsed]);
 
-  // Cmd/Ctrl+B gives the chapter and its lab the whole screen, the way an
-  // editor hides its file tree. Escape closes the narrow-screen drawer.
+  // Cmd or Ctrl with B folds the sidebar to its rail on a wide screen and
+  // opens or closes the drawer on a narrow one.
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
-        event.preventDefault();
-        setCollapsed((current) => !current);
-      } else if (event.key === "Escape") {
-        setMenuOpen(false);
-      }
-    };
+    function onKey(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      if (event.key !== "b" && event.key !== "B") return;
+      event.preventDefault();
+      if (window.matchMedia("(min-width: 1024px)").matches) setCollapsed((v) => !v);
+      else setMenuOpen((v) => !v);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // "/" opens the search when the keyboard is not busy in a field or the
+  // editor. Cmd or Ctrl with K opens it from anywhere.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const typing =
+        !!target &&
+        (target.isContentEditable ||
+          ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) ||
+          !!target.closest(".monaco-editor"));
+      const slash = event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey && !typing;
+      const commandK =
+        (event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "k";
+      if (!slash && !commandK) return;
+      event.preventDefault();
+      setMenuOpen(false);
+      setSearchOpen(true);
+    }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
@@ -103,82 +129,104 @@ export default function App() {
     [],
   );
 
+  const list = useMemo(() => chapters ?? [], [chapters]);
+  const entries = useSearchEntries(list, searchOpen);
+  const currentSlug = location.pathname.startsWith("/c/")
+    ? decodeURIComponent(location.pathname.slice("/c/".length))
+    : null;
+
+  const sections = useMemo<SidebarSection[]>(() => {
+    const numbers = chapterNumbers(list);
+    return groupByPart(list).map(([part, items], index) => ({
+      id: part,
+      number: partNumber(part, index),
+      title: splitPart(part).name,
+      lessons: items.map((chapter) => ({
+        id: chapter.slug,
+        to: `/c/${chapter.slug}`,
+        title: chapter.title,
+        number: numbers.get(chapter.slug),
+        done: progress[chapter.slug] === "done",
+        current: chapter.slug === currentSlug,
+        mark: <StatusMark state={progress[chapter.slug]} />,
+      })),
+    }));
+  }, [list, progress, currentSlug]);
+
+  const utilities = useMemo<SidebarUtility[]>(
+    () =>
+      book
+        ? [
+            {
+              id: "book",
+              label: "Download book",
+              detail: `PDF · ${book.pages} pages · ${(book.bytes / 1e6).toFixed(1)} MB`,
+              icon: "download",
+              href: book.url,
+              download: true,
+            },
+          ]
+        : [],
+    [book],
+  );
 
   if (!ready || !name) {
     return <Loading />;
   }
 
-  const list = chapters ?? [];
+  const done = doneCount(list, progress);
 
   return (
-    <div className="flex h-full overflow-hidden bg-paper">
-      <Sidebar
-        chapters={list}
-        progress={progress}
+    <div className="sh-app">
+      <AppSidebar
+        brand={{ name: "learn/inference", kicker: "Field notes", mark: <Mark className="size-[30px]" /> }}
+        searchLabel="Find a chapter"
+        onSearch={() => {
+          setMenuOpen(false);
+          setSearchOpen(true);
+        }}
+        nav={[
+          { to: "/", label: "Course overview", icon: "grid", active: location.pathname === "/" },
+          {
+            to: "/compute",
+            label: "Compute",
+            icon: "chip",
+            count: active ? active : undefined,
+            active: location.pathname === "/compute",
+          },
+        ]}
+        sections={sections}
+        storageKey="inference.sidebar"
+        progress={{
+          done,
+          total: list.length,
+          label: "Chapters done",
+          caption: done === list.length && list.length > 0 ? "Course complete." : `Saved for ${name}`,
+        }}
+        utilities={utilities}
+        status={{ label: `GPU ${computeLabel(active).toLowerCase()}`, title: computeTitle(active) }}
+        theme={{ mode: themeChoice, onChange: setThemeChoice }}
+        account={{ username: name, signOutHref: "https://auth.ifkash.dev/logout" }}
         open={menuOpen}
-        collapsed={collapsed}
-        onNavigate={() => setMenuOpen(false)}
+        onOpen={() => setMenuOpen(true)}
         onClose={() => setMenuOpen(false)}
+        collapsed={collapsed}
         onToggleCollapsed={() => setCollapsed((current) => !current)}
-        name={name}
-        active={active}
-        onSearch={openSearch}
       />
 
-      <SearchDialog chapters={list} open={searchOpen} onClose={closeSearch} />
-
-      {menuOpen && (
-        <button
-          aria-label="Close the menu"
-          onClick={() => setMenuOpen(false)}
-          className="fixed inset-0 z-20 bg-[var(--scrim)] lg:hidden"
-        />
-      )}
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* A wide screen has the sidebar for all of this. A narrow one needs a
-            way to open it, and keeps the GPU status in view. */}
-        <header className="flex h-12 shrink-0 items-center gap-1.5 border-b border-line bg-surface px-2 lg:hidden">
-          <IconButton onClick={() => setMenuOpen(true)} aria-label="Open the course list">
-            <MenuIcon />
-          </IconButton>
-          <Link to="/" className="flex min-w-0 items-center gap-2 rounded-md px-1">
-            <Mark className="size-5" />
-            <span className="truncate text-[15px] font-bold tracking-[-0.03em] text-fg">
-              learn<span className="text-terracotta">/</span>inference
-            </span>
-          </Link>
-          <div className="ml-auto flex items-center gap-1">
-            <IconButton onClick={openSearch} aria-label="Search the course">
-              <SearchIcon />
-            </IconButton>
-            <ComputeBadge active={active} />
-          </div>
-        </header>
-
-        <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
+      <main className="sh-main" id="main">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <Routes>
             <Route
               path="/"
-              element={
-                <Scroller>
-                  <Dashboard
-                    chapters={chapters}
-                    progress={progress}
-                    model={model}
-                    gpu={gpu}
-                  />
-                </Scroller>
-              }
+              element={<Dashboard chapters={chapters} progress={progress} model={model} gpu={gpu} />}
             />
             <Route
               path="/c/:slug"
               element={
-                <ChapterPage
-                  chapters={list}
-                  progress={progress}
-                  onProgress={changeProgress}
-                />
+                <div className="min-h-0 flex-1">
+                  <ChapterPage chapters={list} progress={progress} onProgress={changeProgress} />
+                </div>
               }
             />
             <Route
@@ -191,8 +239,16 @@ export default function App() {
             />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-        </main>
-      </div>
+        </div>
+      </main>
+
+      <SearchDialog
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        entries={entries}
+        noun="chapter"
+        placeholder="Try a topic, such as “paged cache”, “RoPE”, or “batching”"
+      />
     </div>
   );
 }

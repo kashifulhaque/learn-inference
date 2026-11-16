@@ -1,12 +1,21 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
-import { DARK_THEME, LIGHT_THEME, monaco } from "../lib/monaco";
+import {
+  definePaperTheme,
+  editorLook,
+  editorThemeName,
+  fontHasLigatures,
+  fontStack,
+  useEditorPrefs,
+  useMonacoPrefs,
+} from "../lib/editorPrefs";
+import { DARK_THEME, LIGHT_THEME, monaco as bundledMonaco } from "../lib/monaco";
 import { useTheme } from "../lib/theme";
 
 type Props = {
   value: string;
   onChange: (value: string) => void;
-  /** Called on Ctrl+Enter or Cmd+Enter inside the editor. */
+  /** Called on Ctrl+Enter or Cmd+Enter inside the editor, with or without Shift. */
   onRun?: () => void;
   /** Path shown to Monaco, so it picks the language and keeps undo history per lab. */
   path: string;
@@ -17,12 +26,14 @@ type Props = {
   fill?: boolean;
 };
 
-// Monaco wants a font list, not a CSS variable, so read the design system's
-// --mono stack once and fall back to the same stack if it isn't set yet.
-const MONO =
-  (typeof document !== "undefined" &&
-    getComputedStyle(document.documentElement).getPropertyValue("--mono").trim()) ||
-  '"SFMono-Regular", ui-monospace, Consolas, "Liberation Mono", monospace';
+// The editor's own colour themes, one per page theme, plus the shared light
+// paper theme that the editor settings offer. Defined here, in the lazy
+// editor chunk, so Monaco stays out of the main bundle.
+const THEMES = { light: LIGHT_THEME, dark: DARK_THEME };
+definePaperTheme(bundledMonaco);
+
+type MountedEditor = Parameters<OnMount>[0];
+type MountedMonaco = Parameters<OnMount>[1];
 
 const LINE_HEIGHT = 22;
 const PADDING = 18;
@@ -36,24 +47,24 @@ function clampHeight(contentHeight: number): number {
 /**
  * The lab editor. In a pane it fills what it is given; laid out in a page it
  * grows with the file up to a cap, so short starters do not sit in an empty box
- * and long ones do not trap the page scroll.
+ * and long ones do not trap the page scroll. The theme, font, size, and Vim
+ * mode come from the shared editor prefs.
  */
 export default function CodeEditor({ value, onChange, onRun, path, fill = false }: Props) {
   const [height, setHeight] = useState(MIN_HEIGHT);
-  const theme = useTheme();
-  const runRef = useRef(onRun);
-  runRef.current = onRun;
+  const site = useTheme();
+  const [prefs] = useEditorPrefs();
+  const theme = editorThemeName(editorLook(prefs.theme, site), THEMES);
+  const [editor, setEditor] = useState<MountedEditor | null>(null);
+  const [instance, setInstance] = useState<MountedMonaco | null>(null);
+  const [vimStatus, setVimStatus] = useState<HTMLDivElement | null>(null);
 
-  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  useMonacoPrefs({ editor, monaco: instance, site, themes: THEMES, vimStatus, onRun, onCheck: onRun });
 
-  useEffect(() => {
-    return () => {
-      editorRef.current = null;
-    };
-  }, []);
-
-  const handleMount: OnMount = (editor) => {
-    editorRef.current = editor;
+  const handleMount: OnMount = (mounted, loaded) => {
+    setEditor(mounted);
+    setInstance(loaded);
+    const editor = mounted;
     if (!fill) {
       setHeight(clampHeight(editor.getContentHeight()));
       editor.onDidContentSizeChange((event) => {
@@ -62,17 +73,15 @@ export default function CodeEditor({ value, onChange, onRun, path, fill = false 
     }
     // Monaco measures glyphs once, at mount. If the mono font arrives after
     // that, the cursor drifts from the text until the metrics are taken again.
-    document.fonts?.ready.then(() => monaco.editor.remeasureFonts());
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-      runRef.current?.();
-    });
+    document.fonts?.ready.then(() => loaded.editor.remeasureFonts());
   };
 
   return (
     <div
-      className={fill ? "h-full min-h-0 bg-code" : "bg-code"}
+      className={`flex flex-col bg-code ${fill ? "h-full min-h-0" : ""}`}
       style={fill ? undefined : { height }}
     >
+      <div className="min-h-0 flex-1">
       <Editor
         height="100%"
         path={path}
@@ -87,10 +96,12 @@ export default function CodeEditor({ value, onChange, onRun, path, fill = false 
           </div>
         }
         options={{
-          fontSize: 13,
-          lineHeight: LINE_HEIGHT,
-          fontFamily: MONO,
-          fontLigatures: false,
+          // @monaco-editor/react reapplies these on every render, so they
+          // must come from the prefs too, or a re-render resets the font.
+          fontSize: prefs.fontSize,
+          lineHeight: Math.round(prefs.fontSize * 1.55),
+          fontFamily: fontStack(prefs.fontFamily),
+          fontLigatures: fontHasLigatures(prefs.fontFamily),
           padding: { top: PADDING, bottom: PADDING },
           tabSize: 4,
           insertSpaces: true,
@@ -141,6 +152,10 @@ export default function CodeEditor({ value, onChange, onRun, path, fill = false 
           automaticLayout: true,
         }}
       />
+      </div>
+      {prefs.vim && (
+        <div ref={setVimStatus} className="sh-vim-status" aria-live="polite" aria-label="Vim status" />
+      )}
     </div>
   );
 }

@@ -6,8 +6,9 @@
 // /api/run streams the recorded events in the same `data: {json}` frames the
 // backend sends, so the real stream parser in lib/api.ts reads them.
 //
-// Query parameters: `?theme=dark` or `?theme=light` pins a theme, and
-// `?tab=checks` (or hints, solution) opens that tab once the run finishes.
+// Query parameters: `?theme=dark` or `?theme=light` pins a theme, `?tab=checks`
+// opens that output tab once the run finishes, and `?panel=hints` (or
+// solution) opens that panel under the toolbar.
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -125,11 +126,14 @@ createRoot(document.getElementById("root")!).render(
   </StrictMode>,
 );
 
-// Press Run once the providers have loaded, then open the requested tab.
+// Press Run once the providers have loaded, then open the requested tab and
+// panel.
 const tab = params.get("tab") ?? "console";
+const panel = params.get("panel");
 const timer = window.setInterval(() => {
-  const run = document.querySelector<HTMLButtonElement>('button[title^="Run on the GPU"]');
-  if (!run || run.disabled) return;
+  const run = document.querySelector<HTMLButtonElement>('.sh-tb button[aria-label="Run"]');
+  const select = document.querySelector<HTMLSelectElement>('select[aria-label="GPU provider"]');
+  if (!run || !select) return;
   window.clearInterval(timer);
   run.click();
   window.setTimeout(() => {
@@ -137,5 +141,12 @@ const timer = window.setInterval(() => {
       (button) => button.textContent?.toLowerCase().startsWith(tab),
     );
     target?.click();
+    if (panel) {
+      document
+        .querySelector<HTMLButtonElement>(
+          `.sh-tb button[aria-label="${panel === "solution" ? "Show the solution" : "Show hints"}"]`,
+        )
+        ?.click();
+    }
   }, 1500);
 }, 100);
