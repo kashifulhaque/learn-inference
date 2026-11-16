@@ -326,6 +326,7 @@ The first check calls only `mla_kv_bytes`. Each later check adds one function. T
 
 ## Further reading
 
+- [Chapter 7b, Qwen4: sparse attention, gated residuals, and n-gram embeddings](/c/07b-qwen4-sparse-attention-and-gated-residuals). Keeps the whole cache and reads only the blocks an indexer picks, the DeepSeek Sparse Attention idea at block granularity.
 - [DeepSeek-V2: a strong, economical, and efficient mixture-of-experts language model](https://arxiv.org/abs/2405.04434). Sections 2.1.2 to 2.1.4 and Table 1 give MLA, the decoupled RoPE, and the cache comparison. Section 3.1.2 gives the dimensions used here.
 - [DeepSeek-V3 technical report](https://arxiv.org/abs/2412.19437). Its hyperparameters section lists 61 layers and the same MLA widths.
 - [Mistral 7B](https://arxiv.org/abs/2310.06825). The sliding window, the rolling buffer cache, and the 8x memory claim at 32k.

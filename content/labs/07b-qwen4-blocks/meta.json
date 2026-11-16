@@ -1,0 +1,20 @@
+{
+  "id": "07b-qwen4-blocks",
+  "title": "Qwen4 blocks: sparse attention, gated residuals, n-gram embeddings",
+  "brief": "Build a block-sparse attention step with a cheap indexer and check it against masked dense attention, write a four-stream gated residual that reduces to a plain residual, and hash n-grams into an embedding table. Each part comes with its byte and FLOP accounting. The designs are illustrative, not Qwen's.",
+  "gpu": "cpu",
+  "needs_gpu": false,
+  "device_agnostic": true,
+  "needs_weights": false,
+  "timeout": 60,
+  "metrics": ["sparse_byte_ratio", "gated_identity_error", "ngram_flop_ratio"],
+  "hints": [
+    "pool_blocks takes the mean of each block's rows. The last block can be shorter than `block`, so slice with b*block:(b+1)*block and let the slice end early.",
+    "select_blocks scores pooled keys, not tokens. Use torch.argsort(-scores, stable=True) so a tie keeps the lower block index, then sort the kept ids ascending.",
+    "The softmax in sparse_attention_step runs over the kept tokens only. Masked dense attention gives the same numbers, which is what the check compares with.",
+    "Indexer bytes are n_blocks * d_idx * idx_bytes. Kept KV bytes are kept_tokens * 2 * n_kv_heads * d_head * kv_bytes. Halving the block size doubles the indexer bytes and leaves the KV bytes alone.",
+    "A gated residual is X + write[:, None] * f(read @ X). With every stream equal to x, read = 1/n each, and write = 1 each, every stream becomes x + f(x).",
+    "ngram_indices pads positions before the start with PAD (-1), so the window always has n ids. Index t must not depend on ids after t, or on ids more than n - 1 positions before t.",
+    "FLOPs for the n-gram table are the add, d per table per token. The lookup does no arithmetic, so the FLOP count doesn't depend on table_size."
+  ]
+}

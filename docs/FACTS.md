@@ -1007,3 +1007,64 @@ The lab models an mmap load as the read followed by the copy. Kernel readahead c
 | [SRE-MONITORING] | Google SRE book, Monitoring distributed systems. https://sre.google/sre-book/monitoring-distributed-systems/ |
 | [TENSORIZER] | CoreWeave Tensorizer README. https://github.com/coreweave/tensorizer |
 | [RUNAI-STREAMER] | Run:ai Model Streamer README. https://github.com/run-ai/runai-model-streamer |
+
+# Fact entries for chapter 07b
+
+Numbers and claims in the Qwen4 chapter. Qwen published no block size, top-k, indexer equations, gate equations, or hashing scheme for Qwen4-Max, so every such detail in the chapter and the lab is this course's own design and is tagged I. The Qwen4-Max blog renders only with JavaScript; its statements here are from a reading collected on 2026-11-16 and were not re-fetched while writing this chapter, so re-read the page before relying on a quote. Prior-art rows are limited to what each cited abstract, or the DeepSeek-V3.2 and Hyper-Connections paper text, states. Every D row is arithmetic from `content/labs/07b-qwen4-blocks/solution.py`, printed by `scripts/figures/07b-qwen4-sparse-attention-and-gated-residuals.py`. Nothing here is an A100 measurement.
+
+| Tag | Meaning |
+|---|---|
+| **C** | Stated in the cited source. |
+| **D** | Derived. The arithmetic is in the chapter and in the figure script. |
+| **I** | Illustrative design chosen by this course. Qwen hasn't published its own. |
+| **U** | Not stated by the source. The chapter says so. |
+
+| Claim | Value | Tag | Source |
+|---|---|---|---|
+| Qwen4-Max backbone, activated per token, extra N-gram Embedding parameters | 2.4T, 71B, 328B | C | [QWEN4] |
+| Three architecture changes | GDN + Qwen Sparse Attention, Gated Residual with four parallel residual branches, N-gram Embedding at the second layer | C | [QWEN4] |
+| GDN to QSA layer ratio; QSA indexer granularity | 3:1; micro-blocks, to reduce attention and indexing cost | C | [QWEN4] |
+| Gated Residual gates | dynamic read and write gates, for information flow and training stability | C | [QWEN4] |
+| Block size, top-k, indexer form, gate equations, N-gram n, hash, dtype, layer count, hidden size | not published | U | [QWEN4] |
+| Qwen3.8-2.4T-A95B layout | 92 layers, hidden 8192, 23 x (3 x (Gated DeltaNet then MoE), 1 x (gated attention then MoE)) | C | [QWEN38] |
+| Qwen3.8 attention | 64 Q heads, 4 KV heads, head width 256 | C | [QWEN38] |
+| Qwen3.8 Gated DeltaNet | 128 V heads, 16 QK heads, head width 128 | C | [QWEN38] |
+| Qwen3.8 MoE | 512 experts, 10 routed and 1 shared active, expert width 2048; 95B active | C | [QWEN38] |
+| 71B active against 95B active | 25.26% fewer | D | [QWEN4], [QWEN38] |
+| KV bytes per token per attention layer | 2 x 4 x 256 x 2 = 4,096 | D | [QWEN38] |
+| KV bytes per token, 23 layers; at 1,000,000 tokens | 94,208 (92 KiB); 94.208 GB = 87.74 GiB | D | [QWEN38] |
+| Course 27B model, 16 layers | 65,536 B per token | D | chapter 7 |
+| GDN state elements, 69 layers x 128 x 128 x 128, no conv state | 144,703,488; 289.4 MB bf16, 578.8 MB fp32 | D | [QWEN38] |
+| Illustrative budget: block, top-k, index width, index dtype | 64 tokens, 64 blocks (4096 tokens), 64, bfloat16 | I | chapter 7b |
+| One layer at T = 1,000,000 | dense 4,096,000,000 B; scan 2,000,000 B; kept KV 16,777,216 B; total 18,777,216 B; ratio 218.1 | D | chapter 7b |
+| 23 layers at T = 1,000,000 | dense 94.208 GB; sparse 431.876 MB; attention FLOPs 1.507 TFLOP against 6.220 GFLOP | D | chapter 7b |
+| Ratio at 32,768, 131,072, 262,144 tokens | 8.0, 31.5, 62.1 | D | chapter 7b |
+| Block sweep at 1,000,000 tokens, 4096 kept | block 16: 24,777,216 B; 64: 18,777,216 B; 128: 17,777,280 B; 256: 17,277,312 B | D | chapter 7b |
+| Pooled index keys, extra cache at 1,000,000 tokens | 2,000,000 B per layer, 0.05% of that layer's KV | D | chapter 7b |
+| Weight read per token if 71B parameters are bfloat16 | 142 GB; dense KV is 0.663 of it, sparse 0.00304 | D, assumes dtype | [QWEN4], chapter 7b |
+| Floors at the rated 1935 GB/s | dense KV 48.69 ms, sparse 0.223 ms | D | chapter 7a |
+| Gated residual, hidden 8192, bf16, 4 streams | 65,536 B held (4 x 16,384); read plus write 131,072 B; gate FLOPs 8nd = 262,144 | D, I | chapter 7b |
+| MoE layer FLOPs per token, 11 experts x 3 x 8192 x 2048 x 2 | 1,107,296,256; gates are 2.367e-4 of it | D | [QWEN38] |
+| N-gram share of the backbone; total parameters | 13.67%; 2.728T | D | [QWEN4] |
+| N-gram table in bf16, if that is the dtype | 656 GB, against 4.8 TB for the backbone | D, assumes dtype | [QWEN4] |
+| Table 2^20 x 8192 | 8,589,934,592 parameters; 17.18 GB bf16; 16,384 B and 8,192 FLOPs per token; dense equivalent 17.18 GFLOP | D | chapter 7b |
+| NSA | coarse-grained token compression with fine-grained token selection; hardware-aligned; natively trainable | C | [NSA] abstract |
+| MoBA | applies mixture-of-experts principles to attention; deployed for Kimi long-context requests | C | [MOBA] abstract |
+| DSA indexer | I_{t,s} = sum over j of w_{t,j} ReLU(q_{t,j} . k_s), a small number of heads, selects 2048 key-value tokens per query | C | [DSV32] |
+| Hyper-Connections | n parallel streams, n = 4 in main experiments; layer input is a weighted sum of the streams; output written back with a second weight vector; stream mixing matrix; one-hot read initialization matches Pre-Norm | C | [HC] |
+| mHC | Hyper-Connections break the identity mapping, causing instability and memory-access cost; mHC projects onto a manifold to restore it | C | [MHC] abstract |
+| Engram | modernizes N-gram embedding for constant-time lookup; deterministic addressing allows prefetch from host memory | C | [ENGRAM] abstract |
+| Lab: FNV-1a plus finalizer hash, softmax read gate, sigmoid write gate, mean-pooled block keys | the lab's stand-ins | I | chapter 7b |
+
+## Sources for chapter 07b
+
+| Key | Page |
+|---|---|
+| [QWEN4] | Qwen Team, Qwen4-Max: Your New Teammate Has Arrived. https://qwen.ai/blog?id=qwen4-max |
+| [QWEN38] | Qwen3.8-2.4T-A95B model card. https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B |
+| [NSA] | Native Sparse Attention, arXiv:2502.11089. https://arxiv.org/abs/2502.11089 |
+| [MOBA] | MoBA: Mixture of Block Attention for Long-Context LLMs, arXiv:2502.13189. https://arxiv.org/abs/2502.13189 |
+| [DSV32] | DeepSeek-V3.2, arXiv:2512.02556. https://arxiv.org/abs/2512.02556 |
+| [HC] | Hyper-Connections, arXiv:2409.19606. https://arxiv.org/abs/2409.19606 |
+| [MHC] | mHC: Manifold-Constrained Hyper-Connections, arXiv:2512.24880. https://arxiv.org/abs/2512.24880 |
+| [ENGRAM] | Conditional Memory via Scalable Lookup, arXiv:2601.07372. https://arxiv.org/abs/2601.07372 |
