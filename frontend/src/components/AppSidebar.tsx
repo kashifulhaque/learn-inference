@@ -45,7 +45,12 @@ export type SidebarUtility = {
   download?: boolean;
 };
 
-export type SidebarStatus = { label: string; title?: string };
+export type SidebarStatus = {
+  label: string;
+  title?: string;
+  /** "ok" (default) is green, "alert" flags something that needs attention, and "neutral" is a quiet grey. */
+  tone?: "ok" | "alert" | "neutral";
+};
 
 type Props = {
   brand: { name: string; kicker: string; mark: ReactNode; homeLabel?: string };
@@ -347,7 +352,7 @@ function Full({
               </a>
             ))}
             {status && (
-              <span className="sh-status" title={status.title}>
+              <span className={`sh-status ${status.tone && status.tone !== "ok" ? `is-${status.tone}` : ""}`} title={status.title}>
                 <span className="sh-status-dot" aria-hidden="true" />
                 {status.label}
               </span>
@@ -426,7 +431,13 @@ function Rail({ brand, onSearch, nav, utilities = [], status, theme, account, on
         <span style={{ height: `${share}%` }} />
       </div>
       {status && (
-        <span className="sh-icon-button sh-rail-status" role="img" aria-label={status.label} data-tip={status.label} tabIndex={0}>
+        <span
+          className={`sh-icon-button sh-rail-status ${status.tone && status.tone !== "ok" ? `is-${status.tone}` : ""}`}
+          role="img"
+          aria-label={status.label}
+          data-tip={status.label}
+          tabIndex={0}
+        >
           <Icon name="gpu" size={18} />
           <span className="sh-status-dot" aria-hidden="true" />
         </span>

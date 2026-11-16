@@ -234,6 +234,52 @@ storage prefix, brand, and mark.
   lab pane draws a code slab, remap those tokens on the pane root, as ml's
   `.slab` class does in `index.css`.
 
+## What learn-gpu adapted
+
+learn-gpu is the first Family B port. It changed four shared files in
+backward-compatible ways. Copy them from learn-gpu, not ml, to learn-inference,
+and backport them to ml, rl, and speech so the copies stay identical:
+
+- `AppSidebar.tsx`: `status` takes an optional `tone` of `ok` (the default),
+  `alert`, or `neutral`. learn-gpu passes `alert` while something runs on a GPU
+  provider, `neutral` while the count is unknown, and `ok` when idle.
+  `shell.css` has the matching `.is-alert` and `.is-neutral` rules.
+- `EditorToolbar.tsx`: `runDisabled` disables Run and Check while nothing can
+  run them, such as when no GPU provider is configured.
+- `pages/Overview.tsx`: `noun` names a card's items in **Show all N
+  chapters**. The default is `lesson`.
+- `shellIcons.tsx`: a `slides` icon for the Slides nav item.
+
+Course-specific changes:
+
+- `App.tsx`: the old `Sidebar` and the narrow-screen header are gone. `nav` is
+  Course overview, Slides, and Compute. Compute shows a count badge while
+  something is running. The compute poll from `useActiveCompute` becomes
+  `status`. The book download is a utility. Sign out goes to the same portal as
+  the other courses. The slide routes (`/slides/:slug`, `/present`, and
+  `/print`) stay outside the shell.
+- `lib/shellData.ts`: `useSearchEntries(chapters, open)` loads every chapter
+  body once, the first time search opens, and indexes its `##` headings as
+  `/c/SLUG#s-N`, which `ChapterPage` already scrolls to.
+- `pages/Dashboard.tsx`: an adapter that fills `Overview` from the chapter
+  index and adds recent lab runs as an `OverviewBlock`. The part cards show a
+  chapter count, not a number range, because a part's chapter numbers aren't
+  contiguous.
+- `components/LabPane.tsx`: `EditorToolbar` replaces the two header rows. The
+  provider select goes in the toolbar's `children`. Hints and the worked
+  solution open in `ToolbarPanel`s. The Console and Checks tabs become one
+  output body, with checks and metrics first and the log after them.
+  `OutputHeader` is the `SplitPane` rail, as in ml.
+- `components/SplitPane.tsx`: gains ml's `collapsed` and `rail` props.
+  `ChapterPage` uses them to fold the lab with Cmd or Ctrl and `.`, and
+  remembers the choice under `lg.lab.hidden`.
+- `index.css`: `.slab` also remaps `--surface`, `--surface-muted`, `--muted`,
+  `--strong-line`, `--error`, and `--error-soft` for the editor chrome.
+- Storage keys keep the existing `lg.` prefix, so readers keep their theme,
+  splits, and sidebar state.
+- The backend's SPA route serves any file in `frontend/dist`, so
+  `/fonts/0xproto/*` needs no server change.
+
 ## Decisions to keep
 
 - Classes keep the `sh-` prefix. The kit's `components.css` already defines

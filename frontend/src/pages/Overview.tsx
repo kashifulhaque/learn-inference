@@ -43,6 +43,8 @@ type Props = {
   sections: OverviewSection[];
   /** How many lessons a card lists before "Show all". */
   previewCount?: number;
+  /** What a section's items are called, for "Show all 8 lessons". Default "lesson". */
+  noun?: string;
   /** More blocks after the cards, such as projects or recent activity. */
   children?: ReactNode;
 };
@@ -67,6 +69,7 @@ export default function Overview({
   path,
   sections,
   previewCount = 5,
+  noun = "lesson",
   children,
 }: Props) {
   const share = progress.total ? (progress.done / progress.total) * 100 : 0;
@@ -144,7 +147,7 @@ export default function Overview({
         <OverviewBlock eyebrow={path.eyebrow} title={path.title} aside={path.aside} id="sh-path-heading">
           <div className="sh-module-grid">
             {sections.map((section) => (
-              <ModuleCard key={section.id} section={section} previewCount={previewCount} />
+              <ModuleCard key={section.id} section={section} previewCount={previewCount} noun={noun} />
             ))}
           </div>
         </OverviewBlock>
@@ -155,7 +158,7 @@ export default function Overview({
   );
 }
 
-function ModuleCard({ section, previewCount }: { section: OverviewSection; previewCount: number }) {
+function ModuleCard({ section, previewCount, noun }: { section: OverviewSection; previewCount: number; noun: string }) {
   const [expanded, setExpanded] = useState(false);
   const done = section.lessons.filter((lesson) => lesson.done).length;
   const total = section.lessons.length;
@@ -213,7 +216,7 @@ function ModuleCard({ section, previewCount }: { section: OverviewSection; previ
           aria-controls={listId}
           onClick={() => setExpanded((value) => !value)}
         >
-          {expanded ? "Show fewer" : `Show all ${total} lessons`}
+          {expanded ? "Show fewer" : `Show all ${total} ${noun}s`}
           <Icon name={expanded ? "chevronUp" : "chevronDown"} size={13} />
         </button>
       ) : null}

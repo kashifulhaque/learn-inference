@@ -112,6 +112,12 @@ const PATHS = {
       <path d="M7 17v3m4-3v3m4-3v3M7 11h3v2H7z" />
     </>
   ),
+  slides: (
+    <>
+      <rect x="3" y="4" width="18" height="12" rx="1.8" />
+      <path d="M12 16v4m-4 0h8" />
+    </>
+  ),
 } as const;
 
 export type IconName = keyof typeof PATHS;

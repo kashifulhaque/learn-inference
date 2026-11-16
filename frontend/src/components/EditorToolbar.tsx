@@ -33,6 +33,8 @@ type Props = {
   onCheck?: () => void;
   onStop?: () => void;
   runLabel?: string;
+  /** Disables Run and Check while nothing can run them, such as with no runner configured. */
+  runDisabled?: boolean;
   checkLabel?: string;
   actions?: ToolbarAction[];
   /** Folds the editor pane away. Without it, no collapse button shows. */
@@ -62,6 +64,7 @@ export default function EditorToolbar({
   onStop,
   runLabel = "Run",
   checkLabel = "Check",
+  runDisabled = false,
   actions = [],
   onCollapse,
   collapseShortcut,
@@ -121,7 +124,7 @@ export default function EditorToolbar({
                 type="button"
                 className="sh-tb-btn"
                 onClick={onRun}
-                disabled={running}
+                disabled={running || runDisabled}
                 aria-label={runLabel}
                 aria-keyshortcuts={isMac() ? "Meta+Enter" : "Control+Enter"}
                 data-tip={`${runLabel} (${mod}↵)`}
@@ -134,7 +137,7 @@ export default function EditorToolbar({
                   type="button"
                   className="sh-tb-btn sh-tb-primary"
                   onClick={onCheck}
-                  disabled={running}
+                  disabled={running || runDisabled}
                   aria-label={checkLabel}
                   aria-keyshortcuts={isMac() ? "Shift+Meta+Enter" : "Shift+Control+Enter"}
                   data-tip={`${checkLabel} (⇧${mod}↵)`}

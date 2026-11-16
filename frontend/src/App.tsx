@@ -204,7 +204,11 @@ export default function App() {
           caption: done === list.length && list.length > 0 ? "Course complete." : `Saved for ${name}`,
         }}
         utilities={utilities}
-        status={{ label: `GPU ${computeLabel(active).toLowerCase()}`, title: computeTitle(active) }}
+        status={{
+          label: `GPU ${computeLabel(active).toLowerCase()}`,
+          title: computeTitle(active),
+          tone: active === null ? "neutral" : active > 0 ? "alert" : "ok",
+        }}
         theme={{ mode: themeChoice, onChange: setThemeChoice }}
         account={{ username: name, signOutHref: "https://auth.ifkash.dev/logout" }}
         open={menuOpen}

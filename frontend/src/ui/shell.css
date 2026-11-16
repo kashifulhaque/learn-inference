@@ -565,6 +565,40 @@
   background: var(--forest);
 }
 
+/* Status tones. "alert" is for something left running that costs money. */
+.sh-status.is-alert {
+  border-color: color-mix(in oklab, var(--error) 35%, var(--line));
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.sh-status.is-neutral {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--muted);
+}
+
+.is-alert .sh-status-dot {
+  background: var(--error);
+  animation: sh-pulse 1.6s ease-in-out infinite;
+}
+
+.is-neutral .sh-status-dot {
+  background: var(--muted);
+}
+
+@keyframes sh-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-alert .sh-status-dot {
+    animation: none;
+  }
+}
+
 .sh-bottom-row {
   display: flex;
   align-items: center;

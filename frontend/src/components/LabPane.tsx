@@ -458,6 +458,7 @@ export default function LabPane({ lab, onPassed, onCollapse, collapseShortcut }:
         meta={lab.gpu}
         status={saveLabel[saveState]}
         running={status === "running"}
+        runDisabled={!runnable?.available}
         onRun={run}
         onStop={cancel}
         runLabel="Run"
