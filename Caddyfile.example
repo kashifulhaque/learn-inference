@@ -50,7 +50,7 @@ qwen.ifkash.dev {
 		# outlast the longest lab. The app accepts Remote-User only when Caddy
 		# supplies the shared secret.
 		reverse_proxy learn-inference:8000 {
-			header_up X-SSO-Proxy {$LEARN_INFERENCE_SSO_PROXY_SECRET}
+			header_up X-SSO-Proxy {env.SSO_PROXY_SECRET}
 			flush_interval -1
 			transport http {
 				response_header_timeout 30m
