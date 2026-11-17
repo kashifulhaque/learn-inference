@@ -296,6 +296,13 @@ An agent can't complete the Authelia sign-in, so Caddy routes `/mcp` without
 as the reader who owns it. The server ignores the `Remote-User` and
 `X-SSO-Proxy` headers.
 
+The MCP hub at `https://mcp.ifkash.dev/mcp` serves every course's tools
+through one URL and one token. It reaches this server over the internal Docker
+network and sends the shared `MCP_HUB_SECRET` in `X-MCP-Hub-Secret` and the
+reader's Authelia username in `X-MCP-Hub-User`. The server accepts those
+headers only when `MCP_HUB_SECRET` is set and matches, and maps the username
+through `SSO_USERS`. Caddy strips both headers from public requests to `/mcp`.
+
 **Caution:** `run_lab` costs real money. It goes through the same code as
 `/api/run`, so it sends a job to the RunPod endpoint and bills the GPU time,
 including the worker's cold start, to the account whose key is in `.env`. That

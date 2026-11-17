@@ -285,6 +285,26 @@ class AuthenticationTests(MCPTestCase):
         _, progress = self.call(token, "get_progress", headers=SIGNED_IN)
         self.assertEqual(progress["reader"], "grace")
 
+    def test_hub_secret_acts_as_the_named_reader(self) -> None:
+        hub = {"X-MCP-Hub-Secret": "hub-secret", "X-MCP-Hub-User": "ADA"}
+
+        # Off by default: without MCP_HUB_SECRET the headers grant nothing.
+        self.assertEqual(self.rpc(None, "ping", extra=hub).status_code, 401)
+
+        with mock.patch.dict(os.environ, {"MCP_HUB_SECRET": "hub-secret"}):
+            get_settings.cache_clear()
+            try:
+                wrong = {**hub, "X-MCP-Hub-Secret": "guess"}
+                self.assertEqual(self.rpc(None, "ping", extra=wrong).status_code, 401)
+                no_user = {"X-MCP-Hub-Secret": "hub-secret"}
+                self.assertEqual(self.rpc(None, "ping", extra=no_user).status_code, 401)
+
+                _, progress = self.call(None, "get_progress", headers=hub)
+                # The Authelia name maps through SSO_USERS, as a browser session does.
+                self.assertEqual(progress["reader"], "Ada")
+            finally:
+                get_settings.cache_clear()
+
     def test_last_used_is_recorded(self) -> None:
         token = self.new_token()["token"]
         self.assertEqual(self.rpc(token, "ping").status_code, 200)
