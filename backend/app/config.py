@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # App
     data_dir: Path = REPO_ROOT / "data"
     public_url: str = "http://localhost:8000"
+    # The MCP endpoint's public URL, shown on the Agent access page with the
+    # client setup. Empty derives it from the request, as `<base URL>/mcp`.
+    mcp_public_url: str = ""
     content_dir: Path = REPO_ROOT / "content"
     frontend_dist: Path = REPO_ROOT / "frontend" / "dist"
     # The PDF book and its manifest, written by frontend/scripts/build-book.mjs.

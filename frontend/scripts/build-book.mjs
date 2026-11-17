@@ -57,6 +57,27 @@ function run(command, args, cwd) {
   if (result.status !== 0) fail(`${command} ${args.join(" ")} exited with ${result.status ?? result.signal}.`);
 }
 
+// The print layout's sources: src/book/ and what it imports, not the whole
+// site. The Dockerfile's book stage copies the same files; keep them in step.
+// This is the import closure of src/book/main.tsx plus index.css and the
+// stylesheets it imports. Type-only imports such as lib/api.ts are erased by
+// Vite and don't count. components/viz/ is listed whole, which adds only the
+// dev gallery.
+const BOOK_SOURCES = [
+  "frontend/src/book",
+  "frontend/src/ui/components.css",
+  "frontend/src/ui/shell.css",
+  "frontend/src/ui/tokens.css",
+  "frontend/src/ui/type.css",
+  "frontend/src/index.css",
+  "frontend/src/components/Brand.tsx",
+  "frontend/src/components/Markdown.tsx",
+  "frontend/src/components/viz",
+  "frontend/src/lib/chapters.ts",
+  "frontend/src/lib/katexMacros.json",
+  "frontend/src/lib/markdownPlugins.ts",
+];
+
 // What the PDF is made from. A change to any of it rebuilds the book.
 function inputHash() {
   const hash = createHash("sha256");
@@ -77,7 +98,7 @@ function inputHash() {
     "backend/app/curriculum.py",
     "backend/app/config.py",
     "scripts/dump_book.py",
-    "frontend/src",
+    ...BOOK_SOURCES,
     "frontend/book.html",
     "frontend/vite.book.config.ts",
     "frontend/package-lock.json",

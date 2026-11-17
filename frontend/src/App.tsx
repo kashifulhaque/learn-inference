@@ -11,6 +11,7 @@ import { useBook } from "./components/DownloadBook";
 import SearchDialog from "./components/SearchDialog";
 import StatusMark from "./components/StatusMark";
 import { Loading } from "./components/ui";
+import AgentsPage from "./pages/AgentsPage";
 import ChapterPage from "./pages/ChapterPage";
 import Compute from "./pages/Compute";
 import Dashboard from "./pages/Dashboard";
@@ -194,6 +195,7 @@ export default function App() {
             count: active ? active : undefined,
             active: location.pathname === "/compute",
           },
+          { to: "/agents", label: "Agent access", icon: "key", active: location.pathname === "/agents" },
         ]}
         sections={sections}
         storageKey="inference.sidebar"
@@ -238,6 +240,14 @@ export default function App() {
               element={
                 <Scroller>
                   <Compute />
+                </Scroller>
+              }
+            />
+            <Route
+              path="/agents"
+              element={
+                <Scroller>
+                  <AgentsPage />
                 </Scroller>
               }
             />

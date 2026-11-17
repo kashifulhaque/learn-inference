@@ -192,7 +192,22 @@ export type VolumeListing = {
   entries: VolumeEntry[];
 };
 
-class ApiError extends Error {
+/** One MCP access token, listed without its secret. */
+export type McpToken = {
+  id: number;
+  name: string;
+  /** The first characters of the token, enough to recognize it. */
+  prefix: string;
+  /** Unix seconds. */
+  created_at: number;
+  /** Unix seconds, or null if the token has never been used. */
+  last_used_at: number | null;
+};
+
+/** A freshly created token. `token` is the full secret, returned only once. */
+export type McpTokenCreated = Omit<McpToken, "last_used_at"> & { token: string };
+
+export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
     super(message);
@@ -232,6 +247,14 @@ export const api = {
   lecture: (slug: string) => request<Lecture>(`/api/lectures/${slug}`),
   lab: (id: string) => request<Lab>(`/api/labs/${id}`),
   solution: (id: string) => request<{ solution: string }>(`/api/labs/${id}/solution`),
+  mcpTokens: () => request<{ url: string; tokens: McpToken[] }>("/api/mcp/tokens"),
+  createMcpToken: (name: string) =>
+    request<McpTokenCreated>("/api/mcp/tokens", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  revokeMcpToken: (id: number) =>
+    request<{ revoked: boolean }>(`/api/mcp/tokens/${id}`, { method: "DELETE" }),
   book: () => request<{ book: BookFile | null }>("/api/book"),
   setProgress: (chapter: string, status: "in_progress" | "done") =>
     request<{ ok: boolean }>("/api/progress", {

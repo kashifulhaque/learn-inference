@@ -171,7 +171,8 @@ the compose file; see [.env.example](.env.example).
 The container joins the external `edge` network and answers on port 8000, which
 is where a reverse proxy should send traffic. See
 [Caddyfile.example](Caddyfile.example) for a Caddy block that keeps server-sent
-events unbuffered, which the lab output stream needs.
+events unbuffered, which the lab output stream needs, and that routes `/mcp`
+without `forward_auth`.
 
 The deployment this repository targets runs at
 [qwen.ifkash.dev](https://qwen.ifkash.dev).
@@ -261,6 +262,114 @@ Unmapped Authelia usernames use their own username as the data identity.
 Labs execute code you type. That code runs on the RunPod worker, never on
 the web host, but it does run with your Hugging Face token in its environment.
 Do not widen access beyond people you would give that token to.
+
+## MCP server for AI agents
+
+The app serves a [Model Context Protocol](https://modelcontextprotocol.io)
+server at `https://qwen.ifkash.dev/mcp`, over the Streamable HTTP transport. An
+agent such as Claude Code can use it to read the course and work through it as
+you.
+
+The server exposes the following tools:
+
+- `course_overview`, `list_chapters`, `get_chapter`, and `search` for the
+  syllabus, chapter text, and full-text search over chapters, labs, and lecture
+  narration.
+- `get_lab` and `get_solution` for a lab's brief, hints, starter code, checks,
+  data files, and worked solution.
+- `list_lectures` and `get_lecture` for each chapter's slides and narration.
+- `get_document` for `docs/FACTS.md`, `content/STYLE.md`, and
+  `content/labs/lab_common.py`, and `get_book_info` for the PDF book's details.
+- `get_providers` and `get_compute` for the GPU providers' configuration and
+  live state. They only read; an agent can't stop a pod or cancel a job.
+- `get_progress`, `set_progress`, `get_note`, `save_note`, `get_draft`,
+  `save_draft`, `list_runs`, and `get_run` for your progress, notes, drafts,
+  and run history.
+- `run_lab`, which runs code the same way the editor's **Run** button does.
+
+Chapters and lab starters are also resources, at `inference://chapters/SLUG`
+and `inference://labs/LAB_ID`. Reading a chapter through the server doesn't mark
+it started.
+
+An agent can't complete the Authelia sign-in, so Caddy routes `/mcp` without
+`forward_auth`, and the server requires a bearer token instead. A token acts
+as the reader who owns it. The server ignores the `Remote-User` and
+`X-SSO-Proxy` headers.
+
+**Caution:** `run_lab` costs real money. It goes through the same code as
+`/api/run`, so it sends a job to the RunPod endpoint and bills the GPU time,
+including the worker's cold start, to the account whose key is in `.env`. That
+holds for every lab, because the endpoint runs CPU labs too. A run can last up
+to the lab's timeout, 900 seconds by default. A token can also read your
+progress and write your notes and drafts. Treat it like a password, and revoke it
+when you no longer use it.
+
+### Get a token
+
+To create a token, do one of the following:
+
+- On the site, open **Agent access** in the sidebar, at
+  `https://qwen.ifkash.dev/agents`. Enter a name and click **Create token**. The
+  page shows the token once, with ready-to-copy client configurations.
+- On the VM, run the command line in the container:
+
+  ```bash
+  docker exec learn-inference python -m backend.app.mcp_tokens create USERNAME --name NAME
+  ```
+
+  Replace the following:
+
+  - `USERNAME`: the reader the token acts as, after `SSO_USERS` mapping, for
+    example `enderboi`.
+  - `NAME`: a label that tells you where the token is used, for example
+    `laptop`.
+
+To see or revoke tokens on the VM, run
+`docker exec learn-inference python -m backend.app.mcp_tokens list` or
+`docker exec learn-inference python -m backend.app.mcp_tokens revoke ID`. A token
+starts with `infmcp_`. The server stores only a SHA-256 hash of each token, so a
+lost token can't be recovered; revoke it and create another.
+
+### Connect a client
+
+To connect Claude Code, complete the following steps:
+
+1. Put the token in an environment variable:
+
+   ```bash
+   export TOKEN=TOKEN_VALUE
+   ```
+
+   Replace `TOKEN_VALUE` with the token.
+
+2. Add the server:
+
+   ```bash
+   claude mcp add --transport http learn-inference https://qwen.ifkash.dev/mcp \
+     --header "Authorization: Bearer $TOKEN"
+   ```
+
+For a client that reads an `mcpServers` configuration file, add the following
+entry:
+
+```json
+{
+  "mcpServers": {
+    "learn-inference": {
+      "type": "http",
+      "url": "https://qwen.ifkash.dev/mcp",
+      "headers": {
+        "Authorization": "Bearer TOKEN_VALUE"
+      }
+    }
+  }
+}
+```
+
+The server is stateless and answers with plain JSON, so it needs no session
+and works through a proxy that buffers responses. A `run_lab` call returns
+when the run finishes. Set `MCP_PUBLIC_URL` in `.env` so that the Agent access
+page shows the public URL rather than one derived from the request.
 
 ## Measured on the target hardware
 

@@ -28,7 +28,7 @@ FROM node:22-bookworm-slim AS book
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        chromium python3 python3-venv fonts-liberation fonts-dejavu-core \
+        chromium python3 fonts-liberation fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 ENV CHROME_PATH=/usr/bin/chromium \
@@ -40,8 +40,10 @@ COPY frontend/package.json frontend/package-lock.json* ./frontend/
 RUN npm --prefix frontend ci --no-audit --no-fund
 
 COPY backend/requirements.txt ./backend/requirements.txt
-RUN python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir -r backend/requirements.txt
+# uv resolves and installs several times faster than pip.
+COPY --from=ghcr.io/astral-sh/uv:0.9.5 /uv /usr/local/bin/uv
+RUN uv venv --python /usr/bin/python3 /opt/venv \
+    && uv pip install --python /opt/venv/bin/python --no-cache -r backend/requirements.txt
 
 # Only what the book is made from, as build-book.mjs hashes it.
 COPY backend/app/__init__.py backend/app/config.py backend/app/curriculum.py ./backend/app/
@@ -49,8 +51,19 @@ COPY scripts/dump_book.py ./scripts/dump_book.py
 COPY content/ ./content/
 COPY frontend/book.html frontend/vite.book.config.ts frontend/tsconfig.json ./frontend/
 COPY frontend/public/ ./frontend/public/
-COPY frontend/src/ ./frontend/src/
-COPY frontend/scripts/ ./frontend/scripts/
+# Only the print layout's import closure, not all of src/, so a change to the
+# site's UI doesn't reprint the book. Keep this list in step with BOOK_SOURCES
+# in build-book.mjs. A file missing here fails the Vite build with an
+# unresolved import. The closure comes from bundling src/book/main.tsx with
+# esbuild; the book build runs Vite only, with no type check, so type-only
+# imports such as lib/api.ts aren't needed.
+COPY frontend/src/book/ ./frontend/src/book/
+COPY frontend/src/ui/*.css ./frontend/src/ui/
+COPY frontend/src/index.css ./frontend/src/
+COPY frontend/src/components/Brand.tsx frontend/src/components/Markdown.tsx ./frontend/src/components/
+COPY frontend/src/components/viz/ ./frontend/src/components/viz/
+COPY frontend/src/lib/chapters.ts frontend/src/lib/katexMacros.json frontend/src/lib/markdownPlugins.ts ./frontend/src/lib/
+COPY frontend/scripts/build-book.mjs ./frontend/scripts/
 RUN node frontend/scripts/build-book.mjs --force --out /out \
     && rm -rf /out/.build
 
@@ -60,15 +73,22 @@ FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
+    UV_NO_CACHE=1 \
+    UV_SYSTEM_PYTHON=1 \
     DATA_DIR=/data
 
 WORKDIR /app
 
+# uv installs into the system Python, as pip did, several times faster.
+COPY --from=ghcr.io/astral-sh/uv:0.9.5 /uv /usr/local/bin/uv
+
 COPY backend/requirements.txt ./backend/requirements.txt
-RUN pip install -r backend/requirements.txt
+RUN uv pip install -r backend/requirements.txt
 
 COPY backend/ ./backend/
 COPY content/ ./content/
+# The fact sheet, which the MCP server's get_document tool serves.
+COPY docs/ ./docs/
 COPY engine/ ./engine/
 COPY gpu/ ./gpu/
 COPY --from=frontend /build/dist ./frontend/dist

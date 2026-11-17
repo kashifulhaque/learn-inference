@@ -95,6 +95,14 @@ def load_labs() -> dict[str, dict[str, Any]]:
             "starter": (path / "starter.py").read_text()
             if (path / "starter.py").is_file()
             else "",
+            # The checks, and the data files they import. The site never sends
+            # these to the browser; the MCP server does.
+            "tests": (path / "tests.py").read_text()
+            if (path / "tests.py").is_file()
+            else "",
+            "fixtures": {
+                extra.name: extra.read_text() for extra in sorted(path.glob("fixture_*.py"))
+            },
             "solution": (path / "solution.py").read_text()
             if (path / "solution.py").is_file()
             else "",
@@ -106,9 +114,14 @@ def get_lab(lab_id: str) -> dict[str, Any] | None:
     return load_labs().get(lab_id)
 
 
+# What the site's own pages never receive. The MCP server returns `tests` and
+# `fixtures` on request, and `solution` through its own tool.
+PRIVATE_LAB_FIELDS = frozenset({"solution", "tests", "fixtures"})
+
+
 def public_lab(lab: dict[str, Any]) -> dict[str, Any]:
-    """Lab payload for the client, with the solution withheld."""
-    return {k: v for k, v in lab.items() if k != "solution"}
+    """Lab payload for the client, with the solution and the checks withheld."""
+    return {k: v for k, v in lab.items() if k not in PRIVATE_LAB_FIELDS}
 
 
 def reload_content() -> None:

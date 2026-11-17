@@ -1,4 +1,4 @@
-"""SQLite storage for users, progress, saved code, and lab runs."""
+"""SQLite storage for users, progress, saved code, lab runs, and MCP access tokens."""
 
 import json
 import sqlite3
@@ -49,6 +49,19 @@ CREATE TABLE IF NOT EXISTS notes (
     updated_at REAL NOT NULL,
     PRIMARY KEY (user, chapter)
 );
+
+CREATE TABLE IF NOT EXISTS mcp_tokens (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user         TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    token_hash   TEXT NOT NULL UNIQUE,
+    prefix       TEXT NOT NULL,
+    created_at   REAL NOT NULL,
+    last_used_at REAL,
+    revoked      INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS mcp_tokens_user ON mcp_tokens (user, revoked);
 """
 
 
@@ -251,3 +264,77 @@ def get_run(user: str, run_id: str) -> dict[str, Any] | None:
             "SELECT * FROM runs WHERE id=? AND user=?", (run_id, user)
         ).fetchone()
     return _row_to_run(row) if row else None
+
+
+# --- MCP tokens -------------------------------------------------------------
+#
+# Only the SHA-256 of a token is stored. The secret itself is shown once, when
+# it is created, by `mcp_tokens.create_token`.
+
+# Writing `last_used_at` on every request would turn each MCP call into a write,
+# so it is refreshed at most once per this many seconds.
+TOKEN_TOUCH_INTERVAL = 60.0
+
+
+def insert_token(user: str, name: str, token_hash: str, prefix: str) -> dict[str, Any]:
+    created = time.time()
+    with connect() as conn:
+        cursor = conn.execute(
+            "INSERT INTO mcp_tokens (user, name, token_hash, prefix, created_at) "
+            "VALUES (?,?,?,?,?)",
+            (user, name, token_hash, prefix, created),
+        )
+        token_id = cursor.lastrowid
+    return {"id": token_id, "name": name, "prefix": prefix, "created_at": created}
+
+
+def list_tokens(user: str | None = None) -> list[dict[str, Any]]:
+    """Active tokens, oldest first: one user's, or everyone's when `user` is None."""
+    query = (
+        "SELECT id, user, name, prefix, created_at, last_used_at "
+        "FROM mcp_tokens WHERE revoked=0"
+    )
+    params: tuple[Any, ...] = ()
+    if user is not None:
+        query += " AND user=?"
+        params = (user,)
+    with connect() as conn:
+        rows = conn.execute(query + " ORDER BY id", params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def count_tokens(user: str) -> int:
+    with connect() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) AS n FROM mcp_tokens WHERE user=? AND revoked=0", (user,)
+        ).fetchone()["n"]
+
+
+def revoke_token(token_id: int, user: str | None = None) -> bool:
+    """Revoke one active token. With `user`, only that user's own.
+
+    Returns False when no matching active token exists.
+    """
+    query = "UPDATE mcp_tokens SET revoked=1 WHERE id=? AND revoked=0"
+    params: tuple[Any, ...] = (token_id,)
+    if user is not None:
+        query += " AND user=?"
+        params = (token_id, user)
+    with connect() as conn:
+        return conn.execute(query, params).rowcount > 0
+
+
+def token_user(token_hash: str) -> str | None:
+    """The user an active token belongs to, refreshing its last use."""
+    now = time.time()
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id, user, last_used_at FROM mcp_tokens "
+            "WHERE token_hash=? AND revoked=0",
+            (token_hash,),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["last_used_at"] is None or now - row["last_used_at"] >= TOKEN_TOUCH_INTERVAL:
+            conn.execute("UPDATE mcp_tokens SET last_used_at=? WHERE id=?", (now, row["id"]))
+    return row["user"]
